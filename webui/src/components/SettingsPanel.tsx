@@ -67,6 +67,20 @@ export function SettingsPanel({
             <Input value={lang === "zh" ? "中文" : "English"} readOnly />
           </Field>
         </div>
+
+        <div className="mt-2 rounded-lg border border-white/10 p-3">
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="checkbox"
+              checked={s.injectOpenCodeAttribution ?? true}
+              onChange={(e) => set({ injectOpenCodeAttribution: e.target.checked })}
+            />
+            {t("Inject opencode attribution headers (x-opencode-session / x-opencode-client)")}
+          </label>
+          <p className="mt-1 text-xs text-zinc-500">
+            {t("Send x-opencode-session (conversation id) and x-opencode-client=pi on provider requests. Requires a pi restart to take effect.")}
+          </p>
+        </div>
       </Card>
 
       <Card className="mb-4">

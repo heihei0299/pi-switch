@@ -207,6 +207,9 @@ pub struct Settings {
     pub write_mode: String,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default = "default_true")]
+    #[serde(rename = "injectOpenCodeAttribution")]
+    pub inject_opencode_attribution: bool,
     #[serde(default)]
     pub proxy: ProxySettings,
     #[serde(default)]
@@ -273,6 +276,7 @@ impl Default for PiSwitchConfig {
                 provider_prefix: default_prefix(),
                 write_mode: default_write_mode(),
                 language: None,
+                inject_opencode_attribution: default_true(),
                 proxy: ProxySettings {
                     host: default_host(),
                     port: default_port(),
@@ -878,7 +882,7 @@ pub fn resolve_env(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_provider_wrapper, parse_provider_wrapper, ResponsesMode};
+    use super::{format_provider_wrapper, parse_provider_wrapper, PiSwitchConfig, ResponsesMode, Settings};
 
     #[test]
     fn parses_full_pi_provider_wrapper_without_losing_fields() {
@@ -1029,5 +1033,31 @@ mod tests {
         .expect("valid provider");
         let value = serde_json::to_value(profile).expect("serializable provider");
         assert_eq!(value["responsesMode"], "passthrough");
+    }
+
+    #[test]
+    fn settings_round_trips_inject_opencode_attribution() {
+        // 经 PiSwitchConfig 全量 round-trip：模拟 webui PUT /settings 整体替换
+        // settings 段后字段不被丢弃的真实场景（ticket 03 的防丢字段目标）
+        let input = r#"{
+          "version": 1,
+          "current": null,
+          "profiles": {},
+          "settings": {
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge",
+            "injectOpenCodeAttribution": false
+          }
+        }"#;
+        let config: PiSwitchConfig = serde_json::from_str(input).expect("valid config");
+        assert!(!config.settings.inject_opencode_attribution);
+        let value = serde_json::to_value(&config).expect("serializable config");
+        assert_eq!(value["settings"]["injectOpenCodeAttribution"], false);
+    }
+
+    #[test]
+    fn settings_defaults_inject_opencode_attribution_to_true() {
+        let settings: Settings = serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
+        assert!(settings.inject_opencode_attribution);
     }
 }

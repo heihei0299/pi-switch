@@ -162,7 +162,7 @@ pi-switch import ccswitch --path /路径/cc-switch.db   # 自定义数据库路�
 - **WebUI 面板**：token 总量平铺 5 格（输入/输出/缓存/推理/合计）并带子集角标（`Cached ⊆ Input`、`Reasoning ⊆ Output`）；每个对话行补齐输入/输出/缓存/推理/缓存命中率/合计六项，超宽时两行平铺；token 缺失或 0 值显示 `-`。
 - **请求明细**：「By conversation」卡片下方列出当前窗口内每条请求，倒序截取最近 100 条：时间、provider、model、状态（失败带错误）以及输入/输出/缓存/推理/合计与单条缓存命中率。无使用量上报的行显示 `-`，绝不冒充 0 测量。**缓存率低于 50% 标红**；点击会话单元格可复制完整会话 ID。
 - **缓存命中率** = 命中缓存的输入 token ÷ 总输入 token（输出 token 不参与）。无缓存数据时显示 `-`，绝不显示误导的 `0%`。
-- **对话标识**来自客户端：`x-conversation-id` 请求头优先，`x-opencode-session` 请求头次之（pi / open-code 客户端自带），body `conversation_id` 兜底（ADR-0002）。子代理（subagent）发起的请求归并到父会话标识，后台代理不会打碎统计。
+- **对话标识**来自客户端：`x-conversation-id` 请求头优先，`x-opencode-session` 请求头次之（pi / open-code 客户端自带），body `conversation_id` 兜底（ADR-0002）。子代理（subagent）发起的请求归并到父会话标识，后台代理不会打碎统计。`x-opencode-session` / `x-opencode-client` 两个归因头由 pi 侧 conversation-id-inject 扩展注入；在 `~/.pi-switch/config.json` 设 `settings.injectOpenCodeAttribution: false`（或在 WebUI 设置页取消勾选）并重启 pi 即可关闭扩展的注入（pi 核心在直连 opencode/opencode-go 时仍会注入；经 pi-switch 代理时不会）。
 - **对话名称**：注入的 `x-conversation-name` 为会话显式标题；无标题时回退到第一条用户消息作为可读名称。非 Latin-1 标题在传输层做百分号编码保证 header 合法，代理与 webui 显示层分别解码还原，中文标题在仪表盘可读显示（修复前写入的历史编码行也在显示时兼容解码）。选取回退标题时跳过 pi 的 skill 注入消息（`<skill name="…">`），标签永远是用户自己的第一条消息，而非注入的标签。
 - 仅成功且上报了 usage 的请求计入 token 统计；failover/重试的中间行与升级前的旧日志行（无 token 字段）优雅跳过，升级不会清空或污染既有历史。
 

@@ -1,6 +1,6 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { injectConversationId, injectConversationName, injectOpenCodeAttribution, makeBeforeProviderHeadersHandler, firstUserMessageText, resolveSessionName, resolveRequestInjection, TITLE_MAX_LEN, type SessionIdProvider } from "./conversation-id-inject.ts";
+import { injectConversationId, injectConversationName, injectOpenCodeAttribution, parseOpencodeAttributionConfig, makeBeforeProviderHeadersHandler, firstUserMessageText, resolveSessionName, resolveRequestInjection, TITLE_MAX_LEN, type SessionIdProvider } from "./conversation-id-inject.ts";
 // Subagent folding relies on process.env; keep it clean between tests.
 afterEach(() => {
   delete process.env.PI_SUBAGENT_DEPTH;
@@ -547,5 +547,103 @@ test("handler injects the parent session id as opencode session for subagents", 
   assert.equal(event.headers["x-conversation-id"], "parent-123");
   assert.equal(event.headers["x-opencode-session"], "parent-123");
   assert.equal(event.headers["x-opencode-client"], "pi");
+  assert.equal(event.headers.authorization, "Bearer x");
+});
+
+// ─── opencode 归因头注入开关（settings.injectOpenCodeAttribution）───
+
+test("parseOpencodeAttributionConfig defaults to true when raw config is absent", () => {
+  assert.equal(parseOpencodeAttributionConfig(undefined), true);
+});
+
+test("parseOpencodeAttributionConfig defaults to true on broken JSON", () => {
+  assert.equal(parseOpencodeAttributionConfig("{not json"), true);
+  assert.equal(parseOpencodeAttributionConfig(""), true);
+});
+
+test("parseOpencodeAttributionConfig defaults to true when the key is missing", () => {
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"providerPrefix":"pi-switch"}}'), true);
+  assert.equal(parseOpencodeAttributionConfig("{}"), true);
+});
+
+test("parseOpencodeAttributionConfig defaults to true for non-boolean values", () => {
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"injectOpenCodeAttribution":"no"}}'), true);
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"injectOpenCodeAttribution":0}}'), true);
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"injectOpenCodeAttribution":null}}'), true);
+});
+
+test("parseOpencodeAttributionConfig reads an explicit false", () => {
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"injectOpenCodeAttribution":false}}'), false);
+});
+
+test("parseOpencodeAttributionConfig reads an explicit true", () => {
+  assert.equal(parseOpencodeAttributionConfig('{"settings":{"injectOpenCodeAttribution":true}}'), true);
+});
+
+test("handler skips opencode attribution when injectOpenCodeAttribution is false", () => {
+  const handler = makeBeforeProviderHeadersHandler(
+    (ctx) => ({ id: ctx.sessionManager.getSessionId(), name: ctx.sessionManager.getSessionName() }),
+    { injectOpenCodeAttribution: false },
+  );
+  const event = {
+    headers: {
+      authorization: "Bearer x",
+      "x-opencode-session": "existing",
+      "x-opencode-client": "other",
+    },
+  };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "uuid-9",
+      getSessionName: () => "对话A",
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-conversation-id"], "uuid-9");
+  assert.equal(event.headers["x-conversation-name"], "%E5%AF%B9%E8%AF%9DA");
+  assert.equal(event.headers["x-opencode-session"], "existing", "must not touch existing headers");
+  assert.equal(event.headers["x-opencode-client"], "other", "must not touch existing headers");
+  assert.equal(event.headers.authorization, "Bearer x");
+});
+
+test("handler injects opencode attribution with an explicit true", () => {
+  const handler = makeBeforeProviderHeadersHandler(
+    (ctx) => ({ id: ctx.sessionManager.getSessionId(), name: ctx.sessionManager.getSessionName() }),
+    { injectOpenCodeAttribution: true },
+  );
+  const event = { headers: { authorization: "Bearer x" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "uuid-9",
+      getSessionName: () => "对话A",
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-opencode-session"], "uuid-9");
+  assert.equal(event.headers["x-opencode-client"], "pi");
+  assert.equal(event.headers["x-conversation-id"], "uuid-9");
+});
+
+test("handler with injectOpenCodeAttribution false keeps stripping for Magic Context processes", () => {
+  process.env.MAGIC_CONTEXT_PI_SUBAGENT = "1";
+  const handler = makeBeforeProviderHeadersHandler(
+    (ctx) => ({ id: ctx.sessionManager.getSessionId(), name: ctx.sessionManager.getSessionName() }),
+    { injectOpenCodeAttribution: false },
+  );
+  const event = { headers: { authorization: "Bearer x", "x-opencode-session": "bg-session-id" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "bg-session-id",
+      getSessionName: () => "## Task: Classify Project Memories",
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-conversation-id"], undefined);
+  assert.equal(event.headers["x-conversation-name"], undefined);
+  assert.equal(event.headers["x-opencode-session"], undefined);
+  assert.equal(event.headers["x-opencode-client"], undefined);
   assert.equal(event.headers.authorization, "Bearer x");
 });

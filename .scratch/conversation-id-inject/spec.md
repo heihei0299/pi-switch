@@ -43,13 +43,20 @@ pi-switch 统计页的"对话（Conversation）"聚合依赖客户端请求携�
 - **先例**：项目 JS/TS 层目前无测试文件（Rust 侧 `cargo test` 82 用例、webui vitest）；本模块以 `node --test` 建立 JS/TS 层测试先例（node ≥23.6 原生 type stripping 可直跑 .ts 测试文件）
 - **验收（人工端到端）**：以经 pi-switch proxy 的 profile 启动 pi 会话发请求，`/piswitch stats` 的 byConversation 出现 UUID 标识而非 unlabeled；`/new` 后再请求，出现第二个 UUID
 
+## 注入开关（settings.injectOpenCodeAttribution）
+
+- **字段**：`~/.pi-switch/config.json` → `settings.injectOpenCodeAttribution: boolean`
+- **默认值**：`true`。文件缺失 / JSON 损坏 / 键缺失 / 值为非布尔 → 一律回退 `true`（保守默认，向后兼容，现有行为不变）
+- **语义**：`false` 时插件不再注入 `x-opencode-session`（值=会话 id）与 `x-opencode-client`（值=pi）两个归因头（不注入也不覆盖既有头）；`x-conversation-id` / `x-conversation-name` 注入、Magic Context 后台进程剥离、子代理归并逻辑全部不变。配置只控制插件自身的归因头注入，不干预 pi 核心 provider-attribution 的注入（直连 opencode/opencode-go provider 时核心仍注入；经 pi-switch 代理时核心不注入，无实际影响）
+- **生效时机**：重启 pi 生效（扩展加载时读取一次），与 pi-switch 现有 “Restart pi to apply changes” 惯例一致
+- **UI**：WebUI 设置页 General 区块有对应 checkbox（settings 段完整性）；保存走现有 PUT /settings 流程
+
 ## Out of Scope
 
 - 费用（cost）换算：属于 pi-switch 的职责，本插件不涉及
 - 对话显示名可读化（注入可读名称、或 pi-switch 读 session 文件映射 UUID→名称）
 - pi-switch proxy / stats / WebUI / TUI 的任何改动
 - body `conversation_id` 字段注入（header 已覆盖最高优先级路径，body 兜底路径不需要）
-- 注入开关配置
 - 历史已记录为 unlabeled 的请求回溯归组（无法事后补救）
 
 ## Further Notes

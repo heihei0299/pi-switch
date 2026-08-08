@@ -248,6 +248,10 @@ const zh: Record<string, string> = {
   "Provider prefix (pi gateway id)": "Provider 前缀（pi 网关 ID）",
   Language: "语言",
   "Current UI language": "当前界面语言",
+  "Inject opencode attribution headers (x-opencode-session / x-opencode-client)":
+    "注入 opencode 归因头（x-opencode-session / x-opencode-client）",
+  "Send x-opencode-session (conversation id) and x-opencode-client=pi on provider requests. Requires a pi restart to take effect.":
+    "在 provider 请求上发送 x-opencode-session（会话 id）与 x-opencode-client=pi。需重启 pi 生效。",
   "Global User-Agent disguise": "全局 User-Agent 伪装",
   "Circuit breaker enabled": "启用断路器",
   "Failure threshold": "失败阈值",

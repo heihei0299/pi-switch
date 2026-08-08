@@ -64,6 +64,7 @@ export function defaultConfig() {
     settings: {
       providerPrefix: "pi-switch",
       writeMode: "merge",
+      injectOpenCodeAttribution: true,
       proxy: {
         host: "127.0.0.1",
         port: 43112,
@@ -87,6 +88,11 @@ export async function loadConfig() {
   config.settings ??= {};
   config.settings.providerPrefix ??= "pi-switch";
   config.settings.writeMode ??= "merge";
+  // 非布尔值（如 "no"、0）一律归一化为 true：与 spec 的保守默认一致，
+  // 避免 webui 把非布尔值当 false 回显并写回文件
+  if (typeof config.settings.injectOpenCodeAttribution !== "boolean") {
+    config.settings.injectOpenCodeAttribution = true;
+  }
   config.settings.proxy ??= {};
   config.settings.proxy.host ??= "127.0.0.1";
   config.settings.proxy.port ??= 43112;

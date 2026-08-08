@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONFIG_PATH } from "../src/core.js";
 
 export type RequestHeaders = Record<string, string | null>;
 
@@ -68,6 +70,38 @@ export function injectOpenCodeAttribution(
     "x-opencode-session": conversationId,
     "x-opencode-client": "pi",
   };
+}
+
+/**
+ * Parse the `settings.injectOpenCodeAttribution` switch out of the raw
+ * pi-switch config file content. Conservative default: anything other than
+ * an explicit `false` (missing file, broken JSON, missing key, non-boolean
+ * value) keeps the attribution headers injected, so a broken config never
+ * changes the established behavior.
+ */
+export function parseOpencodeAttributionConfig(raw: string | undefined): boolean {
+  if (raw == null) {
+    return true;
+  }
+  try {
+    const config = JSON.parse(raw) as { settings?: { injectOpenCodeAttribution?: unknown } } | null;
+    return config?.settings?.injectOpenCodeAttribution !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Read the switch from ~/.pi-switch/config.json at extension load time.
+ * Any read/parse failure falls back to the conservative default (true), so
+ * a missing or broken config never changes the established behavior.
+ */
+export function loadOpencodeAttributionConfig(): boolean {
+  try {
+    return parseOpencodeAttributionConfig(readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    return true;
+  }
 }
 
 export type ProviderHeadersEvent = { headers: RequestHeaders };
@@ -245,6 +279,16 @@ export function resolveRequestInjection(
   };
 }
 
+export type HandlerOptions = {
+  /**
+   * Whether the opencode attribution headers (`x-opencode-session` /
+   * `x-opencode-client`) are injected. Defaults to true; set to false via
+   * `settings.injectOpenCodeAttribution` in ~/.pi-switch/config.json to
+   * keep requests free of these two headers.
+   */
+  injectOpenCodeAttribution?: boolean;
+};
+
 /**
  * Build the `before_provider_headers` handler: it merges the injected headers
  * back into the event's headers in place (pi's contract for this hook) while
@@ -255,6 +299,7 @@ export function resolveRequestInjection(
  */
 export function makeBeforeProviderHeadersHandler(
   getSession: (ctx: SessionIdProvider) => SessionInfo,
+  options?: HandlerOptions,
 ): (event: ProviderHeadersEvent, ctx: SessionIdProvider) => void {
   return (event, ctx) => {
     const { id, name } = getSession(ctx);
@@ -277,18 +322,23 @@ export function makeBeforeProviderHeadersHandler(
     }
     Object.assign(event.headers, injectConversationId(event.headers, conversationId));
     Object.assign(event.headers, injectConversationName(event.headers, conversationName));
-    if (!isMagicContext) {
+    if (!isMagicContext && options?.injectOpenCodeAttribution !== false) {
       Object.assign(event.headers, injectOpenCodeAttribution(event.headers, conversationId));
     }
   };
 }
 
 export default function conversationIdInjectExtension(pi: ExtensionAPI): void {
+  // 扩展加载时读取一次配置，重启 pi 生效（与 pi-switch “Restart pi to apply”惯例一致）
+  const attributionEnabled = loadOpencodeAttributionConfig();
   pi.on(
     "before_provider_headers",
-    makeBeforeProviderHeadersHandler((ctx) => ({
-      id: ctx.sessionManager.getSessionId(),
-      name: ctx.sessionManager.getSessionName(),
-    })),
+    makeBeforeProviderHeadersHandler(
+      (ctx) => ({
+        id: ctx.sessionManager.getSessionId(),
+        name: ctx.sessionManager.getSessionName(),
+      }),
+      { injectOpenCodeAttribution: attributionEnabled },
+    ),
   );
 }
