@@ -1,6 +1,6 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { injectConversationId, injectConversationName, makeBeforeProviderHeadersHandler, firstUserMessageText, resolveSessionName, resolveRequestInjection, TITLE_MAX_LEN, type SessionIdProvider } from "./conversation-id-inject.ts";
+import { injectConversationId, injectConversationName, injectOpenCodeAttribution, makeBeforeProviderHeadersHandler, firstUserMessageText, resolveSessionName, resolveRequestInjection, TITLE_MAX_LEN, type SessionIdProvider } from "./conversation-id-inject.ts";
 // Subagent folding relies on process.env; keep it clean between tests.
 afterEach(() => {
   delete process.env.PI_SUBAGENT_DEPTH;
@@ -319,6 +319,7 @@ test("handler strips conversation identity for Magic Context background processe
   assert.equal(event.headers["x-conversation-id"], undefined);
   assert.equal(event.headers["x-conversation-name"], undefined);
   assert.equal(event.headers["x-opencode-session"], undefined);
+  assert.equal(event.headers["x-opencode-client"], undefined);
   assert.equal(event.headers.authorization, "Bearer x");
 });
 
@@ -427,4 +428,124 @@ test("handler falls back to the first user message in the real entry shape", () 
   };
   handler(event, ctx);
   assert.equal(event.headers["x-conversation-name"], "%E5%B8%AE%E6%88%91%E4%BF%AE%E5%A4%8D cost %E8%AE%A1%E7%AE%97");
+});
+
+// ─── x-opencode-session / x-opencode-client 补注入 ─────────
+// pi 核心（provider-attribution.js）仅在 provider=opencode / opencode-go 或
+// baseUrl=opencode.ai 时注入这两个头；pi 经 pi-switch 代理（provider=pi-switch）
+// 时条件不满足，由本扩展补齐，代理转发链（build_upstream_headers）自动携带到
+// opencode-go 上游。值与 x-conversation-id 同源（同一会话 id）。
+
+test("injectOpenCodeAttribution injects session and client headers for a non-empty id", () => {
+  const headers = { "x-opencode-session": "stale", authorization: "Bearer x" };
+  const result = injectOpenCodeAttribution(headers, "abc-123");
+  assert.equal(result["x-opencode-session"], "abc-123");
+  assert.equal(result["x-opencode-client"], "pi");
+  assert.equal(result.authorization, "Bearer x");
+});
+
+test("injectOpenCodeAttribution skips injection when the id is empty or blank", () => {
+  const headers = { "x-opencode-session": "existing" };
+  assert.equal(injectOpenCodeAttribution(headers, "")["x-opencode-session"], "existing");
+  assert.equal(injectOpenCodeAttribution(headers, "   ")["x-opencode-session"], "existing");
+  assert.equal(injectOpenCodeAttribution(headers, undefined)["x-opencode-session"], "existing");
+});
+
+test("opencode attribution leaves other headers untouched and returns a new object", () => {
+  const headers = { authorization: "Bearer x", "x-conversation-id": "abc" };
+  const result = injectOpenCodeAttribution(headers, "abc");
+  assert.deepEqual(result, {
+    authorization: "Bearer x",
+    "x-conversation-id": "abc",
+    "x-opencode-session": "abc",
+    "x-opencode-client": "pi",
+  });
+  assert.notEqual(result, headers, "must not mutate the caller's object");
+  assert.deepEqual(headers, { authorization: "Bearer x", "x-conversation-id": "abc" });
+});
+
+test("handler injects opencode attribution alongside the conversation id", () => {
+  const handler = makeBeforeProviderHeadersHandler((ctx) => ({
+    id: ctx.sessionManager.getSessionId(),
+    name: ctx.sessionManager.getSessionName(),
+  }));
+  const event = { headers: { authorization: "Bearer x" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "uuid-9",
+      getSessionName: () => undefined,
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-conversation-id"], "uuid-9");
+  assert.equal(event.headers["x-opencode-session"], "uuid-9");
+  assert.equal(event.headers["x-opencode-client"], "pi");
+  assert.equal(event.headers.authorization, "Bearer x");
+});
+
+test("handler keeps opencode headers stripped for Magic Context subagents", () => {
+  // Magic Context 进程若同时是 subagent（depth≥1 且带父会话 id），resolveRequestInjection
+  // 会先落入 depth 分支拿到父 id；剥离逻辑删除 pi 核心注入的 x-opencode-session 后，
+  // opencode 归因注入不得把它复活——后台进程始终不携带任何 opencode 归因头。
+  process.env.MAGIC_CONTEXT_PI_SUBAGENT = "1";
+  process.env.PI_SUBAGENT_DEPTH = "1";
+  process.env.PI_PARENT_SESSION_ID = "parent-123";
+  const handler = makeBeforeProviderHeadersHandler((ctx) => ({
+    id: ctx.sessionManager.getSessionId(),
+    name: ctx.sessionManager.getSessionName(),
+  }));
+  const event = { headers: { authorization: "Bearer x", "x-opencode-session": "bg-session-id" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "bg-session-id",
+      getSessionName: () => "## Task: Classify Project Memories",
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-opencode-session"], undefined);
+  assert.equal(event.headers["x-opencode-client"], undefined);
+  assert.equal(event.headers.authorization, "Bearer x");
+});
+
+test("handler does not inject opencode headers without a conversation id", () => {
+  const handler = makeBeforeProviderHeadersHandler((ctx) => ({
+    id: ctx.sessionManager.getSessionId(),
+    name: ctx.sessionManager.getSessionName(),
+  }));
+  const event = { headers: { authorization: "Bearer x", "x-opencode-session": "existing" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "",
+      getSessionName: () => undefined,
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-conversation-id"], undefined);
+  assert.equal(event.headers["x-opencode-session"], "existing");
+  assert.equal(event.headers["x-opencode-client"], undefined);
+});
+
+test("handler injects the parent session id as opencode session for subagents", () => {
+  process.env.PI_SUBAGENT_DEPTH = "1";
+  process.env.PI_PARENT_SESSION_ID = "parent-123";
+  const handler = makeBeforeProviderHeadersHandler((ctx) => ({
+    id: ctx.sessionManager.getSessionId(),
+    name: ctx.sessionManager.getSessionName(),
+  }));
+  const event = { headers: { authorization: "Bearer x" } };
+  const ctx: SessionIdProvider = {
+    sessionManager: {
+      getSessionId: () => "child-uuid",
+      getSessionName: () => "child title",
+      getEntries: () => [],
+    },
+  };
+  handler(event, ctx);
+  assert.equal(event.headers["x-conversation-id"], "parent-123");
+  assert.equal(event.headers["x-opencode-session"], "parent-123");
+  assert.equal(event.headers["x-opencode-client"], "pi");
+  assert.equal(event.headers.authorization, "Bearer x");
 });

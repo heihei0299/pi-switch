@@ -46,6 +46,30 @@ export function injectConversationName(
   return { ...headers, "x-conversation-name": encodeHeaderValue(sessionName) };
 }
 
+/**
+ * OpenCode attribution headers for a request: `x-opencode-session` carries
+ * the conversation id (so an opencode-go upstream groups the request into
+ * the pi session) and `x-opencode-client: "pi"` identifies the client.
+ * pi core only injects these for opencode/opencode-go providers or
+ * opencode.ai base URLs; requests via a pi-switch proxy never meet that
+ * condition, so this fills the gap — idempotent with pi core's injection
+ * (same values) for direct-to-opencode setups. Blank conversation ids are
+ * not injected. The caller's headers object is never mutated.
+ */
+export function injectOpenCodeAttribution(
+  headers: RequestHeaders,
+  conversationId: string | undefined,
+): RequestHeaders {
+  if (conversationId == null || conversationId.trim() === "") {
+    return { ...headers };
+  }
+  return {
+    ...headers,
+    "x-opencode-session": conversationId,
+    "x-opencode-client": "pi",
+  };
+}
+
 export type ProviderHeadersEvent = { headers: RequestHeaders };
 
 /**
@@ -244,11 +268,18 @@ export function makeBeforeProviderHeadersHandler(
     }
     // 后台 ephemeral 进程（如 Magic Context dreamer）：剥离 pi 核心注入的
     // x-opencode-session，否则代理端仍会把 in-memory session id 记为会话。
-    if (env.MAGIC_CONTEXT_PI_SUBAGENT === "1") {
+    // opencode 归因头同样不注入：子代理形态的 Magic Context 进程（depth≥1）
+    // 会从父会话拿到 conversationId，注入会让刚剥离的头复活（含
+    // x-opencode-client），后台请求仍不得携带任何会话标识。
+    const isMagicContext = env.MAGIC_CONTEXT_PI_SUBAGENT === "1";
+    if (isMagicContext) {
       delete event.headers["x-opencode-session"];
     }
     Object.assign(event.headers, injectConversationId(event.headers, conversationId));
     Object.assign(event.headers, injectConversationName(event.headers, conversationName));
+    if (!isMagicContext) {
+      Object.assign(event.headers, injectOpenCodeAttribution(event.headers, conversationId));
+    }
   };
 }
 
