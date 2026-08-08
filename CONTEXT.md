@@ -24,7 +24,7 @@ _Avoid_: 时间段、筛选、时间范围
 _Avoid_: 缓存率百分比、token 节省率
 
 **对话（Conversation）**：
-由客户端在请求中携带的会话标识（`x-conversation-id` 请求头、`x-opencode-session` 请求头（pi / open-code 客户端发送）或 body 的 `conversation_id` 字段）标识的一组请求，按标识聚合成一次对话的 token 统计。
+由客户端在请求中携带的会话标识（`x-conversation-id` 请求头、`x-opencode-session` 请求头（pi 核心 v0.84.1 在 provider 为 opencode / opencode-go 或 baseUrl 为 opencode.ai 时自动注入，值=当前会话 id，并同时注入 `x-opencode-client: "pi"`；opencode 客户端亦发送）或 body 的 `conversation_id` 字段）标识的一组请求，按标识聚合成一次对话的 token 统计。
 _Avoid_: 会话、thread、session
 **Responses 透传模式（Responses Passthrough Mode）**：provider 原生支持 Responses API 时，客户端的 Responses 请求、响应及 streaming 事件保持原有语义传递；不具备原生支持的 provider 使用 Responses 与 Chat Completions 之间的转换。
 
