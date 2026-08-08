@@ -17,7 +17,7 @@
 
 ## 实施总结
 
-- 提交：`（待提交后回填）` — feat(extensions): add settings.injectOpenCodeAttribution switch for opencode attribution headers
+- 提交：`0e053f9` — feat(extensions): add settings.injectOpenCodeAttribution switch for opencode attribution headers
 - 实现的 seams：S1 `parseOpencodeAttributionConfig` 纯函数（保守默认：非显式 false 一律 true）；S2 `loadOpencodeAttributionConfig`（扩展加载时 readFileSync 读一次 ~/.pi-switch/config.json，复用 src/core.js CONFIG_PATH）；S3 `makeBeforeProviderHeadersHandler` 新增可选 `options.injectOpenCodeAttribution`（缺省 true），false 时跳过归因头注入；S4 `src/core.js` defaultConfig/loadConfig 加字段（loadConfig 对非布尔值归一化为 true）；S5 Rust `Settings` 加 serde 字段（default=true），防 webui PUT /settings 整体替换丢字段；S6 webui Settings 类型 + General 区块 checkbox + i18n
 - 测试结果：`npm test` 56/56 全绿（parse 6 用例 + handler 3 用例）；cargo test 208 全绿（含 PiSwitchConfig 级 round-trip 与默认 true 用例）；webui vitest 96/96 + tsc 0 错误
 - 评审修复：core.js 非布尔值归一化（`??=` 只兜底缺失，`"no"`/`0` 会被 webui 当 false 回显并写回）；README 补“pi 核心直连时仍注入”限定语；扩展局部变量改名避免遮蔽同名函数；Rust round-trip 测试改为经 PiSwitchConfig 嵌套路径（贴近真实丢字段场景）；webui checkbox 加 `?? true` 防御旧二进制缺字段
