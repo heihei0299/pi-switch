@@ -500,7 +500,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {stats.recentRequests?.length ? (
-            <Card className="mt-4 overflow-hidden border-0 !bg-transparent !shadow-none">
+            <Card className="mt-4 overflow-hidden">
               <button
                 type="button"
                 aria-expanded={requestsOpen}
