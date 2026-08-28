@@ -74,8 +74,8 @@ export function ProfilesPanel({
           const isCurrent = state.current === name;
           const exposed = p.exposedModels?.length ?? 0;
           return (
-            <Card key={name} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
+            <Card key={name} className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-100">{name}</span>
                   {isCurrent && <Badge tone="indigo">{t("current")}</Badge>}
@@ -88,7 +88,7 @@ export function ProfilesPanel({
                   {p.baseUrl || t("no base url")} · {p.models?.length ?? 0} {t("models")}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
+              <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
                 {!isCurrent && (
                   <Button
                     onClick={() =>

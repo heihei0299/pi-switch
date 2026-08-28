@@ -114,7 +114,7 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
 
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <SectionTitle>📦 {t("Packages")}</SectionTitle>
         <div className="flex flex-wrap gap-2">
           <Button onClick={handleImport}>📥 {t("Import from Pi Agent")}</Button>
@@ -159,7 +159,7 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {packages.map((pkg) => (
             <Card key={pkg.id} style={{ padding: "1.5rem" }}>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <h3 style={{ margin: 0, fontSize: "1.1rem" }} className="truncate">{pkg.name}</h3>
