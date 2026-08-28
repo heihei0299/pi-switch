@@ -39,3 +39,11 @@ _Avoid_: 日志文件、usage log
 **请求明细（Request Details）**：
 Stats 页中按时间倒序逐条展示请求日志记录的表格区块，分页浏览，可覆盖窗口内全部历史。
 _Avoid_: 请求记录、明细表、recent requests
+
+**模型目录（Model Catalog）**：
+https://models.dev 提供的 provider→models 元数据目录，每次更新模型时作为权威元数据源；与上游 `/v1/models` 仅返回 id 列表不同，目录提供 `cost/limit/reasoning/modalities` 等可用于 enrich 的完整参数。
+_Avoid_: 模型源、模型网站
+
+**模型元数据（Model Metadata）**：
+目录中单条模型的字段集合，包含 `cost`（input/output/cacheRead，按 $/1M）、`limit.context/output`（映射为 contextWindow/maxTokens）、`reasoning`、`modalities.input`（映射为 input）与 `name`；enrich 时按分字段策略与本地 ModelEntry 合并。
+_Avoid_: 模型参数、模型信息
