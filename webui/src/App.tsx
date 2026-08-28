@@ -89,9 +89,9 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
   }, [drawerOpen]);
 
   return (
-    <div className="flex h-full flex-col lg:flex-row">
+    <div className="flex h-full flex-col md:flex-row">
       {/* Mobile top bar */}
-      <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-zinc-950 px-4 py-3 lg:hidden">
+      <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-zinc-950 px-4 py-3 md:hidden">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -113,17 +113,17 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
       {/* Sidebar — drawer below lg, static sidebar at lg+ */}
       <aside
         className={cx(
-          "flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-950/95 backdrop-blur lg:bg-zinc-950/60",
-          "fixed inset-y-0 left-0 z-40 max-w-[80vw] lg:static lg:w-56 lg:max-w-none lg:translate-x-0",
+          "flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-950/95 backdrop-blur md:bg-zinc-950/60",
+          "fixed inset-y-0 left-0 z-40 max-w-[82vw] md:static md:w-56 md:max-w-none md:translate-x-0",
           "transition-transform duration-200 ease-out",
           drawerOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="hidden px-4 py-4 lg:block">
+        <div className="hidden px-4 py-4 md:block">
           <div className="text-lg font-bold tracking-tight text-zinc-100">pi-switch</div>
           <div className="text-[11px] text-zinc-500">{t("provider control · web")}</div>
         </div>
-        <div className="flex items-center justify-between px-4 py-3 lg:hidden">
+        <div className="flex items-center justify-between px-4 py-3 md:hidden">
           <div className="text-sm font-semibold text-zinc-100">pi-switch</div>
           <button
             type="button"
@@ -159,7 +159,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           type="button"
           aria-label={t("Close navigation")}
           onClick={() => setDrawerOpen(false)}
-          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px] lg:hidden"
+          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px] md:hidden"
         />
       )}
 
