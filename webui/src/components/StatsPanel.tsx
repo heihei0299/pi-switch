@@ -318,9 +318,9 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
         ))}
         {range === "custom" && (
           <span className="flex flex-wrap items-center gap-2">
-            <Input type="date" aria-label={t("From")} value={customFrom} onChange={onCustomDate("from")} />
+            <Input type="date" aria-label={t("From")} value={customFrom} onChange={onCustomDate("from")} className="!w-auto" />
             <span className="text-xs text-zinc-500">→</span>
-            <Input type="date" aria-label={t("To")} value={customTo} onChange={onCustomDate("to")} />
+            <Input type="date" aria-label={t("To")} value={customTo} onChange={onCustomDate("to")} className="!w-auto" />
             {customError && <span className="text-xs text-red-300">{customError}</span>}
           </span>
         )}
@@ -395,18 +395,18 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             <Card className="overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By provider")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-                <table aria-label={t("By provider")} className="w-full min-w-[640px] text-sm">
+                <table aria-label={t("By provider")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
                       <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Provider")}</th>
                       <th className="pb-1 text-right">{t("Requests")}</th>
                       <th className="pb-1 text-right">{t("OK")}</th>
-                      <th className="pb-1 text-right">{t("Rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
                       <th className="pb-1 text-right">{t("Input")}</th>
                       <th className="pb-1 text-right">{t("Output")}</th>
-                      <th className="pb-1 text-right">{t("Cached")}</th>
-                      <th className="pb-1 text-right">{t("Total")}</th>
-                      <th className="pb-1 text-right">{t("Cache rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cache rate")}</th>
                       <th className="pb-1 text-right">{t("Cost")}</th>
                     </tr>
                   </thead>
@@ -418,20 +418,20 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                           <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 text-zinc-200 backdrop-blur">{name}</td>
                           <td className="py-1 text-right text-zinc-400">{ps.total}</td>
                           <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
-                          <td className="py-1 text-right text-zinc-400">{rate}%</td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">{rate}%</td>
                           <td className="py-1 text-right text-zinc-400">
                             {formatRequestToken(ps.promptTokens)}
                           </td>
                           <td className="py-1 text-right text-zinc-400">
                             {formatRequestToken(ps.outputTokens)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {formatRequestToken(ps.cachedTokens)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {formatRequestToken(ps.promptTokens + ps.outputTokens)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {ps.cacheRate ?? "-"}
                           </td>
                           <td className="py-1 text-right text-zinc-400">{formatCost(ps.cost)}</td>
@@ -448,18 +448,18 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             <Card className="mt-4 overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By model")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-                <table aria-label={t("By model")} className="w-full min-w-[640px] text-sm">
+                <table aria-label={t("By model")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
                       <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Model")}</th>
                       <th className="pb-1 text-right">{t("Requests")}</th>
                       <th className="pb-1 text-right">{t("OK")}</th>
-                      <th className="pb-1 text-right">{t("Rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
                       <th className="pb-1 text-right">{t("Input")}</th>
                       <th className="pb-1 text-right">{t("Output")}</th>
-                      <th className="pb-1 text-right">{t("Cached")}</th>
-                      <th className="pb-1 text-right">{t("Total")}</th>
-                      <th className="pb-1 text-right">{t("Cache rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cache rate")}</th>
                       <th className="pb-1 text-right">{t("Cost")}</th>
                     </tr>
                   </thead>
@@ -475,20 +475,20 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                           </td>
                           <td className="py-1 text-right text-zinc-400">{ms.total}</td>
                           <td className="py-1 text-right text-zinc-400">{ms.ok}</td>
-                          <td className="py-1 text-right text-zinc-400">{rate}%</td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">{rate}%</td>
                           <td className="py-1 text-right text-zinc-400">
                             {formatRequestToken(input)}
                           </td>
                           <td className="py-1 text-right text-zinc-400">
                             {formatRequestToken(output)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {formatRequestToken(ms.cachedTokens ?? 0)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {formatRequestToken(input + output)}
                           </td>
-                          <td className="py-1 text-right text-zinc-400">
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
                             {ms.cacheRate ?? "-"}
                           </td>
                           <td className="py-1 text-right text-zinc-400">{formatCost(ms.cost)}</td>
@@ -515,7 +515,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
               {requestsOpen && (
                 <>
                   <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-                <table aria-label={t("Request details")} className="w-full min-w-[760px] text-sm">
+                <table aria-label={t("Request details")} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
                       <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
@@ -525,10 +525,10 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                       <th className="pb-1 pr-2">{t("Status")}</th>
                       <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                       <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                      <th className="pb-1 text-right">{t("Total")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
                       <th className="pb-1 text-right">{t("Cost")}</th>
                     </tr>
                   </thead>
@@ -629,9 +629,9 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                   ))}
                   {convRange === "custom" && (
                     <span className="flex flex-wrap items-center gap-2">
-                      <Input type="date" aria-label={t("Conversation from")} value={convFrom} onChange={onConvCustomDate("from")} />
+                      <Input type="date" aria-label={t("Conversation from")} value={convFrom} onChange={onConvCustomDate("from")} className="!w-auto" />
                       <span className="text-xs text-zinc-500">→</span>
-                      <Input type="date" aria-label={t("Conversation to")} value={convTo} onChange={onConvCustomDate("to")} />
+                      <Input type="date" aria-label={t("Conversation to")} value={convTo} onChange={onConvCustomDate("to")} className="!w-auto" />
                       {convError && <span className="text-xs text-red-300">{convError}</span>}
                     </span>
                   )}
@@ -641,7 +641,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                 ) : (
                   <>
                     <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-                      <table aria-label={t("By conversation")} className="w-full min-w-[760px] text-sm">
+                      <table aria-label={t("By conversation")} className="w-full min-w-[520px] text-sm sm:min-w-[760px]">
                         <thead className="text-left text-xs text-zinc-500">
                           <tr>
                             <th className="pb-1 pr-2"></th>
@@ -650,10 +650,10 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                             <th className="pb-1 pr-2 text-right">{t("Requests")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Total")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Total")}</th>
                             <th className="pb-1 text-right">{t("Cost")}</th>
                           </tr>
                         </thead>
@@ -685,14 +685,14 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                                 <td className="py-1 pr-2 text-right text-zinc-400">
                                   {formatRequestToken(c.outputTokens)}
                                 </td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.cachedTokens)}
                                 </td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.reasoningTokens)}
                                 </td>
-                                <td className={`py-1 pr-2 text-right ${isLowCacheRate(c.cacheRate) ? "text-red-300" : "text-zinc-400"}`}>{c.cacheRate ?? "-"}</td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className={`hidden py-1 pr-2 text-right sm:table-cell ${isLowCacheRate(c.cacheRate) ? "text-red-300" : "text-zinc-400"}`}>{c.cacheRate ?? "-"}</td>
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.inputTokens + c.outputTokens)}
                                 </td>
                                 <td className="py-1 text-right text-zinc-400">{formatCost(c.cost)}</td>
@@ -859,11 +859,14 @@ function RequestRow({ r, i }: { r: RecentRequest; i: number }) {
           {status}
         </span>
       </td>
-      {tokenCols.map(([label, value, tone]) => (
-        <td key={label} className={`py-1 pr-2 text-right ${tone ?? "text-zinc-400"}`}>
-          {value}
-        </td>
-      ))}
+      {tokenCols.map(([label, value, tone]) => {
+        const hide = label === "Cached" || label === "Reasoning" || label === "Cache rate" || label === "Total" ? "hidden sm:table-cell" : "";
+        return (
+          <td key={label} className={`py-1 pr-2 text-right ${hide} ${tone ?? "text-zinc-400"}`}>
+            {value}
+          </td>
+        );
+      })}
     </tr>
   );
 }
@@ -965,7 +968,7 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
       ) : (
         <>
           <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
-            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full min-w-[760px] text-sm">
+            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
               <thead className="text-left text-xs text-zinc-500">
                 <tr>
                   <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
@@ -975,10 +978,10 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
                   <th className="pb-1 pr-2">{t("Status")}</th>
                   <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                   <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                  <th className="pb-1 text-right">{t("Total")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                  <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
                   <th className="pb-1 text-right">{t("Cost")}</th>
                 </tr>
               </thead>
