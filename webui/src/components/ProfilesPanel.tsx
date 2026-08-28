@@ -595,7 +595,7 @@ function ProfileCardMenu({
       {open && (
         <>
           <button className="fixed inset-0 z-[55]" aria-label={t("Close menu")} onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute right-0 z-[55] mt-1 w-36 rounded-lg border border-[var(--line)] bg-zinc-900 p-1 shadow-xl">
+          <div role="menu" className="absolute right-0 z-[55] mt-1 w-36 rounded-lg border border-line bg-zinc-900 p-1 shadow-xl">
             <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onTest(); }}>{t("Test")}</button>
             <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onCopy(); }}>{t("Copy")}</button>
             <div className="my-1 h-px bg-white/10" />

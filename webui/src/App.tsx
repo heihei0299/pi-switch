@@ -114,7 +114,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
       {/* Sidebar — drawer below lg, static sidebar at lg+ */}
       <aside
         className={cx(
-          "flex shrink-0 flex-col border-r border-[var(--line)] bg-[var(--panel)]/95 backdrop-blur md:bg-[var(--panel)]/60",
+          "flex shrink-0 flex-col border-r border-line bg-panel/95 backdrop-blur md:bg-panel/60",
           sidebarCollapsed
             ? "hidden md:flex md:w-14"
             : "w-64 md:w-56",
@@ -127,14 +127,14 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           {!sidebarCollapsed ? (
             <>
               <div>
-                <div className="font-[var(--font-display)] text-[15px] font-semibold tracking-tight text-zinc-100">pi-switch</div>
+                <div className="font-display text-[15px] font-semibold tracking-tight text-zinc-100">pi-switch</div>
                 <div className="text-[11px] tracking-wide text-zinc-500">{t("provider control · web")}</div>
               </div>
               <button
                 type="button"
                 aria-label={t("Collapse sidebar")}
                 onClick={() => setSidebarCollapsed(true)}
-                className="rounded-md px-1.5 py-1 text-zinc-500 hover:bg-white/5 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]/40"
+                className="rounded-md px-1.5 py-1 text-zinc-500 hover:bg-white/5 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
               >
                 «
               </button>
@@ -144,7 +144,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
               type="button"
               aria-label={t("Expand sidebar")}
               onClick={() => setSidebarCollapsed(false)}
-              className="rounded-md p-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]/40"
+              className="rounded-md p-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
             >
               »
             </button>
@@ -172,16 +172,16 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
                 title={sidebarCollapsed ? t(item.label) : undefined}
                 className={cx(
                   "mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-150 relative",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]/40",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40",
                   active
-                    ? "bg-[var(--signal)]/15 text-amber-200 border border-amber-500/20"
+                    ? "bg-signal/15 text-amber-200 border border-amber-500/20"
                     : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200 border border-transparent",
                   sidebarCollapsed && "justify-center px-2",
                 )}
               >
                 <span className="text-base leading-none">{item.icon}</span>
                 {!sidebarCollapsed && t(item.label)}
-                {sidebarCollapsed && active && <span className="absolute right-1 h-1.5 w-1.5 rounded-full bg-[var(--signal)]" aria-hidden />}
+                {sidebarCollapsed && active && <span className="absolute right-1 h-1.5 w-1.5 rounded-full bg-signal" aria-hidden />}
               </button>
             );
           })}
@@ -206,7 +206,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
               type="button"
               aria-label={t("Show sidebar")}
               onClick={() => setSidebarCollapsed(false)}
-              className="mb-3 hidden items-center gap-1.5 rounded-md border border-[var(--line)] bg-white/5 px-3 py-1.5 text-xs tracking-wide text-zinc-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]/40 md:inline-flex"
+              className="mb-3 hidden items-center gap-1.5 rounded-md border border-line bg-white/5 px-3 py-1.5 text-xs tracking-wide text-zinc-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40 md:inline-flex"
             >
               <span aria-hidden>☰</span> {t("Show sidebar")}
             </button>

@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap");
+@import "tailwindcss";
 
 :root {
   color-scheme: dark;
@@ -11,6 +11,15 @@
   --panel: #131A2B;
   --rail: #1C2536;
   --line: #232B3D;
+}
+
+@theme {
+  --color-signal: #F0C75E;
+  --color-signal-hover: #E8BA45;
+  --color-panel: #131A2B;
+  --color-rail: #1C2536;
+  --color-line: #232B3D;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 html,

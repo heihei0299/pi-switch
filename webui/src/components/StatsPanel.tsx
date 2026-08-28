@@ -359,7 +359,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
         </Card>
       ) : (
         <>
-          <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--panel)]/50 p-3">
+          <div className="mb-4 rounded-xl border-0 bg-white/[0.03] p-3">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               <HeroMetric label={t("Total")} value={String(stats.totalRequests)} accent />
               <HeroMetric label={t("OK")} value={String(stats.okRequests)} tone="green" />
@@ -374,7 +374,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
               <HeroMetric label={t("Reasoning")} value={String(formatTokenDimension(totals?.reasoning))} mono badge="⊆ Output" />
               <HeroMetric label={t("Total")} value={String(formatTotalTokens(totals))} mono accent />
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--line)] pt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/5 pt-3">
               <HeroMetric label="Cost" value={String(formatCost(stats.totalCost))} mono accent />
               {stats.costUnknown ? (
                 <span className="text-xs tracking-wide text-zinc-500">
@@ -390,7 +390,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           </div>
 
           {byProvider.length > 0 && (
-            <Card className="overflow-hidden">
+            <Card className="overflow-hidden border-0">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By provider")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                 <table aria-label={t("By provider")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
@@ -443,7 +443,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {byModel.length > 0 && (
-            <Card className="mt-4 overflow-hidden">
+            <Card className="mt-4 overflow-hidden border-0">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By model")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                 <table aria-label={t("By model")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
@@ -500,7 +500,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {stats.recentRequests?.length ? (
-            <Card className="mt-4 overflow-hidden">
+            <Card className="mt-4 overflow-hidden border-0">
               <button
                 type="button"
                 aria-expanded={requestsOpen}
@@ -602,7 +602,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             </Card>
           ) : null}
 
-          <Card className="mt-4 overflow-hidden">
+          <Card className="mt-4 overflow-hidden border-0">
             <button
               type="button"
               aria-expanded={conversationsOpen}
@@ -798,7 +798,7 @@ function HeroMetric({
         {label}
         {badge && <span className="ml-1 text-[9px] normal-case tracking-normal text-zinc-600">{badge}</span>}
       </div>
-      <div className={cx("mt-1 text-[17px] font-semibold leading-none tracking-tight", mono ? "font-mono tabular-nums" : "font-[var(--font-display)]", color)}>{value}</div>
+      <div className={cx("mt-1 text-[17px] font-semibold leading-none tracking-tight", mono ? "font-mono tabular-nums" : "font-display", color)}>{value}</div>
     </div>
   );
 }
