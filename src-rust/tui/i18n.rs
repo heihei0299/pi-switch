@@ -790,6 +790,7 @@ pub fn toast_models_fetched(count: usize) -> String {
         format!("{} models fetched", count)
     }
 }
+#[allow(dead_code)]
 pub fn toast_models_updated(name: &str) -> String {
     if is_zh() {
         format!("已更新供应商 '{}' 的模型列表", name)

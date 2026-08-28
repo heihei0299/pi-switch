@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 /// 模型目录 enrich 统计（用于可观测性：合并到 Fetch 成功 toast 与 web 响应）
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct EnrichStats {
     pub enriched: usize,
     pub skipped: usize,
@@ -15,11 +15,6 @@ pub struct EnrichStats {
     pub warning: Option<String>,
 }
 
-impl Default for EnrichStats {
-    fn default() -> Self {
-        Self { enriched: 0, skipped: 0, failed: 0, warning: None }
-    }
-}
 
 /// Create ~/.pi-switch/ + ~/.pi/agent/ and seed config.json / models.json if absent.
 /// Shared by the CLI `init` (napi) and the web `POST /api/init`.
@@ -250,6 +245,7 @@ pub fn update_provider_models_with_stats(
 /// - 未命中或字段缺失时保留本地原值，不清 cost/limit
 /// - 按分字段策略覆盖：limit.context/output、cost.input/output/cache_read、reasoning、modalities.input 按目录覆盖，name 仅缺省时补齐
 /// - extra/compat/headers/thinkingLevelMap 不覆盖；cost 仅外层 input/output/cache_read，忽略 tiers/context_over_200k
+#[allow(dead_code)]
 pub fn enrich_models_with_catalog(
     profile: &config::ProviderProfile,
     models: Vec<config::ModelEntry>,
@@ -264,7 +260,7 @@ pub fn enrich_models_with_catalog(
 /// - catalog=None 时视为模型目录不可用，failed = models.len()，warning 来自调用方（如网络失败原因）
 /// - provider 映射失败或目录中无该 provider 时，skipped = models.len()
 /// - 否则 enriched = 命中数，skipped = 未命中数，failed = 0
-/// 模型目录 id 的 provider 前缀剥离（如 deepseek/deepseek-v4-flash -> deepseek-v4-flash），用于全局回退的兼容匹配
+///   模型目录 id 的 provider 前缀剥离（如 deepseek/deepseek-v4-flash -> deepseek-v4-flash），用于全局回退的兼容匹配
 fn normalized_suffix(id: &str) -> &str {
     match id.rfind('/') {
         Some(idx) => &id[idx + 1..],
@@ -389,10 +385,8 @@ pub fn enrich_stats_for_ids(
                 hit = true;
             }
         }
-        if !hit {
-            if find_global_catalog_model(catalog, id).is_some() {
-                hit = true;
-            }
+        if !hit && find_global_catalog_model(catalog, id).is_some() {
+            hit = true;
         }
         if hit {
             enriched += 1;
@@ -529,6 +523,7 @@ fn enrich_single_entry(mut entry: config::ModelEntry, catalog_model: &Value) -> 
 }
 
 /// 同步 enrich 辅助：从本地缓存加载模型目录（若存在），否则跳过；供 `update_provider_models` 等同步路径复用
+#[allow(dead_code)]
 fn try_enrich_from_cache_sync(
     profile: &config::ProviderProfile,
     models: Vec<config::ModelEntry>,
@@ -837,7 +832,7 @@ mod enrich_tests {
         let catalog = fixture_catalog();
         let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
         let warning = Some("模型目录拉取失败，回退到过期缓存: network down".to_string());
-        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), warning.clone());
+        let (_out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), warning.clone());
         assert_eq!(stats.enriched, 1);
         assert_eq!(stats.warning, warning);
     }
@@ -920,7 +915,7 @@ mod enrich_tests {
 
     #[test]
     fn enrich_global_fallback_prefix_compat() {
-        ///provider/model 前缀兼容：如 deepseek/deepseek-v4-flash vs deepseek-v4-flash
+        // provider/model 前缀兼容：如 deepseek/deepseek-v4-flash vs deepseek-v4-flash
         let catalog = json!({
             "deepseek": {
                 "id": "deepseek",
