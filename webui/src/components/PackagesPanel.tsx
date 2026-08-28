@@ -13,8 +13,9 @@ function CapBadge({ label }: { label: string }) {
     <span
       style={{
         fontSize: "0.75rem",
-        color: "#3B82F6",
-        background: "#DBEAFE",
+        color: "#93c5fd",
+        background: "rgba(59,130,246,0.15)",
+        border: "1px solid rgba(59,130,246,0.25)",
         padding: "0.15rem 0.5rem",
         borderRadius: "999px",
       }}
@@ -166,8 +167,9 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
                     <span
                       style={{
                         fontSize: "0.85rem",
-                        color: "#C4612F",
-                        background: "#F2E3D6",
+                        color: "#F0C75E",
+                        background: "rgba(240,199,94,0.15)",
+                        border: "1px solid rgba(240,199,94,0.25)",
                         padding: "0.25rem 0.5rem",
                         borderRadius: "999px",
                       }}
@@ -175,8 +177,8 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
                       v{pkg.version}
                     </span>
                   </div>
-                  <div style={{ fontSize: "0.85rem", color: "#999" }} className="break-all">
-                    {t("ID")}: <code style={{ background: "#f5f5f5", padding: "0.2rem 0.4rem", borderRadius: "3px" }} className="break-all">{pkg.id}</code>
+                  <div style={{ fontSize: "0.85rem", color: "#a1a1aa" }} className="break-all">
+                    {t("ID")}: <code style={{ background: "rgba(255,255,255,0.06)", color: "#e4e4e7", border: "1px solid rgba(255,255,255,0.08)", padding: "0.2rem 0.4rem", borderRadius: "6px" }} className="break-all font-mono text-xs">{pkg.id}</code>
                     {pkg.installedAt && ` • ${t("Installed:")} ${new Date(pkg.installedAt).toLocaleString()}`}
                   </div>
                   {(pkg.hasExtensions || pkg.hasSkills || pkg.hasPrompts || pkg.hasThemes) && (

@@ -359,7 +359,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
         </Card>
       ) : (
         <>
-          <div className="mb-4 rounded-xl border-0 bg-white/[0.03] p-3">
+          <div className="mb-4 rounded-xl border border-line bg-panel/50 p-3">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               <HeroMetric label={t("Total")} value={String(stats.totalRequests)} accent />
               <HeroMetric label={t("OK")} value={String(stats.okRequests)} tone="green" />
@@ -390,13 +390,13 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           </div>
 
           {byProvider.length > 0 && (
-            <Card className="overflow-hidden border-0">
+            <Card className="overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By provider")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                 <table aria-label={t("By provider")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
-                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Provider")}</th>
+                      <th className="sticky left-0 z-10 bg-panel/95 pb-1 pr-2 backdrop-blur">{t("Provider")}</th>
                       <th className="pb-1 text-right">{t("Requests")}</th>
                       <th className="pb-1 text-right">{t("OK")}</th>
                       <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
@@ -413,7 +413,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                       const rate = ps.total > 0 ? Math.round((ps.ok / ps.total) * 100) : 0;
                       return (
                         <tr key={name} className="border-t border-white/5">
-                          <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 text-zinc-200 backdrop-blur">{name}</td>
+                          <td className="sticky left-0 z-10 bg-panel/95 py-1 pr-2 text-zinc-200 backdrop-blur">{name}</td>
                           <td className="py-1 text-right text-zinc-400">{ps.total}</td>
                           <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
                           <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">{rate}%</td>
@@ -443,13 +443,13 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {byModel.length > 0 && (
-            <Card className="mt-4 overflow-hidden border-0">
+            <Card className="mt-4 overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By model")}</div>
               <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                 <table aria-label={t("By model")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
-                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Model")}</th>
+                      <th className="sticky left-0 z-10 bg-panel/95 pb-1 pr-2 backdrop-blur">{t("Model")}</th>
                       <th className="pb-1 text-right">{t("Requests")}</th>
                       <th className="pb-1 text-right">{t("OK")}</th>
                       <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
@@ -468,7 +468,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                       const rate = ms.total > 0 ? Math.round((ms.ok / ms.total) * 100) : 0;
                       return (
                         <tr key={name} className="border-t border-white/5">
-                          <td className="sticky left-0 z-10 max-w-[10rem] truncate bg-zinc-900/95 py-1 pr-2 text-zinc-200 backdrop-blur" title={name}>
+                          <td className="sticky left-0 z-10 max-w-[10rem] truncate bg-panel/95 py-1 pr-2 text-zinc-200 backdrop-blur" title={name}>
                             {name}
                           </td>
                           <td className="py-1 text-right text-zinc-400">{ms.total}</td>
@@ -500,7 +500,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {stats.recentRequests?.length ? (
-            <Card className="mt-4 overflow-hidden border-0">
+            <Card className="mt-4 overflow-hidden">
               <button
                 type="button"
                 aria-expanded={requestsOpen}
@@ -516,7 +516,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                 <table aria-label={t("Request details")} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
-                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
+                      <th className="sticky left-0 z-10 bg-panel/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                       <th className="pb-1 pr-2">{t("Session")}</th>
                       <th className="pb-1 pr-2">{t("Provider")}</th>
                       <th className="pb-1 pr-2">{t("Model")}</th>
@@ -602,7 +602,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             </Card>
           ) : null}
 
-          <Card className="mt-4 overflow-hidden border-0">
+          <Card className="mt-4 overflow-hidden">
             <button
               type="button"
               aria-expanded={conversationsOpen}
@@ -643,7 +643,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                         <thead className="text-left text-xs text-zinc-500">
                           <tr>
                             <th className="pb-1 pr-2"></th>
-                            <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
+                            <th className="sticky left-0 z-10 bg-panel/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                             <th className="pb-1 pr-2">{t("Session")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Requests")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Input")}</th>
@@ -670,7 +670,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                                     {expandedConvs.has(c.conversationId) ? "▾" : "▸"}
                                   </button>
                                 </td>
-                                <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
+                                <td className="sticky left-0 z-10 bg-panel/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
                                   {formatRequestTime(c.lastActive)}
                                 </td>
                                 <td className="py-1 pr-2">
@@ -871,7 +871,7 @@ function RequestRow({ r, i }: { r: RecentRequest; i: number }) {
   ] as const;
   return (
     <tr className="border-t border-white/5">
-      <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
+      <td className="sticky left-0 z-10 bg-panel/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
         {formatRequestTime(r.ts)}
       </td>
       <td className="py-1 pr-2">
@@ -996,7 +996,7 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
             <table aria-label={`Requests of ${conv.conversationId}`} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
               <thead className="text-left text-xs text-zinc-500">
                 <tr>
-                  <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
+                  <th className="sticky left-0 z-10 bg-panel/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                   <th className="pb-1 pr-2">{t("Session")}</th>
                   <th className="pb-1 pr-2">{t("Provider")}</th>
                   <th className="pb-1 pr-2">{t("Model")}</th>
