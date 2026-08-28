@@ -27,7 +27,7 @@ Status: ready-for-agent
 
 ## Implementation Decisions
 
-- 模块与 seams：主 seam 为 `ops` 层的 enrich 链（`src-rust/ops.rs` 的 `fetch_models` / `update_provider_models` 路径内新增 `enrich_models_from_catalog`），伴随 `config::ProviderProfile` 新增可选字段 `modelsDevProvider: Option<String>`（`src-rust/config.rs` 与 `webui/src/types.ts` 同步，`Some` 时显式映射，`None` 时按 preset→目录 key 推断）。目录获取封装为 `ops` 私有模块 `catalog`（职责：`get_or_refresh_catalog()` 负责 `https://models.dev/api.json` 拉取、`~/.pi-switch/cache/models-dev.json` 原子写、24h TTL 判定与降级），仍归属主 seam 的 blast radius，不单独暴露网络 service 缝。
+- 模块与 seams：主 seam 为 `ops` 层的 enrich 链（`src-rust/ops.rs` 的 `fetch_models` / `update_provider_models` 路径内新增 `enrich_models_from_catalog`），伴随 `config::ProviderProfile` 新增可选字段 `modelsDevProvider: Option<String>`（`src-rust/config.rs` 与 `webui/src/types.ts` 同步，`Some` 时显式映射，`None` 时按 preset→目录 key 推断）。目录获取封装为 `catalog` 模块（`src-rust/catalog.rs`，职责：`get_or_refresh_catalog()` 负责 `https://models.dev/api.json` 拉取、`~/.pi-switch/cache/models-dev.json` 原子写、24h TTL 判定与降级），仍归属主 seam 的 blast radius，不单独暴露网络 service 缝。
 - 触发范围：所有“拉取/发现”类路径走目录 enrich（TUI/WebUI 的 Fetch Models、新增/编辑 profile 的自动发现），手工 `provider models` 命令不拦截；`sync_gateway_to_pi` 不直接 enrich，网关模型的元数据随 profile enrich 后自然同步。
 - Provider 映射：`modelsDevProvider` 优先；未填时按 preset 推断（`openrouter→openrouter`、`anthropic→anthropic`、`deepseek→deepseek`、`openai→openai`、`siliconflow→siliconflow` 等），推断失败则跳过 enrich，不报错。
 - 字段映射与覆盖（Q4 分字段策略）：`limit.context→contextWindow`、`limit.output→maxTokens`、`cost.input/output/cache_read→cost.input/output/cacheRead`（单位 $/1M 直接透传，含 `tiers/context_over_200k` 时按最外层 cost 映射）、`reasoning→reasoning`、`modalities.input→input`、`name→name（仅缺省时补齐，手工非空保留）`；其余 `extra/compat/headers/thinkingLevelMap` 不由目录覆盖。

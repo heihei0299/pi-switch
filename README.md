@@ -123,6 +123,7 @@ pi-switch stats                                     # View request statistics
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
 | 🌉 **Model-Name Gateway** | Stateless routing by `profile/model` in the request body, SSE streaming, User-Agent disguise, request-body filtering, OpenAI ↔ Anthropic conversion, Responses ↔ Chat Completions conversion with function tools, native OpenAI Responses passthrough, failover, circuit breaker |
+| 🗂️ **Model Catalog** | Auto-enrich model metadata (cost/limit/reasoning/input) from https://models.dev with 24h cache, per-profile `modelsDevProvider` mapping & global fallback |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
 | 🖥️ **Interactive TUI** | ratatui-powered, Dracula theme, mouse support, vim keys (`hjkl`) |
 | 🌐 **Bilingual** | English / 中文, persisted to config, toggle in Settings |

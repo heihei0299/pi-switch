@@ -122,6 +122,7 @@ pi-switch stats                                     # 查看请求统计
 | ⇥ **cc-switch 导入** | 一键从 cc-switch（Claude Code / Codex / Gemini）导入 provider，按 baseUrl 去重、跳过官方预置项 — CLI、TUI、WebUI 三端支持 |
 | 💡 **内置预设** | OpenRouter、Anthropic、DeepSeek、SiliconFlow、OpenAI — 一键创建配置 |
 | 🌉 **模型名网关** | 无状态按 `profile/model` 路由、SSE 流式、User-Agent 伪装、请求体过滤、OpenAI ↔ Anthropic 转换、Responses ↔ Chat Completions 转换（含 function tools）、原生 OpenAI Responses 透传、故障转移、断路器 |
+| 🗂️ **模型目录** | 从 https://models.dev 自动补齐模型元数据（cost/limit/reasoning/input），24h 缓存、按 profile 的 `modelsDevProvider` 映射与全局回退 |
 | 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |
 | 🖥️ **交互式 TUI** | ratatui 驱动、Dracula 主题、鼠标支持、vim 键位 (`hjkl`) |
 | 🌐 **双语支持** | English / 中文，持久化到配置，Settings 中切换 |
