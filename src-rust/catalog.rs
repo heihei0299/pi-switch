@@ -7,6 +7,17 @@ use std::time::{Duration, SystemTime};
 pub const CATALOG_URL: &str = "https://models.dev/api.json";
 pub const CATALOG_TTL_SECS: u64 = 24 * 3600;
 
+/// 将 preset 推断为模型目录的 provider key（复用 config 的映射，推断失败返回 None，跳过模型元数据 enrich）
+pub fn infer_catalog_provider_key(preset: &str) -> Option<&'static str> {
+    config::preset_to_models_dev_key(preset)
+}
+
+/// 解析 profile 对应的模型目录 provider key（模型元数据 enrich 用）。
+/// 优先级：显式 modelsDevProvider > preset 推断；均无或推断失败则返回 None（跳过 enrich，不报错）
+pub fn resolve_catalog_provider(profile: &config::ProviderProfile) -> Option<String> {
+    config::resolve_models_dev_provider(profile)
+}
+
 /// 模型目录缓存路径：`~/.pi-switch/cache/models-dev.json`
 pub fn catalog_cache_path() -> PathBuf {
     config::config_dir().join("cache").join("models-dev.json")
@@ -305,5 +316,38 @@ mod tests {
         assert_eq!(result["a"], 1);
         assert!(path.exists());
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn resolve_catalog_provider_prefers_explicit_over_preset() {
+        let mut profile = config::ProviderProfile {
+            preset: Some("anthropic".into()),
+            models_dev_provider: Some("openai".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_catalog_provider(&profile).as_deref(),
+            Some("openai")
+        );
+        profile.models_dev_provider = None;
+        assert_eq!(
+            resolve_catalog_provider(&profile).as_deref(),
+            Some("anthropic")
+        );
+    }
+
+    #[test]
+    fn infer_catalog_provider_key_maps_known_presets() {
+        assert_eq!(infer_catalog_provider_key("openai"), Some("openai"));
+        assert_eq!(infer_catalog_provider_key("unknown"), None);
+    }
+
+    #[test]
+    fn resolve_catalog_provider_none_when_no_mapping() {
+        let profile = config::ProviderProfile {
+            preset: Some("custom".into()),
+            ..Default::default()
+        };
+        assert!(resolve_catalog_provider(&profile).is_none());
     }
 }

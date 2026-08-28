@@ -39,6 +39,8 @@ export interface ProviderProfile {
   models: ModelEntry[];
   oauth?: "radius";
   preset?: string;
+  /** 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）；显式值优先，未填时按 preset 推断，推断失败跳过模型元数据 enrich */
+  modelsDevProvider?: string;
   headers?: Record<string, string>;
   authHeader?: boolean;
   compat?: Record<string, unknown>;

@@ -120,6 +120,10 @@ pub struct ProviderProfile {
     pub oauth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）。
+    /// 显式值优先；为空时按 preset 推断（如 openrouter→openrouter）；推断失败则跳过模型元数据 enrich，不阻断保存。
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "modelsDevProvider")]
+    pub models_dev_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,6 +154,37 @@ pub struct ProviderProfile {
     pub spoof: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 将 preset id 推断为模型目录的 provider key（用于模型元数据 enrich）。
+/// 已知映射：openrouter/anthropic/deepseek/openai/siliconflow 等（与目录 key 一致）。
+/// 未知 preset 返回 None，调用方应跳过 enrich 而非报错。
+pub fn preset_to_models_dev_key(preset: &str) -> Option<&'static str> {
+    match preset {
+        "openrouter" => Some("openrouter"),
+        "anthropic" => Some("anthropic"),
+        "deepseek" => Some("deepseek"),
+        "openai" => Some("openai"),
+        "siliconflow" => Some("siliconflow"),
+        _ => None,
+    }
+}
+
+/// 解析 profile 对应的模型目录 provider key（用于模型元数据 enrich）。
+/// 优先级：显式 modelsDevProvider > preset 推断；均无或推断失败则返回 None（跳过 enrich，不报错）。
+pub fn resolve_models_dev_provider(profile: &ProviderProfile) -> Option<String> {
+    if let Some(ref raw) = profile.models_dev_provider {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(ref preset) = profile.preset {
+        if let Some(key) = preset_to_models_dev_key(preset) {
+            return Some(key.to_string());
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -782,6 +817,31 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
+pub(crate) fn models_dev_provider_warning(name: &str, profile: &ProviderProfile) -> Option<ValidationIssue> {
+    let raw = profile.models_dev_provider.as_ref()?.trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    let known = [
+        "openrouter",
+        "anthropic",
+        "deepseek",
+        "openai",
+        "siliconflow",
+    ];
+    if known.contains(&raw.as_str()) {
+        return None;
+    }
+    Some(ValidationIssue {
+        level: "warning".into(),
+        path: format!("profiles.{}.modelsDevProvider", name),
+        message: format!(
+            "未知的模型目录 provider '{}'，模型元数据 enrich 时将跳过（不阻断保存）",
+            raw
+        ),
+    })
+}
+
 pub fn validate_config() -> Result<Vec<ValidationIssue>> {
     let config = load_config()?;
     let mut issues = Vec::new();
@@ -824,6 +884,10 @@ pub fn validate_config() -> Result<Vec<ValidationIssue>> {
                 path: format!("profiles.{}.models", name),
                 message: "No models defined".into(),
             });
+        }
+
+        if let Some(warning) = models_dev_provider_warning(name, &profile) {
+            issues.push(warning);
         }
     }
 
@@ -1059,5 +1123,187 @@ mod tests {
     fn settings_defaults_inject_opencode_attribution_to_true() {
         let settings: Settings = serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
         assert!(settings.inject_opencode_attribution);
+    }
+
+    // ── Ticket 02: 模型目录映射字段 ─────────────────────────────────
+
+    #[test]
+    fn models_dev_provider_deserializes_none_when_missing() {
+        // 旧配置无 modelsDevProvider 时兼容为 None
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions"}}"#,
+        )
+        .expect("valid provider");
+        assert!(profile.models_dev_provider.is_none());
+        assert!(profile.preset.is_none());
+    }
+
+    #[test]
+    fn models_dev_provider_round_trips_and_preserves_explicit_value() {
+        let input = r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions","preset":"openai","modelsDevProvider":"openai","models":[]}}"#;
+        let (_name, profile) = parse_provider_wrapper(input).expect("valid provider");
+        assert_eq!(profile.models_dev_provider.as_deref(), Some("openai"));
+        assert_eq!(profile.preset.as_deref(), Some("openai"));
+        let value = serde_json::to_value(&profile).expect("serializable");
+        assert_eq!(value["modelsDevProvider"], "openai");
+        assert_eq!(value["preset"], "openai");
+        // round-trip via wrapper
+        let formatted = format_provider_wrapper(input).expect("format");
+        let (_, reparsed) = parse_provider_wrapper(&formatted).expect("reparsed");
+        assert_eq!(reparsed.models_dev_provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn models_dev_provider_skip_serializing_when_none() {
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions"}}"#,
+        )
+        .expect("valid provider");
+        let value = serde_json::to_value(&profile).expect("serializable");
+        assert!(value.get("modelsDevProvider").is_none());
+        // Some 时应序列化
+        let mut with = profile.clone();
+        with.models_dev_provider = Some("openai".into());
+        let v2 = serde_json::to_value(&with).expect("serializable");
+        assert_eq!(v2["modelsDevProvider"], "openai");
+    }
+
+    #[test]
+    fn models_dev_provider_allows_unknown_key_without_error() {
+        // validate_provider_profile 对未知 modelsDevProvider 仅 warning，不阻断
+        let mut profile = crate::config::ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            ..Default::default()
+        };
+        profile.models_dev_provider = Some("unknown_provider_xyz".into());
+        let result = crate::config::validate_provider_profile("custom", &profile);
+        assert!(result.is_ok(), "unknown modelsDevProvider should not error: {:?}", result);
+    }
+
+    #[test]
+    fn preset_to_models_dev_key_maps_known_presets() {
+        use crate::config::preset_to_models_dev_key;
+        assert_eq!(preset_to_models_dev_key("openrouter"), Some("openrouter"));
+        assert_eq!(preset_to_models_dev_key("anthropic"), Some("anthropic"));
+        assert_eq!(preset_to_models_dev_key("deepseek"), Some("deepseek"));
+        assert_eq!(preset_to_models_dev_key("openai"), Some("openai"));
+        assert_eq!(preset_to_models_dev_key("siliconflow"), Some("siliconflow"));
+        assert_eq!(preset_to_models_dev_key("unknown"), None);
+        assert_eq!(preset_to_models_dev_key(""), None);
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_prefers_explicit_over_preset() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let mut p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            preset: Some("anthropic".into()),
+            models_dev_provider: Some("openai".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_models_dev_provider(&p).as_deref(),
+            Some("openai")
+        );
+        // explicit trimmed
+        p.models_dev_provider = Some("  deepseek  ".into());
+        assert_eq!(
+            resolve_models_dev_provider(&p).as_deref(),
+            Some("deepseek")
+        );
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_falls_back_to_preset() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            preset: Some("openai".into()),
+            models_dev_provider: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_models_dev_provider(&p).as_deref(),
+            Some("openai")
+        );
+        // 对 siliconflow 同理
+        let p2 = ProviderProfile {
+            preset: Some("siliconflow".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_models_dev_provider(&p2).as_deref(),
+            Some("siliconflow")
+        );
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_none_when_no_mapping() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        // 无显式、无 preset
+        let p = ProviderProfile::default();
+        assert!(resolve_models_dev_provider(&p).is_none());
+        // 未知 preset 且无显式
+        let p2 = ProviderProfile {
+            preset: Some("custom-preset".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p2).is_none());
+        // 显式为空白时回退到 preset，preset 未知则 None
+        let p3 = ProviderProfile {
+            preset: Some("custom-preset".into()),
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p3).is_none());
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_trims_whitespace_and_fallbacks() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let p = ProviderProfile {
+            preset: Some("openai".into()),
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        // 空白显式应 fallback 到 preset
+        assert_eq!(
+            resolve_models_dev_provider(&p).as_deref(),
+            Some("openai")
+        );
+        let p2 = ProviderProfile {
+            preset: None,
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p2).is_none());
+    }
+
+    #[test]
+    fn models_dev_provider_warning_for_unknown_key() {
+        use crate::config::ProviderProfile;
+        let p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            models_dev_provider: Some("unknown_provider".into()),
+            ..Default::default()
+        };
+        let w = crate::config::models_dev_provider_warning("custom", &p);
+        assert!(w.is_some());
+        let w = w.unwrap();
+        assert_eq!(w.level, "warning");
+        assert!(w.path.contains("modelsDevProvider"));
+        // 已知 key 不产生 warning
+        let p2 = ProviderProfile {
+            models_dev_provider: Some("openai".into()),
+            ..Default::default()
+        };
+        assert!(crate::config::models_dev_provider_warning("custom", &p2).is_none());
+        // None 不产生 warning
+        let p3 = ProviderProfile::default();
+        assert!(crate::config::models_dev_provider_warning("custom", &p3).is_none());
     }
 }
