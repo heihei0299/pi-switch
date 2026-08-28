@@ -52,7 +52,7 @@ export function Card({
 
 export function SectionTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <div className="mb-3 flex items-baseline justify-between">
+    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
       <h2 className="text-lg font-semibold text-zinc-100">{children}</h2>
       {hint && <span className="text-xs text-zinc-500">{hint}</span>}
     </div>
@@ -164,19 +164,20 @@ export function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 py-10"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-2 py-4 sm:p-4 sm:py-10"
       onMouseDown={onClose}
     >
       <div
         className={cx(
-          "w-full rounded-2xl border border-white/10 bg-zinc-900 p-5 shadow-2xl",
+          "my-auto w-full rounded-xl border border-white/10 bg-zinc-900 p-4 shadow-2xl sm:rounded-2xl sm:p-5",
+          "max-h-[92vh] overflow-y-auto overscroll-contain",
           wide ? "max-w-3xl" : "max-w-xl",
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-zinc-100">{title}</h3>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200" aria-label="Close">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="min-w-0 text-base font-semibold text-zinc-100">{title}</h3>
+          <button onClick={onClose} className="shrink-0 text-zinc-500 hover:text-zinc-200" aria-label="Close">
             ✕
           </button>
         </div>
@@ -204,7 +205,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2">
+      <div className="fixed bottom-4 left-2 right-2 z-[60] flex flex-col gap-2 sm:left-auto sm:right-4 sm:w-80">
         {toasts.map((t) => (
           <div
             key={t.id}

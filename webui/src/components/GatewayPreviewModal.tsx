@@ -90,7 +90,7 @@ export function GatewayPreviewModal({
             aria-label="proposed json"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            className="h-80 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70"
+            className="h-64 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70 sm:h-80"
           />
           {!validation.ok && (
             <div className="mt-2 rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {validation.error}</div>

@@ -114,9 +114,9 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
         <SectionTitle>📦 {t("Packages")}</SectionTitle>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div className="flex flex-wrap gap-2">
           <Button onClick={handleImport}>📥 {t("Import from Pi Agent")}</Button>
           <Button onClick={() => setAdding(!adding)}>
             {adding ? t("Cancel") : t("+ Add Package")}
@@ -159,10 +159,10 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {packages.map((pkg) => (
             <Card key={pkg.id} style={{ padding: "1.5rem" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
-                    <h3 style={{ margin: 0, fontSize: "1.1rem" }}>{pkg.name}</h3>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <h3 style={{ margin: 0, fontSize: "1.1rem" }} className="truncate">{pkg.name}</h3>
                     <span
                       style={{
                         fontSize: "0.85rem",
@@ -175,12 +175,12 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
                       v{pkg.version}
                     </span>
                   </div>
-                  <div style={{ fontSize: "0.85rem", color: "#999" }}>
-                    {t("ID")}: <code style={{ background: "#f5f5f5", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>{pkg.id}</code>
+                  <div style={{ fontSize: "0.85rem", color: "#999" }} className="break-all">
+                    {t("ID")}: <code style={{ background: "#f5f5f5", padding: "0.2rem 0.4rem", borderRadius: "3px" }} className="break-all">{pkg.id}</code>
                     {pkg.installedAt && ` • ${t("Installed:")} ${new Date(pkg.installedAt).toLocaleString()}`}
                   </div>
                   {(pkg.hasExtensions || pkg.hasSkills || pkg.hasPrompts || pkg.hasThemes) && (
-                    <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.5rem" }}>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
                       {pkg.hasExtensions && <CapBadge label={t("extensions")} />}
                       {pkg.hasSkills && <CapBadge label={t("skills")} />}
                       {pkg.hasPrompts && <CapBadge label={t("prompts")} />}
@@ -188,7 +188,7 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
                     </div>
                   )}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                <div className="flex flex-wrap items-center gap-3 sm:justify-end">
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                     <span style={{ fontSize: "0.9rem", color: "#666" }}>
                       {pkg.enabled ? t("Enabled") : t("Disabled")}

@@ -317,7 +317,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           </Button>
         ))}
         {range === "custom" && (
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2">
             <Input type="date" aria-label={t("From")} value={customFrom} onChange={onCustomDate("from")} />
             <span className="text-xs text-zinc-500">→</span>
             <Input type="date" aria-label={t("To")} value={customTo} onChange={onCustomDate("to")} />
@@ -392,111 +392,117 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           )}
 
           {byProvider.length > 0 && (
-            <Card>
+            <Card className="overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By provider")}</div>
-              <table aria-label={t("By provider")} className="w-full text-sm">
-                <thead className="text-left text-xs text-zinc-500">
-                  <tr>
-                    <th className="pb-1">{t("Provider")}</th>
-                    <th className="pb-1 text-right">{t("Requests")}</th>
-                    <th className="pb-1 text-right">{t("OK")}</th>
-                    <th className="pb-1 text-right">{t("Rate")}</th>
-                    <th className="pb-1 text-right">{t("Input")}</th>
-                    <th className="pb-1 text-right">{t("Output")}</th>
-                    <th className="pb-1 text-right">{t("Cached")}</th>
-                    <th className="pb-1 text-right">{t("Total")}</th>
-                    <th className="pb-1 text-right">{t("Cache rate")}</th>
-                    <th className="pb-1 text-right">{t("Cost")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byProvider.map(([name, ps]) => {
-                    const rate = ps.total > 0 ? Math.round((ps.ok / ps.total) * 100) : 0;
-                    return (
-                      <tr key={name} className="border-t border-white/5">
-                        <td className="py-1 text-zinc-200">{name}</td>
-                        <td className="py-1 text-right text-zinc-400">{ps.total}</td>
-                        <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
-                        <td className="py-1 text-right text-zinc-400">{rate}%</td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(ps.promptTokens)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(ps.outputTokens)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(ps.cachedTokens)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(ps.promptTokens + ps.outputTokens)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {ps.cacheRate ?? "-"}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">{formatCost(ps.cost)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("By provider")} className="w-full min-w-[640px] text-sm">
+                  <thead className="text-left text-xs text-zinc-500">
+                    <tr>
+                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Provider")}</th>
+                      <th className="pb-1 text-right">{t("Requests")}</th>
+                      <th className="pb-1 text-right">{t("OK")}</th>
+                      <th className="pb-1 text-right">{t("Rate")}</th>
+                      <th className="pb-1 text-right">{t("Input")}</th>
+                      <th className="pb-1 text-right">{t("Output")}</th>
+                      <th className="pb-1 text-right">{t("Cached")}</th>
+                      <th className="pb-1 text-right">{t("Total")}</th>
+                      <th className="pb-1 text-right">{t("Cache rate")}</th>
+                      <th className="pb-1 text-right">{t("Cost")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byProvider.map(([name, ps]) => {
+                      const rate = ps.total > 0 ? Math.round((ps.ok / ps.total) * 100) : 0;
+                      return (
+                        <tr key={name} className="border-t border-white/5">
+                          <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 text-zinc-200 backdrop-blur">{name}</td>
+                          <td className="py-1 text-right text-zinc-400">{ps.total}</td>
+                          <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
+                          <td className="py-1 text-right text-zinc-400">{rate}%</td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.promptTokens)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.outputTokens)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.cachedTokens)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.promptTokens + ps.outputTokens)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {ps.cacheRate ?? "-"}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{formatCost(ps.cost)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
 
           {byModel.length > 0 && (
-            <Card className="mt-4">
+            <Card className="mt-4 overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By model")}</div>
-              <table aria-label={t("By model")} className="w-full text-sm">
-                <thead className="text-left text-xs text-zinc-500">
-                  <tr>
-                    <th className="pb-1">{t("Model")}</th>
-                    <th className="pb-1 text-right">{t("Requests")}</th>
-                    <th className="pb-1 text-right">{t("OK")}</th>
-                    <th className="pb-1 text-right">{t("Rate")}</th>
-                    <th className="pb-1 text-right">{t("Input")}</th>
-                    <th className="pb-1 text-right">{t("Output")}</th>
-                    <th className="pb-1 text-right">{t("Cached")}</th>
-                    <th className="pb-1 text-right">{t("Total")}</th>
-                    <th className="pb-1 text-right">{t("Cache rate")}</th>
-                    <th className="pb-1 text-right">{t("Cost")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byModel.map(([name, ms]) => {
-                    const input = ms.promptTokens ?? 0;
-                    const output = ms.outputTokens ?? 0;
-                    const rate = ms.total > 0 ? Math.round((ms.ok / ms.total) * 100) : 0;
-                    return (
-                      <tr key={name} className="border-t border-white/5">
-                        <td className="py-1 text-zinc-200">{name}</td>
-                        <td className="py-1 text-right text-zinc-400">{ms.total}</td>
-                        <td className="py-1 text-right text-zinc-400">{ms.ok}</td>
-                        <td className="py-1 text-right text-zinc-400">{rate}%</td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(input)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(output)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(ms.cachedTokens ?? 0)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatRequestToken(input + output)}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {ms.cacheRate ?? "-"}
-                        </td>
-                        <td className="py-1 text-right text-zinc-400">{formatCost(ms.cost)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("By model")} className="w-full min-w-[640px] text-sm">
+                  <thead className="text-left text-xs text-zinc-500">
+                    <tr>
+                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Model")}</th>
+                      <th className="pb-1 text-right">{t("Requests")}</th>
+                      <th className="pb-1 text-right">{t("OK")}</th>
+                      <th className="pb-1 text-right">{t("Rate")}</th>
+                      <th className="pb-1 text-right">{t("Input")}</th>
+                      <th className="pb-1 text-right">{t("Output")}</th>
+                      <th className="pb-1 text-right">{t("Cached")}</th>
+                      <th className="pb-1 text-right">{t("Total")}</th>
+                      <th className="pb-1 text-right">{t("Cache rate")}</th>
+                      <th className="pb-1 text-right">{t("Cost")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byModel.map(([name, ms]) => {
+                      const input = ms.promptTokens ?? 0;
+                      const output = ms.outputTokens ?? 0;
+                      const rate = ms.total > 0 ? Math.round((ms.ok / ms.total) * 100) : 0;
+                      return (
+                        <tr key={name} className="border-t border-white/5">
+                          <td className="sticky left-0 z-10 max-w-[10rem] truncate bg-zinc-900/95 py-1 pr-2 text-zinc-200 backdrop-blur" title={name}>
+                            {name}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{ms.total}</td>
+                          <td className="py-1 text-right text-zinc-400">{ms.ok}</td>
+                          <td className="py-1 text-right text-zinc-400">{rate}%</td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(input)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(output)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ms.cachedTokens ?? 0)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(input + output)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {ms.cacheRate ?? "-"}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{formatCost(ms.cost)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
 
           {stats.recentRequests?.length ? (
-            <Card className="mt-4">
+            <Card className="mt-4 overflow-hidden">
               <button
                 type="button"
                 aria-expanded={requestsOpen}
@@ -508,11 +514,11 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
               </button>
               {requestsOpen && (
                 <>
-                  <div className="overflow-x-auto">
-                <table aria-label={t("Request details")} className="w-full text-sm">
+                  <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("Request details")} className="w-full min-w-[760px] text-sm">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
-                      <th className="pb-1 pr-2">{t("Time")}</th>
+                      <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                       <th className="pb-1 pr-2">{t("Session")}</th>
                       <th className="pb-1 pr-2">{t("Provider")}</th>
                       <th className="pb-1 pr-2">{t("Model")}</th>
@@ -598,7 +604,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             </Card>
           ) : null}
 
-          <Card className="mt-4">
+          <Card className="mt-4 overflow-hidden">
             <button
               type="button"
               aria-expanded={conversationsOpen}
@@ -622,7 +628,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                     </Button>
                   ))}
                   {convRange === "custom" && (
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-2">
                       <Input type="date" aria-label={t("Conversation from")} value={convFrom} onChange={onConvCustomDate("from")} />
                       <span className="text-xs text-zinc-500">→</span>
                       <Input type="date" aria-label={t("Conversation to")} value={convTo} onChange={onConvCustomDate("to")} />
@@ -634,12 +640,12 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                   <div className="text-sm text-zinc-500">{t("No conversation data in this range.")}</div>
                 ) : (
                   <>
-                    <div className="overflow-x-auto">
-                      <table aria-label={t("By conversation")} className="w-full text-sm">
+                    <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                      <table aria-label={t("By conversation")} className="w-full min-w-[760px] text-sm">
                         <thead className="text-left text-xs text-zinc-500">
                           <tr>
                             <th className="pb-1 pr-2"></th>
-                            <th className="pb-1 pr-2">{t("Time")}</th>
+                            <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                             <th className="pb-1 pr-2">{t("Session")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Requests")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Input")}</th>
@@ -666,7 +672,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                                     {expandedConvs.has(c.conversationId) ? "▾" : "▸"}
                                   </button>
                                 </td>
-                                <td className="py-1 pr-2 whitespace-nowrap text-zinc-500">
+                                <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
                                   {formatRequestTime(c.lastActive)}
                                 </td>
                                 <td className="py-1 pr-2">
@@ -840,7 +846,7 @@ function RequestRow({ r, i }: { r: RecentRequest; i: number }) {
   ] as const;
   return (
     <tr className="border-t border-white/5">
-      <td className="py-1 pr-2 whitespace-nowrap text-zinc-500">
+      <td className="sticky left-0 z-10 bg-zinc-900/95 py-1 pr-2 whitespace-nowrap text-zinc-500 backdrop-blur">
         {formatRequestTime(r.ts)}
       </td>
       <td className="py-1 pr-2">
@@ -958,11 +964,11 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
         <div className="text-sm text-zinc-500">No requests in this conversation.</div>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full text-sm">
+          <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
+            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full min-w-[760px] text-sm">
               <thead className="text-left text-xs text-zinc-500">
                 <tr>
-                  <th className="pb-1 pr-2">{t("Time")}</th>
+                  <th className="sticky left-0 z-10 bg-zinc-900/95 pb-1 pr-2 backdrop-blur">{t("Time")}</th>
                   <th className="pb-1 pr-2">{t("Session")}</th>
                   <th className="pb-1 pr-2">{t("Provider")}</th>
                   <th className="pb-1 pr-2">{t("Model")}</th>

@@ -49,6 +49,7 @@ function ShellWithLang() {
 
 function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }) {
   const [nav, setNav] = useState<NavKey>("home");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { t } = useI18n();
@@ -73,19 +74,71 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
     await refresh();
   }, [refresh]);
 
+  const handleNav = useCallback((key: NavKey) => {
+    setNav(key);
+    setDrawerOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-white/10 bg-zinc-950/60">
-        <div className="px-4 py-4">
+    <div className="flex h-full flex-col lg:flex-row">
+      {/* Mobile top bar */}
+      <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-zinc-950 px-4 py-3 lg:hidden">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            aria-label={t("Open navigation")}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen((v) => !v)}
+            className="rounded-md border border-white/10 bg-white/5 p-2 text-zinc-200 hover:bg-white/10"
+          >
+            <span aria-hidden className="block text-base leading-none">☰</span>
+          </button>
+          <div>
+            <div className="text-sm font-bold tracking-tight text-zinc-100">pi-switch</div>
+            <div className="text-[11px] text-zinc-500">{t("provider control · web")}</div>
+          </div>
+        </div>
+        <div className="text-xs text-zinc-500">{t(NAV.find((n) => n.key === nav)?.label ?? "")}</div>
+      </header>
+
+      {/* Sidebar — drawer below lg, static sidebar at lg+ */}
+      <aside
+        className={cx(
+          "flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-950/95 backdrop-blur lg:bg-zinc-950/60",
+          "fixed inset-y-0 left-0 z-40 max-w-[80vw] lg:static lg:w-56 lg:max-w-none lg:translate-x-0",
+          "transition-transform duration-200 ease-out",
+          drawerOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="hidden px-4 py-4 lg:block">
           <div className="text-lg font-bold tracking-tight text-zinc-100">pi-switch</div>
           <div className="text-[11px] text-zinc-500">{t("provider control · web")}</div>
         </div>
-        <nav className="flex-1 px-2">
+        <div className="flex items-center justify-between px-4 py-3 lg:hidden">
+          <div className="text-sm font-semibold text-zinc-100">pi-switch</div>
+          <button
+            type="button"
+            aria-label={t("Close navigation")}
+            onClick={() => setDrawerOpen(false)}
+            className="rounded-md px-2 py-1 text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+          >
+            ✕
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto px-2 py-2">
           {NAV.map((item) => (
             <button
               key={item.key}
-              onClick={() => setNav(item.key)}
+              onClick={() => handleNav(item.key)}
               className={cx(
                 "mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm",
                 nav === item.key
@@ -98,18 +151,25 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
             </button>
           ))}
         </nav>
-        <div className="px-4 py-3 text-[11px] text-zinc-600">
-          {t("CLI · TUI · WebUI — same core")}
-        </div>
+        <div className="px-4 py-3 text-[11px] text-zinc-600">{t("CLI · TUI · WebUI — same core")}</div>
       </aside>
 
+      {drawerOpen && (
+        <button
+          type="button"
+          aria-label={t("Close navigation")}
+          onClick={() => setDrawerOpen(false)}
+          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px] lg:hidden"
+        />
+      )}
+
       {/* Main */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-6 py-6">
+      <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
           {error && (
             <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200">
               <div className="font-medium">{t("Could not load config")}</div>
-              <div className="mt-1 text-red-300/80">{error}</div>
+              <div className="mt-1 break-words text-red-300/80">{error}</div>
               <Button variant="primary" className="mt-3" onClick={() => void initConfig()}>
                 {t("Initialize config")}
               </Button>
@@ -120,7 +180,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
 
           {state && (
             <>
-              {nav === "home" && <HomePanel state={state} refresh={refresh} onNavigate={setNav} />}
+              {nav === "home" && <HomePanel state={state} refresh={refresh} onNavigate={handleNav} />}
               {nav === "profiles" && <ProfilesPanel state={state} refresh={refresh} />}
               {nav === "proxy" && <ProxyPanel state={state} refresh={refresh} />}
               {nav === "packages" && <PackagesPanel refresh={refresh} />}

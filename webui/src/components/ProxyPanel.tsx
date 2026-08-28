@@ -36,18 +36,18 @@ export function ProxyPanel({
       <SectionTitle hint={t("routes by profile/model in the request body")}>{t("Proxy")}</SectionTitle>
 
       <Card className="mb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
             <Badge tone={status?.running ? "green" : "zinc"}>
               {status?.running ? t("running") : t("stopped")}
             </Badge>
             {status?.running && (
-              <span className="text-sm text-zinc-400">
+              <span className="break-all text-sm text-zinc-400">
                 PID {status.pid} · http://{status.host}:{status.port}
               </span>
             )}
           </div>
-          <Button onClick={() => void loadStatus()}>{t("Refresh")}</Button>
+          <Button onClick={() => void loadStatus()} className="self-start sm:self-auto">{t("Refresh")}</Button>
         </div>
         {status?.message && <div className="mt-2 text-xs text-zinc-500">{status.message}</div>}
 
@@ -59,7 +59,7 @@ export function ProxyPanel({
             <Input value={port} onChange={(e) => setPort(e.target.value)} />
           </Field>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="primary"
             disabled={status?.running}
