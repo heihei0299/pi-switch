@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Badge, Button, Card, Field, Input, SectionTitle } from "./ui";
 import { useAction } from "./ui";
 import { useI18n } from "../i18n";
+import { GatewayPreviewModal } from "./GatewayPreviewModal";
 
 export function ProxyPanel({
   state,
@@ -17,6 +18,7 @@ export function ProxyPanel({
   const [status, setStatus] = useState<DaemonResult | null>(null);
   const [host, setHost] = useState(state.settings.proxy.host);
   const [port, setPort] = useState(String(state.settings.proxy.port));
+  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
 
   const loadStatus = async () => {
     try {
@@ -78,10 +80,33 @@ export function ProxyPanel({
           >
             {t("Stop")}
           </Button>
+          <Button
+            onClick={async () => {
+              const preview = await api.previewGateway();
+              setGatewayPreview(preview as any);
+            }}
+          >
+            {t("Preview gateway")}
+          </Button>
         </div>
       </Card>
 
       <FailoverEditor state={state} refresh={refresh} />
+      {gatewayPreview && (
+        <GatewayPreviewModal
+          current={gatewayPreview.current as any}
+          proposed={gatewayPreview.proposed as any}
+          conflicts={gatewayPreview.conflicts}
+          onClose={() => setGatewayPreview(null)}
+          onConfirm={async (edited) => {
+            if (JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
+              await api.applyGateway(edited);
+            }
+            setGatewayPreview(null);
+            await refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -96,6 +121,8 @@ function FailoverEditor({
   const run = useAction();
   const { t } = useI18n();
   const [chain, setChain] = useState<string[]>(state.settings.proxy.failover ?? []);
+  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
+  const [pendingChain, setPendingChain] = useState<string[] | null>(null);
 
   const nonProxy = Object.entries(state.profiles)
     .filter(([, p]) => !p.proxy)
@@ -110,68 +137,95 @@ function FailoverEditor({
     setChain(next);
   };
 
+  async function saveWithPreview() {
+    const preview = await api.previewGateway();
+    setPendingChain(chain);
+    setGatewayPreview(preview as any);
+  }
+
+  async function handlePreviewConfirm(edited: unknown) {
+    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
+      await api.applyGateway(edited);
+    }
+    await api.setFailover(pendingChain ?? chain);
+    setGatewayPreview(null);
+    setPendingChain(null);
+    await refresh();
+  }
+
   return (
-    <Card>
-      <div className="mb-1 text-sm font-semibold text-zinc-200">{t("Failover chain")}</div>
-      <div className="mb-3 text-xs text-zinc-500">
-        {t("Same-model fallback order when the primary provider fails. Proxy profiles are excluded.")}
-      </div>
+    <>
+      <Card>
+        <div className="mb-1 text-sm font-semibold text-zinc-200">{t("Failover chain")}</div>
+        <div className="mb-3 text-xs text-zinc-500">
+          {t("Same-model fallback order when the primary provider fails. Proxy profiles are excluded.")}
+        </div>
 
-      <div className="space-y-1">
-        {chain.length === 0 && (
-          <div className="text-sm text-zinc-500">{t("No failover configured.")}</div>
-        )}
-        {chain.map((name, i) => (
-          <div
-            key={name}
-            className="flex items-center justify-between rounded-md border border-white/10 px-2 py-1.5 text-sm"
-          >
-            <span className="text-zinc-200">
-              <span className="mr-2 text-zinc-500">{i + 1}.</span>
-              {name}
-            </span>
-            <div className="flex gap-1">
-              <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, -1)}>
-                ↑
-              </button>
-              <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, 1)}>
-                ↓
-              </button>
-              <button
-                className="px-1 text-zinc-400 hover:text-red-300"
-                onClick={() => setChain(chain.filter((x) => x !== name))}
-              >
-                ✕
-              </button>
+        <div className="space-y-1">
+          {chain.length === 0 && (
+            <div className="text-sm text-zinc-500">{t("No failover configured.")}</div>
+          )}
+          {chain.map((name, i) => (
+            <div
+              key={name}
+              className="flex items-center justify-between rounded-md border border-white/10 px-2 py-1.5 text-sm"
+            >
+              <span className="text-zinc-200">
+                <span className="mr-2 text-zinc-500">{i + 1}.</span>
+                {name}
+              </span>
+              <div className="flex gap-1">
+                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, -1)}>
+                  ↑
+                </button>
+                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, 1)}>
+                  ↓
+                </button>
+                <button
+                  className="px-1 text-zinc-400 hover:text-red-300"
+                  onClick={() => setChain(chain.filter((x) => x !== name))}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        {available.length > 0 && (
-          <select
-            className="rounded-md border border-white/10 bg-zinc-950/60 px-2 py-1.5 text-sm text-zinc-100"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) setChain([...chain, e.target.value]);
-            }}
+        <div className="mt-3 flex items-center gap-2">
+          {available.length > 0 && (
+            <select
+              className="rounded-md border border-white/10 bg-zinc-950/60 px-2 py-1.5 text-sm text-zinc-100"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) setChain([...chain, e.target.value]);
+              }}
+            >
+              <option value="">+ add profile…</option>
+              {available.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button
+            variant="primary"
+            onClick={() => run(saveWithPreview, undefined)}
           >
-            <option value="">+ add profile…</option>
-            {available.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        )}
-        <Button
-          variant="primary"
-          onClick={() => run(() => api.setFailover(chain), t("Failover saved"), refresh)}
-        >
-          {t("Save chain")}
-        </Button>
-      </div>
-    </Card>
+            {t("Save chain")}
+          </Button>
+        </div>
+      </Card>
+      {gatewayPreview && (
+        <GatewayPreviewModal
+          current={gatewayPreview.current as any}
+          proposed={gatewayPreview.proposed as any}
+          conflicts={gatewayPreview.conflicts}
+          onClose={() => { setGatewayPreview(null); setPendingChain(null); }}
+          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Failover saved"), undefined)}
+        />
+      )}
+    </>
   );
 }

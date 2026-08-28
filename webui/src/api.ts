@@ -115,6 +115,9 @@ export const api = {
   proxyStop: () => req<DaemonResult>("POST", "/proxy/stop"),
   setFailover: (failover: string[]) => req("PUT", "/proxy/failover", { failover }),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
+  getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
+  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[] }>("GET", "/models/gateway/preview"),
+  applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
   exportConfig: (passphrase: string) =>
     req<{ path: string }>("POST", "/config/export", { passphrase }),
   importConfig: (filePath: string, passphrase: string) =>

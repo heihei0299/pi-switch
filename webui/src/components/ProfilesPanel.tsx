@@ -16,7 +16,7 @@ import {
   useAction,
   cx,
 } from "./ui";
-
+import { GatewayPreviewModal } from "./GatewayPreviewModal";
 const API_TYPES = [
   "openai-completions",
   "openai-responses",
@@ -204,6 +204,8 @@ function ProfileForm({
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
+  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   function applyPreset(id: string) {
     setPreset(id);
@@ -238,97 +240,125 @@ function ProfileForm({
     } as ProviderProfile;
   }
 
-  async function save() {
+  async function saveWithPreview() {
     const trimmed = name.trim();
     if (!trimmed) throw new Error(t("name required"));
     const modeError = responsesModeError(apiType, responsesMode);
     if (modeError) throw new Error(t(modeError));
+    setPreviewLoading(true);
+    try {
+      const preview = await api.previewGateway();
+      setGatewayPreview(preview as any);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function handlePreviewConfirm(edited: unknown) {
+    const trimmed = name.trim();
     const profile = build();
+    // Apply edited gateway first so its hand-written extra is preserved when the profile save re-syncs
+    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
+      await api.applyGateway(edited);
+    }
     if (original) {
       await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
     } else {
       await api.addProfile(trimmed, profile);
     }
+    setGatewayPreview(null);
+    await onSaved();
   }
 
   return (
-    <Modal title={original ? `${t("Edit")} ${original}` : t("Add profile")} onClose={onClose} wide>
-      <div className="grid gap-x-4 sm:grid-cols-2">
-        <Field label={t("Name")}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-provider" />
-        </Field>
-        <Field label={t("Preset (prefill)")}>
-          <Select value={preset} onChange={(e) => applyPreset(e.target.value)}>
-            <option value="">— {t("none")} —</option>
-            {presets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label={t("API type")}>
-          <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-            {API_TYPES.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label={t("Responses mode")}>
-          <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>
-            <option value="auto">auto — {t("automatic by API type")}</option>
-            <option value="passthrough">passthrough — {t("native Responses only")}</option>
-            <option value="convert">convert — {t("Chat Completions only")}</option>
-          </Select>
-        </Field>
-        <Field label={t("Disguise (User-Agent)")}>
-          <Select value={spoof} onChange={(e) => setSpoof(e.target.value)}>
-            {SPOOFS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label={t("Base URL")}>
-            <Input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
+    <>
+      <Modal title={original ? `${t("Edit")} ${original}` : t("Add profile")} onClose={onClose} wide>
+        <div className="grid gap-x-4 sm:grid-cols-2">
+          <Field label={t("Name")}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-provider" />
           </Field>
-        </div>
-        <div className="sm:col-span-2">
-          <Field label={t("API key (supports $ENV_VAR)")}>
-            <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+          <Field label={t("Preset (prefill)")}>
+            <Select value={preset} onChange={(e) => applyPreset(e.target.value)}>
+              <option value="">— {t("none")} —</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
           </Field>
-        </div>
-        <div className="sm:col-span-2">
-          <Field label={t("Model IDs (one per line)")}>
-            <Textarea
-              rows={4}
-              value={modelIds}
-              onChange={(e) => setModelIds(e.target.value)}
-              placeholder={"gpt-4o\ngpt-4o-mini"}
-            />
+          <Field label={t("API type")}>
+            <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
+              {API_TYPES.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </Select>
           </Field>
+          <Field label={t("Responses mode")}>
+            <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>
+              <option value="auto">auto — {t("automatic by API type")}</option>
+              <option value="passthrough">passthrough — {t("native Responses only")}</option>
+              <option value="convert">convert — {t("Chat Completions only")}</option>
+            </Select>
+          </Field>
+          <Field label={t("Disguise (User-Agent)")}>
+            <Select value={spoof} onChange={(e) => setSpoof(e.target.value)}>
+              {SPOOFS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label={t("Base URL")}>
+              <Input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+              />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label={t("API key (supports $ENV_VAR)")}>
+              <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label={t("Model IDs (one per line)")}>
+              <Textarea
+                rows={4}
+                value={modelIds}
+                onChange={(e) => setModelIds(e.target.value)}
+                placeholder={"gpt-4o\ngpt-4o-mini"}
+              />
+            </Field>
+          </div>
+          <label className="mb-3 flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
+            <input type="checkbox" checked={proxy} onChange={(e) => setProxy(e.target.checked)} />
+            {t("Mark as a proxy profile (excluded from failover, not exposed to pi)")}
+          </label>
         </div>
-        <label className="mb-3 flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
-          <input type="checkbox" checked={proxy} onChange={(e) => setProxy(e.target.checked)} />
-          {t("Mark as a proxy profile (excluded from failover, not exposed to pi)")}
-        </label>
-      </div>
 
-      <div className="mt-2 flex justify-end gap-2">
-        <Button onClick={onClose}>{t("Cancel")}</Button>
-        <Button variant="primary" onClick={() => run(save, t("Saved"), onSaved)}>
-          {t("Save")}
-        </Button>
-      </div>
-    </Modal>
+        <div className="mt-2 flex justify-end gap-2">
+          <Button onClick={onClose}>{t("Cancel")}</Button>
+          <Button variant="primary" disabled={previewLoading} onClick={() => run(saveWithPreview, undefined)}>
+            {previewLoading ? t("Loading…") : t("Save")}
+          </Button>
+        </div>
+      </Modal>
+      {gatewayPreview && (
+        <GatewayPreviewModal
+          current={gatewayPreview.current as any}
+          proposed={gatewayPreview.proposed as any}
+          conflicts={gatewayPreview.conflicts}
+          onClose={() => setGatewayPreview(null)}
+          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Saved"), undefined)}
+        />
+      )}
+    </>
   );
 }
 
@@ -353,6 +383,7 @@ function ModelsModal({
   );
   const [newId, setNewId] = useState("");
   const [fetching, setFetching] = useState(false);
+  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
 
   function toggle(id: string) {
     setExposed((prev) => {
@@ -382,99 +413,120 @@ function ModelsModal({
     }
   }
 
-  async function save() {
+  async function saveWithPreview() {
+    const preview = await api.previewGateway();
+    setGatewayPreview(preview as any);
+  }
+
+  async function handlePreviewConfirm(edited: unknown) {
+    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
+      await api.applyGateway(edited);
+    }
     await api.updateModels(name, models);
     await api.expose(name, [...exposed].filter((id) => models.some((m) => m.id === id)));
+    setGatewayPreview(null);
+    await onSaved();
   }
 
   return (
-    <Modal title={`${t("Models")} · ${name}`} onClose={onClose} wide>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Input
-          value={newId}
-          onChange={(e) => setNewId(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              addId(newId);
-              setNewId("");
-            }
-          }}
-          placeholder={t("add model id + Enter")}
-          className="max-w-xs"
-        />
-        <Button
-          onClick={() => run(fetchFromProvider, undefined)}
-          disabled={fetching}
-        >
-          {fetching ? t("Fetching…") : t("Fetch from provider")}
-        </Button>
-        <span className="text-xs text-zinc-500">
-          {t("Checked = exposed to pi as")} <code>{name}/&lt;id&gt;</code>
-        </span>
-      </div>
-
-      <div className="max-h-80 space-y-1 overflow-y-auto rounded-lg border border-white/10 p-2">
-        {models.length === 0 && (
-          <div className="p-3 text-sm text-zinc-500">
-            {t("No models. Add ids above or fetch from the provider.")}
-          </div>
-        )}
-        {models.map((m) => (
-          <div
-            key={m.id}
-            className={cx(
-              "flex items-center justify-between rounded-md px-2 py-1.5 text-sm",
-              exposed.has(m.id) ? "bg-emerald-500/10" : "hover:bg-white/5",
-            )}
+    <>
+      <Modal title={`${t("Models")} · ${name}`} onClose={onClose} wide>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Input
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                addId(newId);
+                setNewId("");
+              }
+            }}
+            placeholder={t("add model id + Enter")}
+            className="max-w-xs"
+          />
+          <Button
+            onClick={() => run(fetchFromProvider, undefined)}
+            disabled={fetching}
           >
-            <label className="flex min-w-0 items-center gap-2">
-              <input
-                type="checkbox"
-                checked={exposed.has(m.id)}
-                onChange={() => toggle(m.id)}
-              />
-              <span className="truncate text-zinc-200">{m.id}</span>
-            </label>
-            <button
-              className="text-xs text-zinc-500 hover:text-red-300"
-              onClick={() => {
-                setModels((prev) => prev.filter((x) => x.id !== m.id));
-                setExposed((prev) => {
-                  const n = new Set(prev);
-                  n.delete(m.id);
-                  return n;
-                });
-              }}
+            {fetching ? t("Fetching…") : t("Fetch from provider")}
+          </Button>
+          <span className="text-xs text-zinc-500">
+            {t("Checked = exposed to pi as")} <code>{name}/&lt;id&gt;</code>
+          </span>
+        </div>
+
+        <div className="max-h-80 space-y-1 overflow-y-auto rounded-lg border border-white/10 p-2">
+          {models.length === 0 && (
+            <div className="p-3 text-sm text-zinc-500">
+              {t("No models. Add ids above or fetch from the provider.")}
+            </div>
+          )}
+          {models.map((m) => (
+            <div
+              key={m.id}
+              className={cx(
+                "flex items-center justify-between rounded-md px-2 py-1.5 text-sm",
+                exposed.has(m.id) ? "bg-emerald-500/10" : "hover:bg-white/5",
+              )}
             >
-              {t("remove")}
+              <label className="flex min-w-0 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={exposed.has(m.id)}
+                  onChange={() => toggle(m.id)}
+                />
+                <span className="truncate text-zinc-200">{m.id}</span>
+              </label>
+              <button
+                className="text-xs text-zinc-500 hover:text-red-300"
+                onClick={() => {
+                  setModels((prev) => prev.filter((x) => x.id !== m.id));
+                  setExposed((prev) => {
+                    const n = new Set(prev);
+                    n.delete(m.id);
+                    return n;
+                  });
+                }}
+              >
+                {t("remove")}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <div className="flex gap-2 text-xs">
+            <button
+              className="text-zinc-400 hover:text-zinc-200"
+              onClick={() => setExposed(new Set(models.map((m) => m.id)))}
+            >
+              {t("expose all")}
+            </button>
+            <button
+              className="text-zinc-400 hover:text-zinc-200"
+              onClick={() => setExposed(new Set())}
+            >
+              {t("expose none")}
             </button>
           </div>
-        ))}
-      </div>
-
-      <div className="mt-4 flex items-center justify-between">
-        <div className="flex gap-2 text-xs">
-          <button
-            className="text-zinc-400 hover:text-zinc-200"
-            onClick={() => setExposed(new Set(models.map((m) => m.id)))}
-          >
-            {t("expose all")}
-          </button>
-          <button
-            className="text-zinc-400 hover:text-zinc-200"
-            onClick={() => setExposed(new Set())}
-          >
-            {t("expose none")}
-          </button>
+          <div className="flex gap-2">
+            <Button onClick={onClose}>{t("Cancel")}</Button>
+            <Button variant="primary" onClick={() => run(saveWithPreview, undefined)}>
+              {t("Save")}
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={onClose}>{t("Cancel")}</Button>
-          <Button variant="primary" onClick={() => run(save, t("Models saved"), onSaved)}>
-            {t("Save")}
-          </Button>
-        </div>
-      </div>
-    </Modal>
+      </Modal>
+      {gatewayPreview && (
+        <GatewayPreviewModal
+          current={gatewayPreview.current as any}
+          proposed={gatewayPreview.proposed as any}
+          conflicts={gatewayPreview.conflicts}
+          onClose={() => setGatewayPreview(null)}
+          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Models saved"), undefined)}
+        />
+      )}
+    </>
   );
 }
 

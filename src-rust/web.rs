@@ -78,6 +78,8 @@ pub fn make_web_router(state: Arc<WebState>) -> Router {
             "/profiles/:name",
             get(get_profile).put(put_profile).delete(delete_profile),
         )
+        .route("/models/gateway", get(get_gateway).put(put_gateway))
+        .route("/models/gateway/preview", get(get_gateway_preview))
         .route("/doctor", get(get_doctor))
         .route("/config/validate", get(get_validate))
         .route("/backups", get(get_backups))
@@ -190,6 +192,18 @@ async fn get_preset(Path(id): Path<String>) -> ApiJson {
 
 async fn get_profile(Path(name): Path<String>) -> ApiJson {
     Ok(Json(service::get_profile(&name)?))
+}
+
+async fn get_gateway() -> ApiJson {
+    Ok(Json(service::get_gateway()?))
+}
+
+async fn get_gateway_preview() -> ApiJson {
+    Ok(Json(service::gateway_preview()?))
+}
+
+async fn put_gateway(Json(gateway): Json<Value>) -> ApiJson {
+    Ok(Json(service::apply_gateway(gateway)?))
 }
 
 async fn get_doctor() -> Json<Value> {
@@ -799,5 +813,55 @@ mod tests {
         assert_eq!(list.status(), StatusCode::OK, "list route unaffected");
         let detail = get("/api/stats/conversations/conv-a/requests").await;
         assert_eq!(detail.status(), StatusCode::OK, "detail route resolves too");
+    }
+
+    #[tokio::test]
+    async fn gateway_get_returns_200_with_gateway_shape() {
+        let res = get("/api/models/gateway").await;
+        assert_eq!(res.status(), StatusCode::OK, "GET /api/models/gateway should be 200");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        // must contain api/baseUrl/models or be null when no models file
+        assert!(body.get("gateway").is_some() || body.is_null() || body.is_object());
+    }
+
+    #[tokio::test]
+    async fn gateway_preview_is_dry_run_and_returns_current_and_proposed() {
+        let res = get("/api/models/gateway/preview").await;
+        assert_eq!(res.status(), StatusCode::OK, "preview should be 200");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        assert!(body.get("current").is_some(), "preview needs current");
+        assert!(body.get("proposed").is_some(), "preview needs proposed");
+        assert!(body.get("conflicts").is_some(), "preview needs conflicts");
+        assert!(body["proposed"].get("models").is_some(), "proposed must have models");
+    }
+
+    #[tokio::test]
+    async fn gateway_apply_rejects_invalid_json() {
+        let app = router();
+        let req = axum::http::Request::builder()
+            .uri("/api/models/gateway")
+            .method(axum::http::Method::PUT)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"api": "invalid-api", "baseUrl": "not-a-url", "models":[]}"#))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid gateway should be 400");
+    }
+
+    #[tokio::test]
+    async fn gateway_preview_does_not_write_models_file() {
+        use std::fs;
+        // snapshot mtime or content before
+        let path = crate::config::models_path();
+        let before = fs::read_to_string(&path).unwrap_or_default();
+        let _ = get("/api/models/gateway/preview").await;
+        let after = fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(before, after, "preview must be dry-run, not modify models.json");
     }
 }

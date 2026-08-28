@@ -3,7 +3,7 @@ import type { AppState, Settings } from "../types";
 import { api } from "../api";
 import { Button, Card, Field, Input, SectionTitle, Select, useAction } from "./ui";
 import { useI18n } from "../i18n";
-
+import { GatewayPreviewModal } from "./GatewayPreviewModal";
 export function SettingsPanel({
   state,
   refresh,
@@ -15,6 +15,7 @@ export function SettingsPanel({
   const { t, lang, setLang } = useI18n();
   // Deep clone so edits don't mutate the shared state until saved.
   const [s, setS] = useState<Settings>(() => JSON.parse(JSON.stringify(state.settings)));
+  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
   const setProxy = (patch: Partial<Settings["proxy"]>) =>
@@ -26,6 +27,20 @@ export function SettingsPanel({
     }));
   const setWeb = (patch: Partial<Settings["web"]>) =>
     setS((prev) => ({ ...prev, web: { ...prev.web, ...patch } }));
+
+  async function saveWithPreview() {
+    const preview = await api.previewGateway();
+    setGatewayPreview(preview as any);
+  }
+
+  async function handlePreviewConfirm(edited: unknown) {
+    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
+      await api.applyGateway(edited);
+    }
+    await api.updateSettings(s);
+    setGatewayPreview(null);
+    await refresh();
+  }
 
   return (
     <div>
@@ -163,11 +178,20 @@ export function SettingsPanel({
       <div className="flex justify-end">
         <Button
           variant="primary"
-          onClick={() => run(() => api.updateSettings(s), t("Settings saved"), refresh)}
+          onClick={() => run(saveWithPreview, undefined)}
         >
           {t("Save settings")}
         </Button>
       </div>
+      {gatewayPreview && (
+        <GatewayPreviewModal
+          current={gatewayPreview.current as any}
+          proposed={gatewayPreview.proposed as any}
+          conflicts={gatewayPreview.conflicts}
+          onClose={() => setGatewayPreview(null)}
+          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Settings saved"), undefined)}
+        />
+      )}
     </div>
   );
 }

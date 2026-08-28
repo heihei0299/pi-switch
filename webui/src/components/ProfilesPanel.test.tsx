@@ -55,10 +55,14 @@ describe("provider Responses mode form", () => {
 
   it("saves the selected Responses mode through the profile API", async () => {
     const update = vi.spyOn(api, "updateProfile").mockResolvedValue({});
+    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: { api: "openai-responses", baseUrl: "https://example.test/v1", apiKey: "key", models: [], proxy: false }, conflicts: [] } as any);
+    vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(screen.getAllByRole("combobox")).toHaveLength(4));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
         "native",

@@ -112,6 +112,9 @@ change only if the feature has a TUI screen.
 | `GET /api/state` | `service::get_state` |
 | `GET /api/presets` · `/presets/:id` | `service::presets_info` · `show_preset` |
 | `GET /api/profiles/:name` | `service::get_profile` |
+| `GET /api/models/gateway` | `service::get_gateway` |
+| `GET /api/models/gateway/preview` | `service::gateway_preview` (dry-run, merges hand-written extra) |
+| `PUT /api/models/gateway` | `service::apply_gateway` (validated write) |
 | `GET /api/doctor` · `/config/validate` | `service::run_doctor` · `config::validate_config` |
 | `GET /api/backups` · `/stats` | `service::list_backups` · `service::stats_value` |
 | `POST /api/profiles` · `PUT /api/profiles/:name` | `ops::upsert_profile` |
@@ -124,6 +127,15 @@ change only if the feature has a TUI screen.
 | `POST /api/config/{export,import,restore}` | `sync::{encrypt_config,import_config}` · `config::restore_config` |
 | `POST /api/init` | `ops::init` |
 
+### Gateway pre-edit (preserving hand-written fields)
+
+Any operation that triggers `sync_gateway_to_pi` now merges hand-written `extra` fields instead of discarding them. The WebUI wraps every such mutation (`ProfilesPanel`, `SettingsPanel`, `ProxyPanel` failover, `ModelsModal`) in a **preview step**:
+
+1. `GET /api/models/gateway/preview` — dry-run, returns `{ current, proposed, conflicts }` without writing.
+2. `GatewayPreviewModal` shows left diff (added/removed/changed, conflicts in amber) and right editable JSON (validated).
+3. On confirm, the original mutation runs, then `PUT /api/models/gateway` applies the edited gateway if it differs.
+
+This prevents `models.json` gateway overwrites from discarding manual `headers`/`compat`/`cost`/`extra` fields (hand-written priority).
 ---
 
 ## Type sync (frontend ↔ Rust)
