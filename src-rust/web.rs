@@ -474,8 +474,8 @@ async fn post_test(Path(name): Path<String>) -> ApiJson {
 }
 
 async fn post_fetch_models(Path(name): Path<String>) -> ApiJson {
-    let models = ops::fetch_models(&name).await?;
-    ok(json!({ "models": models }))
+    let (models, enrich) = ops::fetch_models_with_stats(&name).await?;
+    ok(json!({ "models": models, "enrich": enrich }))
 }
 
 #[derive(Deserialize)]
@@ -484,8 +484,10 @@ struct ModelsBody {
 }
 
 async fn put_models(Path(name): Path<String>, Json(body): Json<ModelsBody>) -> ApiJson {
-    let backup = ops::update_provider_models(&name, body.models)?;
-    ok(backup_msg(backup))
+    let (backup, enrich) = ops::update_provider_models_with_stats(&name, body.models)?;
+    let mut resp = backup_msg(backup);
+    resp["enrich"] = serde_json::to_value(enrich).unwrap_or(serde_json::json!({}));
+    ok(resp)
 }
 
 #[derive(Deserialize)]

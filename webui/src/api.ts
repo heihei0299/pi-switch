@@ -6,6 +6,7 @@ import type {
   ConversationsPage,
   DaemonResult,
   DoctorCheck,
+  EnrichStats,
   ModelEntry,
   PackageEntry,
   PresetInfo,
@@ -101,9 +102,9 @@ export const api = {
   testProfile: (name: string) =>
     req<TestResult>("POST", `/profiles/${enc(name)}/test`),
   fetchModels: (name: string) =>
-    req<{ models: string[] }>("POST", `/profiles/${enc(name)}/fetch-models`),
+    req<{ models: string[]; enrich?: EnrichStats }>("POST", `/profiles/${enc(name)}/fetch-models`),
   updateModels: (name: string, models: ModelEntry[]) =>
-    req("PUT", `/profiles/${enc(name)}/models`, { models }),
+    req<{ ok: boolean; backup?: string; enrich?: EnrichStats }>("PUT", `/profiles/${enc(name)}/models`, { models }),
   expose: (name: string, modelIds: string[]) =>
     req("PUT", `/profiles/${enc(name)}/expose`, { modelIds }),
   setSpoof: (name: string, spoof: string | null) =>

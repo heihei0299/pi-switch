@@ -2,8 +2,24 @@ use crate::config::{
     self, backup_config, load_config, provider_id_for, save_config, ProviderProfile,
 };
 use crate::error::{AppError, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+
+/// 模型目录 enrich 统计（用于可观测性：合并到 Fetch 成功 toast 与 web 响应）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnrichStats {
+    pub enriched: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub warning: Option<String>,
+}
+
+impl Default for EnrichStats {
+    fn default() -> Self {
+        Self { enriched: 0, skipped: 0, failed: 0, warning: None }
+    }
+}
 
 /// Create ~/.pi-switch/ + ~/.pi/agent/ and seed config.json / models.json if absent.
 /// Shared by the CLI `init` (napi) and the web `POST /api/init`.
@@ -177,6 +193,23 @@ pub fn update_provider_models(
     name: &str,
     models: Vec<config::ModelEntry>,
 ) -> Result<Option<PathBuf>> {
+    let (backup, stats) = update_provider_models_with_stats(name, models)?;
+    if let Some(w) = stats.warning {
+        log::warn!("模型目录模型元数据 enrich 警告: {}", w);
+    }
+    if stats.failed > 0 {
+        log::warn!("模型目录 enrich 失败 {} 条，跳过 {} 条，已 enrich {} 条", stats.failed, stats.skipped, stats.enriched);
+    } else if stats.enriched > 0 || stats.skipped > 0 {
+        log::info!("模型目录 enrich 完成: 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）", stats.enriched, stats.skipped);
+    }
+    Ok(backup)
+}
+
+/// 带统计的 update_provider_models：返回 (backup, EnrichStats) 供可观测性展示
+pub fn update_provider_models_with_stats(
+    name: &str,
+    models: Vec<config::ModelEntry>,
+) -> Result<(Option<PathBuf>, EnrichStats)> {
     let mut config = load_config()?;
     let backup = backup_config("config")?;
 
@@ -192,8 +225,9 @@ pub fn update_provider_models(
     // - 仅 enrich 已有 models 中的 id，不自动新增目录独有模型
     // - 目录未命中或字段缺失时保留原值，私有模型无报错
     // - 手工 `provider models` 显式列表不受约束（仅在有 catalog 且有映射时 enrich）
-    // 同步路径复用缓存文件（`load_catalog_from_cache`），异步 Fetch 链路复用 `get_or_refresh_catalog`
-    let enriched = try_enrich_from_cache_sync(&profile, models);
+    // 同步路径复用缓存文件（`load_catalog_from_cache`），异步 Fetch 链路复用 `get_or_refresh_catalog_with_warning`
+    // 离线场景（有 24h 内缓存）仍能完成 enrich，无缓存且无网络时保留原值并提示失败原因（术语：模型目录 / 模型元数据）
+    let (enriched, stats) = try_enrich_from_cache_sync_with_stats(&profile, models);
     profile.models = enriched;
     profile.updated_at = Some(chrono::Utc::now().to_rfc3339());
 
@@ -205,7 +239,7 @@ pub fn update_provider_models(
     // Refresh the gateway so model metadata in pi's models.json stays current
     sync_gateway_to_pi()?;
 
-    Ok(backup)
+    Ok((backup, stats))
 }
 
 // ─── 模型目录 enrich（模型元数据） ──────────────────────────────────────────
@@ -221,28 +255,90 @@ pub fn enrich_models_with_catalog(
     models: Vec<config::ModelEntry>,
     catalog: Option<&Value>,
 ) -> Vec<config::ModelEntry> {
+    let (out, _) = enrich_models_with_catalog_with_stats(profile, models, catalog, None);
+    out
+}
+
+/// 带统计的 enrich（纯函数，可测试）：返回 (enriched_models, stats)
+///
+/// - catalog=None 时视为模型目录不可用，failed = models.len()，warning 来自调用方（如网络失败原因）
+/// - provider 映射失败或目录中无该 provider 时，skipped = models.len()
+/// - 否则 enriched = 命中数，skipped = 未命中数，failed = 0
+pub fn enrich_models_with_catalog_with_stats(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+    catalog: Option<&Value>,
+    warning: Option<String>,
+) -> (Vec<config::ModelEntry>, EnrichStats) {
+    let total = models.len();
+    if total == 0 {
+        return (models, EnrichStats { enriched: 0, skipped: 0, failed: 0, warning });
+    }
     let Some(catalog) = catalog else {
-        return models;
+        let w = warning.unwrap_or_else(|| "模型目录不可用，跳过模型元数据 enrich".to_string());
+        log::warn!("{}", w);
+        return (models, EnrichStats { enriched: 0, skipped: 0, failed: total, warning: Some(w) });
     };
     let Some(provider_key) = crate::catalog::resolve_catalog_provider(profile) else {
-        return models;
+        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
     };
     let Some(provider_entry) = catalog.get(&provider_key) else {
-        return models;
+        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
     };
     let Some(models_map) = provider_entry.get("models").and_then(|v| v.as_object()) else {
-        return models;
+        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
     };
-    models
+    let mut enriched = 0;
+    let mut skipped = 0;
+    let out: Vec<config::ModelEntry> = models
         .into_iter()
         .map(|m| {
             if let Some(catalog_model) = models_map.get(&m.id) {
+                enriched += 1;
                 enrich_single_entry(m, catalog_model)
             } else {
+                skipped += 1;
                 m
             }
         })
-        .collect()
+        .collect();
+    (out, EnrichStats { enriched, skipped, failed: 0, warning })
+}
+
+/// 为上游模型列表（id 列表）计算 enrich 统计（不改变 id 列表，用于 Fetch toast）
+pub fn enrich_stats_for_ids(
+    profile: &config::ProviderProfile,
+    ids: &[String],
+    catalog: Option<&Value>,
+    warning: Option<String>,
+) -> EnrichStats {
+    let total = ids.len();
+    if total == 0 {
+        return EnrichStats { enriched: 0, skipped: 0, failed: 0, warning };
+    }
+    let Some(catalog) = catalog else {
+        let w = warning.unwrap_or_else(|| "模型目录不可用，跳过模型元数据 enrich".to_string());
+        return EnrichStats { enriched: 0, skipped: 0, failed: total, warning: Some(w) };
+    };
+    let Some(provider_key) = crate::catalog::resolve_catalog_provider(profile) else {
+        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
+    };
+    let Some(provider_entry) = catalog.get(&provider_key) else {
+        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
+    };
+    let Some(models_map) = provider_entry.get("models").and_then(|v| v.as_object()) else {
+        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
+    };
+    let mut enriched = 0;
+    let mut skipped = 0;
+    for id in ids {
+        if models_map.contains_key(id) {
+            enriched += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+    EnrichStats { enriched, skipped, failed: 0, warning }
 }
 
 /// 异步 enrich 入口：复用 `get_or_refresh_catalog()`，触发范围为 Fetch Models 与新增/编辑 profile 的自动发现
@@ -251,14 +347,24 @@ pub async fn enrich_models_from_catalog(
     profile: &config::ProviderProfile,
     models: Vec<config::ModelEntry>,
 ) -> Vec<config::ModelEntry> {
-    let catalog_opt = match crate::catalog::get_or_refresh_catalog().await {
-        Ok(v) => v,
+    let (out, _) = enrich_models_from_catalog_with_stats(profile, models).await;
+    out
+}
+
+/// 异步 enrich 入口（带统计与 warning）：优先 fresh cache 直读，stale/missing 时调用 get_or_refresh_catalog_with_warning 尝试网络，失败回退到过期缓存并记录 warning，无缓存失败时 failed 统计
+pub async fn enrich_models_from_catalog_with_stats(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+) -> (Vec<config::ModelEntry>, EnrichStats) {
+    let (catalog_opt, warning) = match crate::catalog::get_or_refresh_catalog_with_warning().await {
+        Ok((v, w)) => (v, w),
         Err(e) => {
-            log::warn!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
-            None
+            let w = format!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
+            log::warn!("{}", w);
+            (None, Some(w))
         }
     };
-    enrich_models_with_catalog(profile, models, catalog_opt.as_ref())
+    enrich_models_with_catalog_with_stats(profile, models, catalog_opt.as_ref(), warning)
 }
 
 /// 解析单个 catalog model entry 并按分字段策略覆盖到 ModelEntry（保持 extra 等不动）
@@ -365,9 +471,24 @@ fn try_enrich_from_cache_sync(
     profile: &config::ProviderProfile,
     models: Vec<config::ModelEntry>,
 ) -> Vec<config::ModelEntry> {
+    let (out, _) = try_enrich_from_cache_sync_with_stats(profile, models);
+    out
+}
+
+/// 同步 enrich 辅助（带统计）：离线场景有 24h 内缓存仍能完成 enrich，无缓存时 failed 统计并提示
+fn try_enrich_from_cache_sync_with_stats(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+) -> (Vec<config::ModelEntry>, EnrichStats) {
     let path = crate::catalog::catalog_cache_path();
     let catalog_opt = crate::catalog::load_catalog_from_cache(&path).ok().flatten();
-    enrich_models_with_catalog(profile, models, catalog_opt.as_ref())
+    let warning = if catalog_opt.is_none() && !path.exists() {
+        Some("模型目录无可用缓存，跳过模型元数据 enrich".to_string())
+    } else {
+        None
+    };
+    // 若 catalog 存在但为 stale，仍直接使用（离线场景），与 catalog::get_or_refresh 语义一致：优先缓存
+    enrich_models_with_catalog_with_stats(profile, models, catalog_opt.as_ref(), warning)
 }
 
 #[cfg(test)]
@@ -587,6 +708,95 @@ mod enrich_tests {
         let out = enrich_models_with_catalog(&profile, models.clone(), None);
         assert_eq!(out[0].context_window, 123);
     }
+
+    #[test]
+    fn enrich_stats_counts_enriched_skipped_failed() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![
+            ModelEntry { id: "gpt-4o".into(), ..Default::default() },
+            ModelEntry { id: "private-model".into(), ..Default::default() },
+            ModelEntry { id: "o1".into(), ..Default::default() },
+        ];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), None);
+        assert_eq!(out.len(), 3);
+        assert_eq!(stats.enriched, 2, "gpt-4o and o1 should be enriched");
+        assert_eq!(stats.skipped, 1, "private-model 未在模型目录中");
+        assert_eq!(stats.failed, 0);
+        assert!(stats.warning.is_none());
+    }
+
+    #[test]
+    fn enrich_stats_for_ids_counts() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let ids = vec!["gpt-4o".to_string(), "unknown".to_string()];
+        let stats = enrich_stats_for_ids(&profile, &ids, Some(&catalog), None);
+        assert_eq!(stats.enriched, 1);
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.failed, 0);
+    }
+
+    #[test]
+    fn enrich_stats_failed_when_no_catalog() {
+        let profile = profile_openai();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models.clone(), None, None);
+        assert_eq!(out[0].id, "gpt-4o");
+        assert_eq!(stats.failed, 1);
+        assert_eq!(stats.enriched, 0);
+        assert_eq!(stats.skipped, 0);
+        assert!(stats.warning.is_some());
+        assert!(stats.warning.as_ref().unwrap().contains("模型目录"), "文案需使用模型目录术语");
+    }
+
+    #[test]
+    fn enrich_stats_skipped_when_provider_unmapped() {
+        let profile = ProviderProfile { preset: Some("custom".into()), ..Default::default() };
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models.clone(), Some(&catalog), None);
+        assert_eq!(out[0].id, "gpt-4o");
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.enriched, 0);
+        assert_eq!(stats.failed, 0);
+    }
+
+    #[test]
+    fn enrich_stats_with_warning_propagates() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
+        let warning = Some("模型目录拉取失败，回退到过期缓存: network down".to_string());
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), warning.clone());
+        assert_eq!(stats.enriched, 1);
+        assert_eq!(stats.warning, warning);
+    }
+
+    #[test]
+    fn enrich_stats_offline_with_catalog_still_enriches() {
+        // 模拟离线但有缓存：catalog 为 Some 时仍能 enrich，即使网络失败（warning 存在）
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), context_window: 1000, ..Default::default() }];
+        let warning = Some("模型目录拉取失败，回退到过期缓存: 离线".to_string());
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), warning);
+        assert_eq!(out[0].context_window, 128000);
+        assert_eq!(stats.enriched, 1);
+        assert!(stats.warning.is_some());
+        assert!(stats.warning.unwrap().contains("模型目录"));
+    }
+
+    #[test]
+    fn enrich_stats_failed_no_cache_and_network_down() {
+        let profile = profile_openai();
+        let ids = vec!["gpt-4o".to_string(), "o1".to_string()];
+        let warning = Some("模型目录拉取失败且无可用缓存: network down".to_string());
+        let stats = enrich_stats_for_ids(&profile, &ids, None, warning.clone());
+        assert_eq!(stats.failed, 2);
+        assert_eq!(stats.enriched, 0);
+        assert_eq!(stats.warning, warning);
+    }
 }
 
 fn backup_models() -> Option<PathBuf> {
@@ -651,11 +861,19 @@ pub fn upsert_profile(
 ) -> Result<Option<PathBuf>> {
     config::validate_provider_profile(name, profile).map_err(AppError::InvalidInput)?;
 
-    // 模型目录 enrich：新增/编辑 profile 时若已携带 models，则尝试用缓存补齐元数据
+    // 模型目录 enrich：新增/编辑 profile 时若已携带 models，则尝试用缓存补齐元数据（离线有缓存仍 enrich）
     let mut profile_owned = profile.clone();
     if !profile_owned.models.is_empty() {
-        profile_owned.models =
-            try_enrich_from_cache_sync(&profile_owned, profile_owned.models.clone());
+        let (enriched, stats) = try_enrich_from_cache_sync_with_stats(&profile_owned, profile_owned.models.clone());
+        profile_owned.models = enriched;
+        if let Some(w) = &stats.warning {
+            log::warn!("模型目录 enrich 警告: {}", w);
+        }
+        if stats.failed > 0 {
+            log::warn!("模型目录 enrich 失败 {} 条", stats.failed);
+        } else if stats.enriched > 0 || stats.skipped > 0 {
+            log::info!("模型目录 enrich: 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）", stats.enriched, stats.skipped);
+        }
     }
 
     let mut config = load_config()?;
@@ -825,16 +1043,7 @@ pub async fn test_provider(name: &str) -> Result<TestResult> {
 
 // ─── Fetch Models ─────────────────────────────────────────
 
-pub async fn fetch_models(name: &str) -> Result<Vec<String>> {
-    let config = load_config()?;
-    let profile_value = config
-        .profiles
-        .get(name)
-        .ok_or_else(|| AppError::Message(format!("unknown profile '{}'", name)))?;
-
-    let profile: ProviderProfile = serde_json::from_value(profile_value.clone())
-        .map_err(|e| AppError::Message(format!("invalid profile: {}", e)))?;
-
+async fn fetch_upstream_ids(profile: &ProviderProfile) -> Result<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -893,6 +1102,64 @@ pub async fn fetch_models(name: &str) -> Result<Vec<String>> {
     }
 
     Err(AppError::Message(last_error))
+}
+
+pub async fn fetch_models(name: &str) -> Result<Vec<String>> {
+    let config = load_config()?;
+    let profile_value = config
+        .profiles
+        .get(name)
+        .ok_or_else(|| AppError::Message(format!("unknown profile '{}'", name)))?;
+
+    let profile: ProviderProfile = serde_json::from_value(profile_value.clone())
+        .map_err(|e| AppError::Message(format!("invalid profile: {}", e)))?;
+
+    fetch_upstream_ids(&profile).await
+}
+
+/// Fetch 上游模型列表并附带模型目录 enrich 统计（用于可观测性：24h 缓存命中、无重复网络请求；过期或网络失败时回退到过期缓存并报告 warning，无缓存且失败时跳过 enrich 并提示）
+/// 术语统一使用“模型目录 / 模型元数据”，与“上游模型列表”区分
+pub async fn fetch_models_with_stats(name: &str) -> Result<(Vec<String>, EnrichStats)> {
+    let config = load_config()?;
+    let profile_value = config
+        .profiles
+        .get(name)
+        .ok_or_else(|| AppError::Message(format!("unknown profile '{}'", name)))?;
+
+    let profile: ProviderProfile = serde_json::from_value(profile_value.clone())
+        .map_err(|e| AppError::Message(format!("invalid profile: {}", e)))?;
+
+    // 先拉取上游模型列表（上游仅返回 id 列表）
+    let ids = fetch_upstream_ids(&profile).await?;
+
+    // 再尝试获取模型目录（带 24h TTL 缓存与降级）
+    let (catalog_opt, warning) = match crate::catalog::get_or_refresh_catalog_with_warning().await {
+        Ok((v, w)) => (v, w),
+        Err(e) => {
+            let w = format!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
+            log::warn!("{}", w);
+            (None, Some(w))
+        }
+    };
+
+    let stats = enrich_stats_for_ids(&profile, &ids, catalog_opt.as_ref(), warning);
+
+    // 可观测性日志（术语：模型目录 / 模型元数据 / 上游模型列表）
+    if let Some(w) = &stats.warning {
+        log::warn!("模型目录 enrich 警告: {}", w);
+    }
+    if stats.failed > 0 {
+        log::warn!("模型目录 enrich 失败 {} 条（上游模型列表 {} 条），已回退或跳过", stats.failed, ids.len());
+    } else {
+        log::info!(
+            "Fetch 上游模型列表 {} 条，模型目录 enrich: 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）",
+            ids.len(),
+            stats.enriched,
+            stats.skipped
+        );
+    }
+
+    Ok((ids, stats))
 }
 
 // ─── Sync Gateway Provider to Pi Config ──────────────────

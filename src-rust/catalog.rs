@@ -93,7 +93,14 @@ async fn fetch_catalog_from_network() -> Result<Value> {
 /// 对外主入口：TTL 内直接读缓存，过期或无缓存时尝试网络，失败回退到过期缓存
 pub async fn get_or_refresh_catalog() -> Result<Option<Value>> {
     let path = catalog_cache_path();
-    get_or_refresh_catalog_inner(&path, fetch_catalog_from_network).await
+    let (value, _) = get_or_refresh_catalog_inner_with_warning(&path, fetch_catalog_from_network).await?;
+    Ok(value)
+}
+
+/// 对外主入口（带 warning）：返回 (catalog, warning) 用于可观测性
+pub async fn get_or_refresh_catalog_with_warning() -> Result<(Option<Value>, Option<String>)> {
+    let path = catalog_cache_path();
+    get_or_refresh_catalog_inner_with_warning(&path, fetch_catalog_from_network).await
 }
 
 /// 可注入 fetcher 的内部实现（测试用）
@@ -102,10 +109,20 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Value>>,
 {
+    let (value, _) = get_or_refresh_catalog_inner_with_warning(path, fetcher).await?;
+    Ok(value)
+}
+
+/// 可注入 fetcher 的内部实现（带 warning，测试与可观测性用）
+pub async fn get_or_refresh_catalog_inner_with_warning<F, Fut>(path: &Path, fetcher: F) -> Result<(Option<Value>, Option<String>)>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value>>,
+{
     // 新鲜缓存直接返回
     if is_cache_fresh(path) {
         if let Some(cached) = load_catalog_from_cache(path)? {
-            return Ok(Some(cached));
+            return Ok((Some(cached), None));
         }
     }
 
@@ -113,18 +130,20 @@ where
     match fetcher().await {
         Ok(value) => {
             write_catalog_atomic(path, &value)?;
-            Ok(Some(value))
+            Ok((Some(value), None))
         }
         Err(err) => {
             // 回退到过期缓存（若有）
             if path.exists() {
                 if let Some(cached) = load_catalog_from_cache(path)? {
-                    log::warn!("模型目录拉取失败，回退到过期缓存: {}", err);
-                    return Ok(Some(cached));
+                    let warning = format!("模型目录拉取失败，回退到过期缓存: {}", err);
+                    log::warn!("{}", warning);
+                    return Ok((Some(cached), Some(warning)));
                 }
             }
-            log::warn!("模型目录拉取失败且无可用缓存: {}", err);
-            Ok(None)
+            let warning = format!("模型目录拉取失败且无可用缓存: {}", err);
+            log::warn!("{}", warning);
+            Ok((None, Some(warning)))
         }
     }
 }
@@ -349,5 +368,97 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_catalog_provider(&profile).is_none());
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_warning_fresh_cache_no_warning() {
+        let path = temp_path("warn_fresh");
+        let _ = fs::remove_file(&path);
+        let fixture = json!({"openai":{"id":"openai"}});
+        write_fixture(&path, &fixture);
+        // fresh cache should return cached without warning and without calling fetcher
+        let (value, warning) = get_or_refresh_catalog_inner_with_warning(&path, || async {
+            panic!("should not fetch when fresh");
+            #[allow(unreachable_code)]
+            Ok::<Value, AppError>(json!({}))
+        })
+        .await
+        .unwrap();
+        assert!(value.is_some());
+        assert!(warning.is_none(), "24h 内命中缓存不应有 warning，无重复网络请求");
+        assert_eq!(value.unwrap()["openai"]["id"], "openai");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_warning_falls_back_with_warning() {
+        let path = temp_path("warn_fallback");
+        let _ = fs::remove_file(&path);
+        let stale = json!({"deepseek":{"id":"deepseek"}});
+        write_fixture(&path, &stale);
+        set_mtime(&path, Duration::from_secs(CATALOG_TTL_SECS + 10));
+        let (value, warning) = get_or_refresh_catalog_inner_with_warning(&path, || async {
+            Err::<Value, AppError>(AppError::Message("network down".into()))
+        })
+        .await
+        .unwrap();
+        assert!(value.is_some());
+        let w = warning.expect("过期或网络失败时应回退并报告 warning");
+        assert!(w.contains("模型目录"), "warning 文案需使用模型目录术语");
+        assert!(w.contains("回退到过期缓存"), "warning 需说明回退");
+        assert_eq!(value.unwrap()["deepseek"]["id"], "deepseek");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_warning_no_cache_and_fail_returns_warning() {
+        let path = temp_path("warn_no_cache");
+        let _ = fs::remove_file(&path);
+        let (value, warning) = get_or_refresh_catalog_inner_with_warning(&path, || async {
+            Err::<Value, AppError>(AppError::Message("network down".into()))
+        })
+        .await
+        .unwrap();
+        assert!(value.is_none(), "无缓存且失败时应返回 None，跳过 enrich");
+        let w = warning.expect("应有 warning 提示失败原因");
+        assert!(w.contains("模型目录"), "文案需使用模型目录");
+        assert!(w.contains("无可用缓存"));
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_warning_offline_has_cache_still_enriches() {
+        // 24h 内缓存即使离线（fetcher 失败）也应返回缓存且无 warning（因为命中 fresh）
+        let path = temp_path("warn_offline_fresh");
+        let _ = fs::remove_file(&path);
+        let fixture = json!({"openai":{"id":"openai","models":{"gpt-4o":{"id":"gpt-4o"}}}});
+        write_fixture(&path, &fixture);
+        // 不设过期，fresh
+        let (value, warning) = get_or_refresh_catalog_inner_with_warning(&path, || async {
+            Err::<Value, AppError>(AppError::Message("offline".into()))
+        })
+        .await
+        .unwrap();
+        assert!(value.is_some());
+        assert!(warning.is_none(), "有 24h 内缓存时离线仍能完成 enrich，不应 warning");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_warning_offline_stale_returns_stale_with_warning() {
+        // 过期缓存 + 离线失败应回退到过期缓存并 warning
+        let path = temp_path("warn_offline_stale");
+        let _ = fs::remove_file(&path);
+        let stale = json!({"openai":{"id":"openai"}});
+        write_fixture(&path, &stale);
+        set_mtime(&path, Duration::from_secs(CATALOG_TTL_SECS + 100));
+        let (value, warning) = get_or_refresh_catalog_inner_with_warning(&path, || async {
+            Err::<Value, AppError>(AppError::Message("offline".into()))
+        })
+        .await
+        .unwrap();
+        assert!(value.is_some());
+        assert!(warning.is_some());
+        assert!(warning.unwrap().contains("回退到过期缓存"));
+        let _ = fs::remove_file(&path);
     }
 }

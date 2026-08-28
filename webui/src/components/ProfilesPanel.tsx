@@ -14,6 +14,7 @@ import {
   Select,
   Textarea,
   useAction,
+  useToast,
   cx,
 } from "./ui";
 import { GatewayPreviewModal } from "./GatewayPreviewModal";
@@ -42,7 +43,8 @@ export function ProfilesPanel({
   refresh: () => Promise<void>;
 }) {
   const run = useAction();
-  const { t } = useI18n();
+  const toast = useToast();
+  const { t, lang } = useI18n() as any;
   const [editing, setEditing] = useState<{ name: string | null } | null>(null);
   const [models, setModels] = useState<string | null>(null); // profile name for models modal
   const [ccImport, setCcImport] = useState(false);
@@ -189,7 +191,8 @@ function ProfileForm({
   onSaved: () => Promise<void>;
 }) {
   const run = useAction();
-  const { t } = useI18n();
+  const toast = useToast();
+  const { t, lang } = useI18n() as any;
   const existing = original ? state.profiles[original] : undefined;
   const presets = usePresets();
 
@@ -376,7 +379,8 @@ function ModelsModal({
   onSaved: () => Promise<void>;
 }) {
   const run = useAction();
-  const { t } = useI18n();
+  const toast = useToast();
+  const { t, lang } = useI18n() as any;
   const [models, setModels] = useState<ModelEntry[]>(profile.models ?? []);
   const [exposed, setExposed] = useState<Set<string>>(
     new Set(profile.exposedModels ?? []),
@@ -402,12 +406,28 @@ function ModelsModal({
   async function fetchFromProvider() {
     setFetching(true);
     try {
-      const { models: ids } = await api.fetchModels(name);
+      const { models: ids, enrich } = await api.fetchModels(name);
       setModels((prev) => {
         const have = new Set(prev.map((m) => m.id));
         const added = ids.filter((id) => !have.has(id)).map(defaultModel);
         return [...prev, ...added];
       });
+      // 可观测性：上游模型列表 + 模型目录 enrich 统计（术语：模型目录/模型元数据 vs 上游模型列表）
+      if (enrich) {
+        const isZh = (lang as string) === "zh";
+        const base = t("Fetch from provider");
+        const enrichMsg = enrich.failed > 0
+          ? isZh
+            ? `上游模型列表 ${ids.length} 条 · 模型元数据 enrich 失败 ${enrich.failed} 条，跳过 ${enrich.skipped} 条，已 enrich ${enrich.enriched} 条`
+            : `upstream ${ids.length} · model metadata enrich failed ${enrich.failed}, skipped ${enrich.skipped}, enriched ${enrich.enriched}`
+          : isZh
+            ? `上游模型列表 ${ids.length} 条 · 已 enrich ${enrich.enriched} 条模型元数据，跳过 ${enrich.skipped} 条（模型目录未覆盖）`
+            : `upstream ${ids.length} · enriched ${enrich.enriched} model metadata, skipped ${enrich.skipped} (not in catalog)`;
+        const warningPart = enrich.warning ? ` · ${enrich.warning}` : "";
+        toast("ok", `${base}: ${enrichMsg}${warningPart}`);
+      }
+    } catch (e) {
+      toast("err", e instanceof Error ? e.message : String(e));
     } finally {
       setFetching(false);
     }
@@ -422,7 +442,20 @@ function ModelsModal({
     if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
       await api.applyGateway(edited);
     }
-    await api.updateModels(name, models);
+    const res = await api.updateModels(name, models);
+    // 可观测性：模型目录 enrich 结果合并到保存提示
+    if (res.enrich) {
+      const isZh = (lang as string) === "zh";
+      const e = res.enrich;
+      const enrichMsg = e.failed > 0
+        ? isZh
+          ? `模型元数据 enrich 失败 ${e.failed} 条` + (e.warning ? ` · ${e.warning}` : "")
+          : `model metadata enrich failed ${e.failed}` + (e.warning ? ` · ${e.warning}` : "")
+        : isZh
+          ? `已 enrich ${e.enriched} 条，跳过 ${e.skipped} 条（模型目录未覆盖）` + (e.warning ? ` · ${e.warning}` : "")
+          : `enriched ${e.enriched}, skipped ${e.skipped} (not in catalog)` + (e.warning ? ` · ${e.warning}` : "");
+      toast("ok", enrichMsg);
+    }
     await api.expose(name, [...exposed].filter((id) => models.some((m) => m.id === id)));
     setGatewayPreview(null);
     await onSaved();
@@ -445,7 +478,7 @@ function ModelsModal({
             className="max-w-xs"
           />
           <Button
-            onClick={() => run(fetchFromProvider, undefined)}
+            onClick={() => void fetchFromProvider()}
             disabled={fetching}
           >
             {fetching ? t("Fetching…") : t("Fetch from provider")}
@@ -558,7 +591,8 @@ function CcsImportModal({
   onImported: () => Promise<void>;
 }) {
   const run = useAction();
-  const { t } = useI18n();
+  const toast = useToast();
+  const { t, lang } = useI18n() as any;
   const [providers, setProviders] = useState<CcsProvider[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState("");

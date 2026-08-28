@@ -797,6 +797,70 @@ pub fn toast_models_updated(name: &str) -> String {
         format!("Updated models for '{}'", name)
     }
 }
+pub fn toast_models_fetched_with_enrich(
+    count: usize,
+    enriched: usize,
+    skipped: usize,
+    failed: usize,
+    warning: Option<&str>,
+) -> String {
+    let base = if is_zh() {
+        format!("已获取 {} 个模型（上游模型列表）", count)
+    } else {
+        format!("{} models fetched (upstream)", count)
+    };
+    let enrich_part = if is_zh() {
+        if failed > 0 {
+            format!(" · 模型元数据 enrich 失败 {} 条，跳过 {} 条，已 enrich {} 条", failed, skipped, enriched)
+        } else {
+            format!(" · 已 enrich {} 条模型元数据，跳过 {} 条（模型目录未覆盖）", enriched, skipped)
+        }
+    } else {
+        if failed > 0 {
+            format!(" · model metadata enrich failed {} , skipped {} , enriched {}", failed, skipped, enriched)
+        } else {
+            format!(" · enriched {} model metadata, skipped {} (not in catalog)", enriched, skipped)
+        }
+    };
+    let mut msg = format!("{}{}", base, enrich_part);
+    if let Some(w) = warning {
+        msg.push_str(&format!(" · {}", w));
+    }
+    msg
+}
+
+pub fn toast_models_updated_with_enrich(
+    name: &str,
+    enriched: usize,
+    skipped: usize,
+    failed: usize,
+    warning: Option<&str>,
+) -> String {
+    let base = if is_zh() {
+        format!("已更新供应商 '{}' 的模型列表", name)
+    } else {
+        format!("Updated models for '{}'", name)
+    };
+    let enrich_part = if is_zh() {
+        if failed > 0 {
+            format!(" · 模型元数据 enrich 失败 {} 条", failed)
+        } else {
+            format!(" · 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）", enriched, skipped)
+        }
+    } else {
+        if failed > 0 {
+            format!(" · enrich failed {}", failed)
+        } else {
+            format!(" · enriched {} , skipped {}", enriched, skipped)
+        }
+    };
+    let mut msg = format!("{}{}", base, enrich_part);
+    if let Some(w) = warning {
+        msg.push_str(&format!(" · {}", w));
+    }
+    msg
+}
+
 pub fn toast_exposed_models_updated(name: &str) -> String {
     if is_zh() {
         format!("已更新供应商 '{}' 的暴露模型并同步到 pi 配置", name)

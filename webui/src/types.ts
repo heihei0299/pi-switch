@@ -126,6 +126,13 @@ export interface TestResult {
   responseTimeMs?: number;
 }
 
+export interface EnrichStats {
+  enriched: number;
+  skipped: number;
+  failed: number;
+  warning?: string | null;
+}
+
 export interface ProfileDetail {
   name: string;
   profile: ProviderProfile;
