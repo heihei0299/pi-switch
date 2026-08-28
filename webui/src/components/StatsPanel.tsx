@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { AppState, ConversationRequestsPage, ConversationStats, ConversationsPage, RecentRequest, UsageStats } from "../types";
 import { api, logsExportUrl } from "../api";
-import { Button, Card, Input, SectionTitle } from "./ui";
+import { Button, Card, cx, Input, SectionTitle } from "./ui";
 import { decodeConversationName, formatCost, formatRequestTime, formatRequestToken, formatTokenCount, formatTokenDimension, formatTotalTokens, isLowCacheRate, shortConversationId } from "../lib/format";
 import { computeConversationWindow, computeStatsWindow, todayString } from "../lib/statsWindow";
 import type { ConversationRange, StatsRange } from "../lib/statsWindow";
@@ -359,31 +359,34 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
         </Card>
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label={t("Total")} value={stats.totalRequests} />
-            <Metric label={t("OK")} value={stats.okRequests} tone="green" />
-            <Metric label={t("Failed")} value={stats.failedRequests} tone="red" />
-            <Metric label={t("Success")} value={stats.successRate} />
-            <Metric label={t("Cache rate")} value={stats.cacheHitRate ?? "-"} />
-          </div>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label={t("Input")} value={formatTokenDimension(totals?.input)} />
-            <Metric label={t("Output")} value={formatTokenDimension(totals?.output)} />
-            <Metric label={t("Cached")} value={formatTokenDimension(totals?.cached)} badge="⊆ Input" />
-            <Metric
-              label={t("Reasoning")}
-              value={formatTokenDimension(totals?.reasoning)}
-              badge="⊆ Output"
-            />
-            <Metric label={t("Total")} value={formatTotalTokens(totals)} />
-          </div>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label="Cost" value={formatCost(stats.totalCost)} />
-            {stats.costUnknown ? (
-              <div className="col-span-full text-xs text-zinc-500">
-                {stats.costUnknown} {t("unknown cost rows")}
-              </div>
-            ) : null}
+          <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--panel)]/50 p-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <HeroMetric label={t("Total")} value={String(stats.totalRequests)} accent />
+              <HeroMetric label={t("OK")} value={String(stats.okRequests)} tone="green" />
+              <HeroMetric label={t("Failed")} value={String(stats.failedRequests)} tone="red" />
+              <HeroMetric label={t("Success")} value={String(stats.successRate)} />
+              <HeroMetric label={t("Cache rate")} value={String(stats.cacheHitRate ?? "-")} />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <HeroMetric label={t("Input")} value={String(formatTokenDimension(totals?.input))} mono />
+              <HeroMetric label={t("Output")} value={String(formatTokenDimension(totals?.output))} mono />
+              <HeroMetric label={t("Cached")} value={String(formatTokenDimension(totals?.cached))} mono badge="⊆ Input" />
+              <HeroMetric label={t("Reasoning")} value={String(formatTokenDimension(totals?.reasoning))} mono badge="⊆ Output" />
+              <HeroMetric label={t("Total")} value={String(formatTotalTokens(totals))} mono accent />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--line)] pt-3">
+              <HeroMetric label="Cost" value={String(formatCost(stats.totalCost))} mono accent />
+              {stats.costUnknown ? (
+                <span className="text-xs tracking-wide text-zinc-500">
+                  {stats.costUnknown} {t("unknown cost rows")}
+                </span>
+              ) : null}
+              {stats.avgLatencyMs != null && (
+                <span className="text-xs text-zinc-500">
+                  {t("Avg latency:")} <span className="font-mono text-zinc-200">{stats.avgLatencyMs} ms</span>
+                </span>
+              )}
+            </div>
           </div>
           {stats.avgLatencyMs != null && (
             <div className="mb-4 text-sm text-zinc-400">
@@ -774,6 +777,33 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+function HeroMetric({
+  label,
+  value,
+  tone = "zinc",
+  badge,
+  mono,
+  accent,
+}: {
+  label: string;
+  value: string;
+  tone?: "zinc" | "green" | "red";
+  badge?: string;
+  mono?: boolean;
+  accent?: boolean;
+}) {
+  const color = tone === "green" ? "text-emerald-300" : tone === "red" ? "text-red-300" : accent ? "text-amber-200" : "text-zinc-100";
+  return (
+    <div className={cx("rounded-lg border bg-zinc-950/40 px-3 py-2.5", accent ? "border-amber-500/20 bg-amber-500/[0.06]" : "border-white/5")}>
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+        {label}
+        {badge && <span className="ml-1 text-[9px] normal-case tracking-normal text-zinc-600">{badge}</span>}
+      </div>
+      <div className={cx("mt-1 text-[17px] font-semibold leading-none tracking-tight", mono ? "font-mono tabular-nums" : "font-[var(--font-display)]", color)}>{value}</div>
     </div>
   );
 }

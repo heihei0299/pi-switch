@@ -100,8 +100,9 @@ export function ProfilesPanel({
                 )}
                 <Button onClick={() => setModels(name)}>{t("Models")}</Button>
                 <Button onClick={() => setEditing({ name })}>{t("Edit")}</Button>
-                <Button
-                  onClick={() =>
+                <ProfileCardMenu
+                  name={name}
+                  onTest={() =>
                     run(
                       async () => {
                         const r = await api.testProfile(name);
@@ -111,29 +112,18 @@ export function ProfilesPanel({
                       t("Test OK"),
                     )
                   }
-                >
-                  {t("Test")}
-                </Button>
-                <Button
-                  onClick={() => {
+                  onCopy={() => {
                     const to = prompt(
                       `${t("Duplicate profile '{{name}}' as:").replace("{{name}}", name)}`,
                       `${name}-copy`,
                     );
                     if (to) run(() => api.duplicateProfile(name, to), t("Duplicated"), refresh);
                   }}
-                >
-                  {t("Copy")}
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={() => {
+                  onDelete={() => {
                     if (confirm(t("Delete profile '{{name}}'?").replace("{{name}}", name)))
                       run(() => api.deleteProfile(name), t("Deleted"), refresh);
                   }}
-                >
-                  {t("Delete")}
-                </Button>
+                />
               </div>
             </Card>
           );
@@ -571,6 +561,45 @@ function ModelsModal({
     </>
   );
 }
+
+function ProfileCardMenu({
+  name,
+  onTest,
+  onCopy,
+  onDelete,
+}: {
+  name: string;
+  onTest: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { t } = useI18n() as any;
+  return (
+    <div className="relative">
+      <Button
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="px-2"
+      >
+        …
+      </Button>
+      {open && (
+        <>
+          <button className="fixed inset-0 z-10" aria-label={t("Close menu")} onClick={() => setOpen(false)} />
+          <div role="menu" className="absolute right-0 z-20 mt-1 w-36 rounded-lg border border-[var(--line)] bg-zinc-900 p-1 shadow-xl">
+            <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onTest(); }}>{t("Test")}</button>
+            <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onCopy(); }}>{t("Copy")}</button>
+            <div className="my-1 h-px bg-white/10" />
+            <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-red-300 hover:bg-red-500/10" onClick={() => { setOpen(false); onDelete(); }}>{t("Delete")}</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 
 // ─── preset loader ────────────────────────────────────────
 
