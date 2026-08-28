@@ -3965,7 +3965,7 @@ mod tests {
         let native_upstream = Router::new().route(
             "/v1/responses",
             post(move || {
-                let native_sse = native_sse.clone();
+                let native_sse = native_sse;
                 async move {
                     axum::response::Response::builder()
                         .status(StatusCode::OK)
@@ -4041,7 +4041,7 @@ mod tests {
         let chat_upstream = Router::new().route(
             "/v1/chat/completions",
             post(move || {
-                let chat_sse = chat_sse.clone();
+                let chat_sse = chat_sse;
                 async move {
                     axum::response::Response::builder()
                         .status(StatusCode::OK)
