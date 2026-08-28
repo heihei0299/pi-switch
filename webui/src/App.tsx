@@ -50,6 +50,7 @@ function ShellWithLang() {
 function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }) {
   const [nav, setNav] = useState<NavKey>("home");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { t } = useI18n();
@@ -116,12 +117,22 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           "flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-950/95 backdrop-blur md:bg-zinc-950/60",
           "fixed inset-y-0 left-0 z-40 max-w-[82vw] md:static md:w-56 md:max-w-none md:translate-x-0",
           "transition-transform duration-200 ease-out",
-          drawerOpen ? "translate-x-0" : "-translate-x-full",
+          sidebarCollapsed ? "md:hidden" : "",
         )}
       >
-        <div className="hidden px-4 py-4 md:block">
-          <div className="text-lg font-bold tracking-tight text-zinc-100">pi-switch</div>
-          <div className="text-[11px] text-zinc-500">{t("provider control · web")}</div>
+        <div className="hidden items-center justify-between px-4 py-4 md:flex">
+          <div>
+            <div className="text-lg font-bold tracking-tight text-zinc-100">pi-switch</div>
+            <div className="text-[11px] text-zinc-500">{t("provider control · web")}</div>
+          </div>
+          <button
+            type="button"
+            aria-label={t("Hide sidebar")}
+            onClick={() => setSidebarCollapsed(true)}
+            className="rounded-md px-1.5 py-1 text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          >
+            «
+          </button>
         </div>
         <div className="flex items-center justify-between px-4 py-3 md:hidden">
           <div className="text-sm font-semibold text-zinc-100">pi-switch</div>
@@ -166,6 +177,16 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
       {/* Main */}
       <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
+          {sidebarCollapsed && (
+            <button
+              type="button"
+              aria-label={t("Show sidebar")}
+              onClick={() => setSidebarCollapsed(false)}
+              className="mb-3 hidden items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/10 md:inline-flex"
+            >
+              <span aria-hidden>☰</span> {t("Show sidebar")}
+            </button>
+          )}
           {error && (
             <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200">
               <div className="font-medium">{t("Could not load config")}</div>
