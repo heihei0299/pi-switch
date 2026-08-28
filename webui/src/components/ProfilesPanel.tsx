@@ -78,10 +78,10 @@ export function ProfilesPanel({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-100">{name}</span>
-                  {isCurrent && <Badge tone="indigo">{t("current")}</Badge>}
+                  {isCurrent && <Badge tone="amber">{t("current")}</Badge>}
                   {p.proxy && <Badge tone="amber">{t("proxy")}</Badge>}
                   <Badge>{p.api || "?"}</Badge>
-                  <Badge tone="indigo">{t("Responses")}: {effectiveResponsesMode(p)}</Badge>
+                  <Badge tone="amber">{t("Responses")}: {effectiveResponsesMode(p)}</Badge>
                   {exposed > 0 && <Badge tone="green">{exposed} {t("exposed")}</Badge>}
                 </div>
                 <div className="mt-0.5 truncate text-xs text-zinc-500">
@@ -575,11 +575,18 @@ function ProfileCardMenu({
 }) {
   const [open, setOpen] = useState(false);
   const { t } = useI18n() as any;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   return (
     <div className="relative">
       <Button
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={t("Actions for {{name}}").replace("{{name}}", name)}
         onClick={() => setOpen((v) => !v)}
         className="px-2"
       >
@@ -587,8 +594,8 @@ function ProfileCardMenu({
       </Button>
       {open && (
         <>
-          <button className="fixed inset-0 z-10" aria-label={t("Close menu")} onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute right-0 z-20 mt-1 w-36 rounded-lg border border-[var(--line)] bg-zinc-900 p-1 shadow-xl">
+          <button className="fixed inset-0 z-[55]" aria-label={t("Close menu")} onClick={() => setOpen(false)} />
+          <div role="menu" className="absolute right-0 z-[55] mt-1 w-36 rounded-lg border border-[var(--line)] bg-zinc-900 p-1 shadow-xl">
             <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onTest(); }}>{t("Test")}</button>
             <button role="menuitem" className="w-full rounded px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-white/5" onClick={() => { setOpen(false); onCopy(); }}>{t("Copy")}</button>
             <div className="my-1 h-px bg-white/10" />

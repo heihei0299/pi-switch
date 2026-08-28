@@ -119,7 +119,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
             ? "hidden md:flex md:w-14"
             : "w-64 md:w-56",
           "fixed inset-y-0 left-0 z-40 max-w-[82vw] md:static md:max-w-none md:translate-x-0",
-          "transition-transform duration-200 ease-out",
+          "transition-all duration-200 ease-out",
           drawerOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
@@ -171,7 +171,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
                 aria-current={active ? "page" : undefined}
                 title={sidebarCollapsed ? t(item.label) : undefined}
                 className={cx(
-                  "mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-150",
+                  "mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-150 relative",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]/40",
                   active
                     ? "bg-[var(--signal)]/15 text-amber-200 border border-amber-500/20"
@@ -187,7 +187,6 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           })}
         </nav>
         {!sidebarCollapsed && <div className="px-4 py-3 text-[11px] tracking-wide text-zinc-600">{t("CLI · TUI · WebUI — same core")}</div>}
-        <div className="px-4 py-3 text-[11px] text-zinc-600">{t("CLI · TUI · WebUI — same core")}</div>
       </aside>
 
       {drawerOpen && (

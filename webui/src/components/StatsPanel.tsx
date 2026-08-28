@@ -388,11 +388,6 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
               )}
             </div>
           </div>
-          {stats.avgLatencyMs != null && (
-            <div className="mb-4 text-sm text-zinc-400">
-              {t("Avg latency:")} <span className="text-zinc-200">{stats.avgLatencyMs} ms</span>
-            </div>
-          )}
 
           {byProvider.length > 0 && (
             <Card className="overflow-hidden">

@@ -56,7 +56,6 @@ export function SectionTitle({ children, hint }: { children: React.ReactNode; hi
   return (
     <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
       <h2 className="font-[var(--font-display)] text-[15px] font-semibold tracking-tight text-zinc-100">{children}</h2>
-      <h2 className="text-[15px] font-semibold tracking-tight text-zinc-100">{children}</h2>
       {hint && <span className="text-[12px] font-normal tracking-wide text-zinc-500">{hint}</span>}
     </div>
   );
@@ -71,7 +70,6 @@ export function Label({ children }: { children: React.ReactNode }) {
 const CTRL =
   "w-full rounded-lg border border-[var(--line)] bg-zinc-950/70 px-3.5 py-2 text-[13px] leading-5 text-zinc-100 " +
   "outline-none placeholder:text-zinc-600 focus:border-[var(--signal)]/50 focus:ring-2 focus:ring-[var(--signal)]/20";
-  "w-full rounded-lg border border-white/10 bg-zinc-950/70 px-3.5 py-2 text-[13px] leading-5 text-zinc-100 " +
   "outline-none placeholder:text-zinc-600 focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20";
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
