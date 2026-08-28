@@ -264,6 +264,53 @@ pub fn enrich_models_with_catalog(
 /// - catalog=None 时视为模型目录不可用，failed = models.len()，warning 来自调用方（如网络失败原因）
 /// - provider 映射失败或目录中无该 provider 时，skipped = models.len()
 /// - 否则 enriched = 命中数，skipped = 未命中数，failed = 0
+/// 模型目录 id 的 provider 前缀剥离（如 deepseek/deepseek-v4-flash -> deepseek-v4-flash），用于全局回退的兼容匹配
+fn normalized_suffix(id: &str) -> &str {
+    match id.rfind('/') {
+        Some(idx) => &id[idx + 1..],
+        None => id,
+    }
+}
+
+/// 在单 provider 的 models map 中查找（精确 + 前缀剥离 + 后缀扫描）
+fn find_in_catalog_map<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    id: &str,
+) -> Option<&'a Value> {
+    if let Some(v) = map.get(id) {
+        return Some(v);
+    }
+    let suffix = normalized_suffix(id);
+    if suffix != id {
+        if let Some(v) = map.get(suffix) {
+            return Some(v);
+        }
+    }
+    // 兼容 catalog 中 key 也带前缀的情况（如 catalog 键为 provider/model，本地为 model）
+    for (k, v) in map.iter() {
+        if normalized_suffix(k) == suffix {
+            return Some(v);
+        }
+        if k == id {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// 全目录全局搜索：遍历 catalog 全部 provider 的 models map，按 id 精确匹配（含 provider/model 前缀兼容）
+fn find_global_catalog_model<'a>(catalog: &'a Value, id: &str) -> Option<&'a Value> {
+    let obj = catalog.as_object()?;
+    for (_prov_key, provider_entry) in obj.iter() {
+        if let Some(map) = provider_entry.get("models").and_then(|v| v.as_object()) {
+            if let Some(v) = find_in_catalog_map(map, id) {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
 pub fn enrich_models_with_catalog_with_stats(
     profile: &config::ProviderProfile,
     models: Vec<config::ModelEntry>,
@@ -279,21 +326,28 @@ pub fn enrich_models_with_catalog_with_stats(
         log::warn!("{}", w);
         return (models, EnrichStats { enriched: 0, skipped: 0, failed: total, warning: Some(w) });
     };
-    let Some(provider_key) = crate::catalog::resolve_catalog_provider(profile) else {
-        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
-    };
-    let Some(provider_entry) = catalog.get(&provider_key) else {
-        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
-    };
-    let Some(models_map) = provider_entry.get("models").and_then(|v| v.as_object()) else {
-        return (models, EnrichStats { enriched: 0, skipped: total, failed: 0, warning });
-    };
+    // per-profile 优先：显式 modelsDevProvider > preset 推断
+    let provider_key_opt = crate::catalog::resolve_catalog_provider(profile);
+    let per_models_map_opt = provider_key_opt
+        .as_ref()
+        .and_then(|k| catalog.get(k))
+        .and_then(|v| v.get("models"))
+        .and_then(|v| v.as_object());
     let mut enriched = 0;
     let mut skipped = 0;
     let out: Vec<config::ModelEntry> = models
         .into_iter()
         .map(|m| {
-            if let Some(catalog_model) = models_map.get(&m.id) {
+            // 1) per-profile 精确查找（含前缀兼容）
+            let mut hit: Option<&Value> = None;
+            if let Some(map) = per_models_map_opt {
+                hit = find_in_catalog_map(map, &m.id);
+            }
+            // 2) per-profile 未命中时全局回退（遍历全目录，含前缀兼容）
+            if hit.is_none() {
+                hit = find_global_catalog_model(catalog, &m.id);
+            }
+            if let Some(catalog_model) = hit {
                 enriched += 1;
                 enrich_single_entry(m, catalog_model)
             } else {
@@ -320,19 +374,27 @@ pub fn enrich_stats_for_ids(
         let w = warning.unwrap_or_else(|| "模型目录不可用，跳过模型元数据 enrich".to_string());
         return EnrichStats { enriched: 0, skipped: 0, failed: total, warning: Some(w) };
     };
-    let Some(provider_key) = crate::catalog::resolve_catalog_provider(profile) else {
-        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
-    };
-    let Some(provider_entry) = catalog.get(&provider_key) else {
-        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
-    };
-    let Some(models_map) = provider_entry.get("models").and_then(|v| v.as_object()) else {
-        return EnrichStats { enriched: 0, skipped: total, failed: 0, warning };
-    };
+    let provider_key_opt = crate::catalog::resolve_catalog_provider(profile);
+    let per_models_map_opt = provider_key_opt
+        .as_ref()
+        .and_then(|k| catalog.get(k))
+        .and_then(|v| v.get("models"))
+        .and_then(|v| v.as_object());
     let mut enriched = 0;
     let mut skipped = 0;
     for id in ids {
-        if models_map.contains_key(id) {
+        let mut hit = false;
+        if let Some(map) = per_models_map_opt {
+            if find_in_catalog_map(map, id).is_some() {
+                hit = true;
+            }
+        }
+        if !hit {
+            if find_global_catalog_model(catalog, id).is_some() {
+                hit = true;
+            }
+        }
+        if hit {
             enriched += 1;
         } else {
             skipped += 1;
@@ -694,7 +756,7 @@ mod enrich_tests {
         let catalog = fixture_catalog();
         let models = vec![ModelEntry { id: "gpt-4o".into(), context_window: 1000, ..Default::default() }];
         let out = enrich_models_with_catalog(&profile, models.clone(), Some(&catalog));
-        assert_eq!(out[0].context_window, 1000, "未知 preset 不应 enrich");
+        assert_eq!(out[0].context_window, 128000, "未知 preset 现通过全局回退应 enrich（聚合 profile 修复）");
 
         profile.models_dev_provider = Some("openai".into());
         let out2 = enrich_models_with_catalog(&profile, models, Some(&catalog));
@@ -754,12 +816,19 @@ mod enrich_tests {
     fn enrich_stats_skipped_when_provider_unmapped() {
         let profile = ProviderProfile { preset: Some("custom".into()), ..Default::default() };
         let catalog = fixture_catalog();
+        // gpt-4o 存在于全局 openai 中，现应通过全局回退命中（聚合 profile 修复）
         let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
         let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models.clone(), Some(&catalog), None);
         assert_eq!(out[0].id, "gpt-4o");
-        assert_eq!(stats.skipped, 1);
-        assert_eq!(stats.enriched, 0);
+        assert_eq!(stats.enriched, 1);
+        assert_eq!(stats.skipped, 0);
         assert_eq!(stats.failed, 0);
+        // 真正不存在于任何 provider 的 id 仍应 skipped
+        let models2 = vec![ModelEntry { id: "private-unknown-xyz".into(), ..Default::default() }];
+        let (out2, stats2) = enrich_models_with_catalog_with_stats(&profile, models2.clone(), Some(&catalog), None);
+        assert_eq!(out2[0].id, "private-unknown-xyz");
+        assert_eq!(stats2.skipped, 1);
+        assert_eq!(stats2.enriched, 0);
     }
 
     #[test]
@@ -785,6 +854,137 @@ mod enrich_tests {
         assert_eq!(stats.enriched, 1);
         assert!(stats.warning.is_some());
         assert!(stats.warning.unwrap().contains("模型目录"));
+    }
+    #[test]
+    fn enrich_global_fallback_oc_aggregation_cross_provider() {
+        // oc 为聚合 profile：无 preset 且无 modelsDevProvider，应通过全目录全局搜索命中跨 provider 模型
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "gpt-4o": {
+                        "id": "gpt-4o",
+                        "name": "GPT-4o",
+                        "limit": {"context": 128000, "output": 16384},
+                        "cost": {"input": 2.5, "output": 10, "cache_read": 1.25},
+                        "reasoning": false,
+                        "modalities": {"input": ["text", "image"], "output": ["text"]}
+                    }
+                }
+            },
+            "deepseek": {
+                "id": "deepseek",
+                "models": {
+                    "deepseek-v4-flash": {
+                        "id": "deepseek-v4-flash",
+                        "name": "DeepSeek V4 Flash",
+                        "limit": {"context": 64000, "output": 32000},
+                        "cost": {"input": 0.5, "output": 1.5, "cache_read": 0.3},
+                        "reasoning": false,
+                        "modalities": {"input": ["text"], "output": ["text"]}
+                    }
+                }
+            },
+            "anthropic": {
+                "id": "anthropic",
+                "models": {
+                    "claude-3-5-sonnet": {
+                        "id": "claude-3-5-sonnet",
+                        "name": "Claude 3.5 Sonnet",
+                        "limit": {"context": 200000, "output": 8192},
+                        "cost": {"input": 3, "output": 15},
+                        "reasoning": false,
+                        "modalities": {"input": ["text", "image"], "output": ["text"]}
+                    }
+                }
+            }
+        });
+        let profile = ProviderProfile {
+            preset: None,
+            models_dev_provider: None,
+            ..Default::default()
+        };
+        let models = vec![
+            ModelEntry { id: "gpt-4o".into(), context_window: 1000, ..Default::default() },
+            ModelEntry { id: "deepseek-v4-flash".into(), context_window: 1000, ..Default::default() },
+        ];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), None);
+        assert_eq!(stats.enriched, 2, "聚合 profile 应通过全目录回退命中 gpt-4o 与 deepseek-v4-flash");
+        assert_eq!(stats.skipped, 0);
+        assert_eq!(stats.failed, 0);
+        assert_eq!(out[0].context_window, 128000);
+        assert_eq!(out[0].name.as_deref(), Some("GPT-4o"));
+        assert_eq!(out[1].context_window, 64000);
+        assert_eq!(out[1].name.as_deref(), Some("DeepSeek V4 Flash"));
+    }
+
+    #[test]
+    fn enrich_global_fallback_prefix_compat() {
+        ///provider/model 前缀兼容：如 deepseek/deepseek-v4-flash vs deepseek-v4-flash
+        let catalog = json!({
+            "deepseek": {
+                "id": "deepseek",
+                "models": {
+                    "deepseek-v4-flash": {
+                        "id": "deepseek-v4-flash",
+                        "name": "DeepSeek V4 Flash",
+                        "limit": {"context": 64000, "output": 32000},
+                        "cost": {"input": 0.5, "output": 1.5},
+                        "reasoning": false,
+                        "modalities": {"input": ["text"], "output": ["text"]}
+                    }
+                }
+            }
+        });
+        let profile = ProviderProfile { preset: None, ..Default::default() };
+        let models = vec![ModelEntry { id: "deepseek/deepseek-v4-flash".into(), context_window: 1000, ..Default::default() }];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), None);
+        assert_eq!(stats.enriched, 1, "provider/model 前缀应被剥离后命中");
+        assert_eq!(stats.skipped, 0);
+        assert_eq!(out[0].context_window, 64000);
+        // 反向：本地无前缀，目录命中 plain 也应兼容（已在上一用例验证）
+    }
+
+    #[test]
+    fn enrich_global_fallback_stats_for_ids() {
+        let catalog = json!({
+            "openai": { "id": "openai", "models": { "gpt-4o": {"id":"gpt-4o","limit":{"context":128000,"output":16384}} } },
+            "deepseek": { "id": "deepseek", "models": { "deepseek-v4-flash": {"id":"deepseek-v4-flash","limit":{"context":64000,"output":32000}} } }
+        });
+        let profile = ProviderProfile { preset: Some("custom".into()), ..Default::default() };
+        // custom preset 无映射，per-profile 会被 skipped，但全局应回退命中
+        let ids = vec!["gpt-4o".to_string(), "deepseek-v4-flash".to_string(), "unknown-model".to_string()];
+        let stats = enrich_stats_for_ids(&profile, &ids, Some(&catalog), None);
+        assert_eq!(stats.enriched, 2, "enrich_stats_for_ids 也应全局回退");
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.failed, 0);
+    }
+
+    #[test]
+    fn enrich_global_fallback_preserves_per_profile_priority() {
+        // per-profile 命中时不应被全局覆盖，保持原 enriched 统计语义
+        let catalog = json!({
+            "openai": { "id": "openai", "models": { "gpt-4o": {"id":"gpt-4o","limit":{"context":128000,"output":16384},"cost":{"input":2.5,"output":10}} } },
+            "deepseek": { "id": "deepseek", "models": { "gpt-4o": {"id":"gpt-4o","limit":{"context":99999,"output":99999},"cost":{"input":99,"output":99}} } }
+        });
+        let profile = ProviderProfile { preset: Some("openai".into()), ..Default::default() };
+        let models = vec![ModelEntry { id: "gpt-4o".into(), context_window: 1000, ..Default::default() }];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), None);
+        assert_eq!(stats.enriched, 1);
+        assert_eq!(out[0].context_window, 128000, "应优先命中 per-profile 的 openai，而非 deepseek 的全局条目");
+    }
+
+    #[test]
+    fn enrich_global_fallback_still_skipped_when_absent() {
+        let catalog = json!({
+            "openai": { "id": "openai", "models": { "gpt-4o": {"id":"gpt-4o","limit":{"context":128000,"output":16384}} } }
+        });
+        let profile = ProviderProfile { preset: None, ..Default::default() };
+        let models = vec![ModelEntry { id: "nonexistent-model-xyz".into(), context_window: 1000, ..Default::default() }];
+        let (out, stats) = enrich_models_with_catalog_with_stats(&profile, models, Some(&catalog), None);
+        assert_eq!(stats.enriched, 0);
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(out[0].context_window, 1000, "真正缺失时仍跳过并保留原值");
     }
 
     #[test]

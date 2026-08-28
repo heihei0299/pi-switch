@@ -204,6 +204,7 @@ function ProfileForm({
   const [spoof, setSpoof] = useState(existing?.userAgent ?? "");
   const [proxy, setProxy] = useState(existing?.proxy ?? false);
   const [preset, setPreset] = useState(existing?.preset ?? "");
+  const [modelsDevProvider, setModelsDevProvider] = useState(existing?.modelsDevProvider ?? "");
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
@@ -238,6 +239,7 @@ function ProfileForm({
       proxy,
       exposedModels,
       preset: preset || undefined,
+      modelsDevProvider: modelsDevProvider.trim() || undefined,
       userAgent: spoof || undefined,
       updatedAt: new Date().toISOString(),
     } as ProviderProfile;
@@ -289,6 +291,13 @@ function ProfileForm({
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label={t("模型目录 Provider")}>
+            <Input
+              value={modelsDevProvider}
+              onChange={(e) => setModelsDevProvider(e.target.value)}
+              placeholder="如 openai/anthropic/deepseek，留空按 preset 推断"
+            />
           </Field>
           <Field label={t("API type")}>
             <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
