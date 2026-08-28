@@ -2,6 +2,7 @@ use crate::config::{
     self, backup_config, load_config, provider_id_for, save_config, ProviderProfile,
 };
 use crate::error::{AppError, Result};
+use serde_json::Value;
 use std::path::PathBuf;
 
 /// Create ~/.pi-switch/ + ~/.pi/agent/ and seed config.json / models.json if absent.
@@ -187,7 +188,13 @@ pub fn update_provider_models(
     let mut profile: ProviderProfile = serde_json::from_value(profile_value.clone())
         .map_err(|e| AppError::Message(format!("invalid profile: {}", e)))?;
 
-    profile.models = models;
+    // 模型目录 enrich：用本地缓存的模型元数据补齐 cost/limit/reasoning/input/name 等
+    // - 仅 enrich 已有 models 中的 id，不自动新增目录独有模型
+    // - 目录未命中或字段缺失时保留原值，私有模型无报错
+    // - 手工 `provider models` 显式列表不受约束（仅在有 catalog 且有映射时 enrich）
+    // 同步路径复用缓存文件（`load_catalog_from_cache`），异步 Fetch 链路复用 `get_or_refresh_catalog`
+    let enriched = try_enrich_from_cache_sync(&profile, models);
+    profile.models = enriched;
     profile.updated_at = Some(chrono::Utc::now().to_rfc3339());
 
     *profile_value =
@@ -200,6 +207,388 @@ pub fn update_provider_models(
 
     Ok(backup)
 }
+
+// ─── 模型目录 enrich（模型元数据） ──────────────────────────────────────────
+
+/// 从模型目录 Value 中 enrich 模型列表（纯函数，可测试）
+///
+/// - 仅 enrich 已有 `models` 中的 id，目录有但本地无的不自动新增
+/// - 未命中或字段缺失时保留本地原值，不清 cost/limit
+/// - 按分字段策略覆盖：limit.context/output、cost.input/output/cache_read、reasoning、modalities.input 按目录覆盖，name 仅缺省时补齐
+/// - extra/compat/headers/thinkingLevelMap 不覆盖；cost 仅外层 input/output/cache_read，忽略 tiers/context_over_200k
+pub fn enrich_models_with_catalog(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+    catalog: Option<&Value>,
+) -> Vec<config::ModelEntry> {
+    let Some(catalog) = catalog else {
+        return models;
+    };
+    let Some(provider_key) = crate::catalog::resolve_catalog_provider(profile) else {
+        return models;
+    };
+    let Some(provider_entry) = catalog.get(&provider_key) else {
+        return models;
+    };
+    let Some(models_map) = provider_entry.get("models").and_then(|v| v.as_object()) else {
+        return models;
+    };
+    models
+        .into_iter()
+        .map(|m| {
+            if let Some(catalog_model) = models_map.get(&m.id) {
+                enrich_single_entry(m, catalog_model)
+            } else {
+                m
+            }
+        })
+        .collect()
+}
+
+/// 异步 enrich 入口：复用 `get_or_refresh_catalog()`，触发范围为 Fetch Models 与新增/编辑 profile 的自动发现
+#[allow(dead_code)]
+pub async fn enrich_models_from_catalog(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+) -> Vec<config::ModelEntry> {
+    let catalog_opt = match crate::catalog::get_or_refresh_catalog().await {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
+            None
+        }
+    };
+    enrich_models_with_catalog(profile, models, catalog_opt.as_ref())
+}
+
+/// 解析单个 catalog model entry 并按分字段策略覆盖到 ModelEntry（保持 extra 等不动）
+fn enrich_single_entry(mut entry: config::ModelEntry, catalog_model: &Value) -> config::ModelEntry {
+    // limit.context -> contextWindow, limit.output -> maxTokens
+    if let Some(limit) = catalog_model.get("limit").and_then(|v| v.as_object()) {
+        if let Some(v) = limit
+            .get("context")
+            .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+        {
+            if v > 0 && v <= u32::MAX as u64 {
+                entry.context_window = v as u32;
+            }
+        }
+        if let Some(v) = limit
+            .get("output")
+            .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+        {
+            if v > 0 && v <= u32::MAX as u64 {
+                entry.max_tokens = v as u32;
+            }
+        }
+    }
+
+    // cost.input/output/cache_read -> cost (仅外层，忽略 tiers/context_over_200k)
+    if let Some(cost_obj) = catalog_model.get("cost").and_then(|v| v.as_object()) {
+        let c_input = cost_obj
+            .get("input")
+            .and_then(|v| v.as_f64())
+            .or_else(|| cost_obj.get("input").and_then(|v| v.as_i64().map(|i| i as f64)));
+        let c_output = cost_obj
+            .get("output")
+            .and_then(|v| v.as_f64())
+            .or_else(|| cost_obj.get("output").and_then(|v| v.as_i64().map(|i| i as f64)));
+        // 兼容 snake 与 camel
+        let c_cache_read = cost_obj
+            .get("cache_read")
+            .and_then(|v| v.as_f64())
+            .or_else(|| cost_obj.get("cache_read").and_then(|v| v.as_i64().map(|i| i as f64)))
+            .or_else(|| cost_obj.get("cacheRead").and_then(|v| v.as_f64()))
+            .or_else(|| cost_obj.get("cacheRead").and_then(|v| v.as_i64().map(|i| i as f64)));
+
+        if c_input.is_some() || c_output.is_some() || c_cache_read.is_some() {
+            let mut cost = entry.cost.clone().unwrap_or_default();
+            if let Some(v) = c_input {
+                cost.input = v;
+            }
+            if let Some(v) = c_output {
+                cost.output = v;
+            }
+            if let Some(v) = c_cache_read {
+                cost.cache_read = v;
+            }
+            entry.cost = Some(cost);
+        }
+    }
+
+    // reasoning -> reasoning
+    if let Some(v) = catalog_model.get("reasoning").and_then(|x| x.as_bool()) {
+        entry.reasoning = Some(v);
+    }
+
+    // modalities.input -> input（按目录覆盖，仅保留 text/image 以保持校验合法）
+    if let Some(arr) = catalog_model
+        .get("modalities")
+        .and_then(|m| m.get("input"))
+        .and_then(|v| v.as_array())
+    {
+        let mapped: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        if !mapped.is_empty() {
+            // 过滤为仅 text/image，避免 pdf 等导致校验失败；若过滤后为空则保留原值
+            let filtered: Vec<String> = mapped
+                .into_iter()
+                .filter(|s| s == "text" || s == "image")
+                .collect();
+            if !filtered.is_empty() {
+                entry.input = filtered;
+            }
+        }
+    }
+
+    // name 仅缺省时补齐
+    let need_name = entry
+        .name
+        .as_deref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    if need_name {
+        if let Some(name_str) = catalog_model.get("name").and_then(|v| v.as_str()) {
+            if !name_str.trim().is_empty() {
+                entry.name = Some(name_str.to_string());
+            }
+        }
+    }
+
+    entry
+}
+
+/// 同步 enrich 辅助：从本地缓存加载模型目录（若存在），否则跳过；供 `update_provider_models` 等同步路径复用
+fn try_enrich_from_cache_sync(
+    profile: &config::ProviderProfile,
+    models: Vec<config::ModelEntry>,
+) -> Vec<config::ModelEntry> {
+    let path = crate::catalog::catalog_cache_path();
+    let catalog_opt = crate::catalog::load_catalog_from_cache(&path).ok().flatten();
+    enrich_models_with_catalog(profile, models, catalog_opt.as_ref())
+}
+
+#[cfg(test)]
+mod enrich_tests {
+    use super::*;
+    use crate::config::{ModelCost, ModelEntry, ProviderProfile};
+    use serde_json::json;
+
+    fn fixture_catalog() -> Value {
+        json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "gpt-4o": {
+                        "id": "gpt-4o",
+                        "name": "GPT-4o",
+                        "limit": {"context": 128000, "output": 16384},
+                        "cost": {"input": 2.5, "output": 10, "cache_read": 1.25},
+                        "reasoning": false,
+                        "modalities": {"input": ["text", "image"], "output": ["text"]}
+                    },
+                    "o1": {
+                        "id": "o1",
+                        "name": "o1",
+                        "limit": {"context": 200000, "output": 100000},
+                        "cost": {"input": 15, "output": 60, "cache_read": 7.5, "tiers": [{"input":30, "output":120, "tier":{"type":"context","size":200000}}], "context_over_200k": {"input":30, "output":120}},
+                        "reasoning": true,
+                        "modalities": {"input": ["text"], "output": ["text"]}
+                    }
+                }
+            },
+            "anthropic": {
+                "id": "anthropic",
+                "models": {
+                    "claude-3-5-sonnet": {
+                        "id": "claude-3-5-sonnet",
+                        "name": "Claude 3.5 Sonnet",
+                        "limit": {"context": 200000, "output": 8192},
+                        "cost": {"input": 3, "output": 15},
+                        "reasoning": false,
+                        "modalities": {"input": ["text", "image"], "output": ["text"]}
+                    }
+                }
+            }
+        })
+    }
+
+    fn profile_openai() -> ProviderProfile {
+        ProviderProfile {
+            preset: Some("openai".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn enrich_field_mapping_correctness() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry {
+            id: "gpt-4o".into(),
+            name: None,
+            context_window: 1000,
+            max_tokens: 100,
+            cost: None,
+            reasoning: None,
+            input: vec!["text".into()],
+            ..Default::default()
+        }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert_eq!(out.len(), 1);
+        let m = &out[0];
+        assert_eq!(m.context_window, 128000, "limit.context -> contextWindow");
+        assert_eq!(m.max_tokens, 16384, "limit.output -> maxTokens");
+        let cost = m.cost.as_ref().expect("cost should be enriched");
+        assert!((cost.input - 2.5).abs() < 1e-9);
+        assert!((cost.output - 10.0).abs() < 1e-9);
+        assert!((cost.cache_read - 1.25).abs() < 1e-9);
+        assert_eq!(m.reasoning, Some(false));
+        assert_eq!(m.input, vec!["text", "image"]);
+        assert_eq!(m.name.as_deref(), Some("GPT-4o"));
+    }
+
+    #[test]
+    fn enrich_name_retains_when_not_missing() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry {
+            id: "gpt-4o".into(),
+            name: Some("My Custom".into()),
+            ..Default::default()
+        }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert_eq!(out[0].name.as_deref(), Some("My Custom"), "手工 name 非空时不被目录覆盖");
+        // name 缺省时应补齐
+        let models2 = vec![ModelEntry { id: "gpt-4o".into(), name: None, ..Default::default() }];
+        let out2 = enrich_models_with_catalog(&profile, models2, Some(&catalog));
+        assert_eq!(out2[0].name.as_deref(), Some("GPT-4o"));
+    }
+
+    #[test]
+    fn enrich_miss_retains_original() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let original_cost = ModelCost { input: 99.0, output: 99.0, cache_read: 9.9, cache_write: 1.1, ..Default::default() };
+        let models = vec![ModelEntry {
+            id: "private-model".into(),
+            context_window: 9999,
+            max_tokens: 888,
+            cost: Some(original_cost.clone()),
+            reasoning: Some(true),
+            input: vec!["text".into()],
+            name: Some("Private".into()),
+            ..Default::default()
+        }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let m = &out[0];
+        assert_eq!(m.context_window, 9999);
+        assert_eq!(m.max_tokens, 888);
+        let c = m.cost.as_ref().unwrap();
+        assert!((c.input - 99.0).abs() < 1e-9);
+        assert_eq!(m.reasoning, Some(true));
+        assert_eq!(m.name.as_deref(), Some("Private"));
+    }
+
+    #[test]
+    fn enrich_not_auto_add_catalog_extra() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "gpt-4o");
+        // 目录中的 o1 不应自动新增
+        assert!(!out.iter().any(|m| m.id == "o1"));
+    }
+
+    #[test]
+    fn enrich_extra_fields_not_overwritten() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let mut extra = serde_json::Map::new();
+        extra.insert("futureField".into(), json!({"preserved": true}));
+        let mut headers = serde_json::Map::new();
+        headers.insert("x-custom".into(), json!("keep"));
+        let models = vec![ModelEntry {
+            id: "gpt-4o".into(),
+            headers: Some(headers.clone()),
+            compat: Some(json!({"supportsDeveloperRole": true})),
+            thinking_level_map: Some(json!({"off": null})),
+            extra: extra.clone(),
+            cost: Some(ModelCost { input: 1.0, output: 1.0, cache_read: 0.1, cache_write: 0.2, tiers: vec![crate::config::ModelCostTier { input_tokens_above: 1.0, input: 2.0, output:2.0, cache_read:0.2, cache_write:0.2, ..Default::default() }], ..Default::default() }),
+            ..Default::default()
+        }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let m = &out[0];
+        assert_eq!(m.extra.get("futureField"), extra.get("futureField"));
+        assert_eq!(m.headers, Some(headers));
+        assert_eq!(m.compat, Some(json!({"supportsDeveloperRole": true})));
+        assert!(m.thinking_level_map.is_some());
+        // tiers 应保留原值，不被目录 tiers 覆盖
+        let cost = m.cost.as_ref().unwrap();
+        assert_eq!(cost.tiers.len(), 1);
+        assert_eq!(cost.cache_write, 0.2);
+        // 但 input/output/cache_read 应被覆盖
+        assert!((cost.input - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn enrich_ignores_tiers_and_context_over_200k() {
+        let profile = profile_openai();
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "o1".into(), ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let cost = out[0].cost.as_ref().unwrap();
+        assert!((cost.input - 15.0).abs() < 1e-9);
+        assert!((cost.output - 60.0).abs() < 1e-9);
+        assert!((cost.cache_read - 7.5).abs() < 1e-9);
+        assert!(cost.tiers.is_empty(), "tiers 不应被目录展开");
+    }
+
+    #[test]
+    fn enrich_partial_cost_retains_missing_fields() {
+        let profile = profile_openai();
+        let mut catalog = fixture_catalog();
+        // catalog 中 o1 仅提供 input/output，缺 cache_read，观察保留原 cache_read
+        catalog["openai"]["models"]["o1"]["cost"] = json!({"input": 15, "output": 60});
+        let models = vec![ModelEntry {
+            id: "o1".into(),
+            cost: Some(ModelCost { input: 1.0, output: 1.0, cache_read: 9.9, cache_write: 0.5, ..Default::default() }),
+            ..Default::default()
+        }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let cost = out[0].cost.as_ref().unwrap();
+        assert!((cost.input - 15.0).abs() < 1e-9);
+        assert!((cost.output - 60.0).abs() < 1e-9);
+        assert!((cost.cache_read - 9.9).abs() < 1e-9, "目录缺失 cache_read 时保留原值");
+        assert!((cost.cache_write - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn enrich_respects_provider_mapping_and_skips_unknown_preset() {
+        let mut profile = ProviderProfile { preset: Some("custom".into()), ..Default::default() };
+        let catalog = fixture_catalog();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), context_window: 1000, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models.clone(), Some(&catalog));
+        assert_eq!(out[0].context_window, 1000, "未知 preset 不应 enrich");
+
+        profile.models_dev_provider = Some("openai".into());
+        let out2 = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert_eq!(out2[0].context_window, 128000, "显式 modelsDevProvider 优先");
+    }
+
+    #[test]
+    fn enrich_none_catalog_retains_original() {
+        let profile = profile_openai();
+        let models = vec![ModelEntry { id: "gpt-4o".into(), context_window: 123, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models.clone(), None);
+        assert_eq!(out[0].context_window, 123);
+    }
+}
+
 fn backup_models() -> Option<PathBuf> {
     let models_path = config::models_path();
     if !models_path.exists() {
@@ -262,6 +651,13 @@ pub fn upsert_profile(
 ) -> Result<Option<PathBuf>> {
     config::validate_provider_profile(name, profile).map_err(AppError::InvalidInput)?;
 
+    // 模型目录 enrich：新增/编辑 profile 时若已携带 models，则尝试用缓存补齐元数据
+    let mut profile_owned = profile.clone();
+    if !profile_owned.models.is_empty() {
+        profile_owned.models =
+            try_enrich_from_cache_sync(&profile_owned, profile_owned.models.clone());
+    }
+
     let mut config = load_config()?;
     let backup = backup_config("config")?;
 
@@ -276,7 +672,7 @@ pub fn upsert_profile(
 
     config.profiles.insert(
         name.to_string(),
-        serde_json::to_value(profile).map_err(|e| AppError::json(config::config_path(), e))?,
+        serde_json::to_value(&profile_owned).map_err(|e| AppError::json(config::config_path(), e))?,
     );
     if config.current.is_none() {
         config.current = Some(name.to_string());
