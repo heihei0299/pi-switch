@@ -452,6 +452,21 @@ function ModelsModal({
   }
 
   function addModel() {
+    // 如果已存在空 ID 的模型，聚焦该行而非新增，避免连续点击产生大量空行
+    const empty = drafts.find((d) => !d.id.trim());
+    if (empty) {
+      setExpandedKeys((s) => {
+        const ns = new Set(s);
+        ns.add(empty.key);
+        return ns;
+      });
+      // 滚动到该行
+      setTimeout(() => {
+        document.getElementById(`model-id-${empty.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        document.getElementById(`model-id-${empty.key}`)?.focus();
+      }, 50);
+      return;
+    }
     const d = newModelDraft();
     setDrafts((prev) => [...prev, d]);
     setExpandedKeys((s) => {
@@ -459,6 +474,10 @@ function ModelsModal({
       ns.add(d.key);
       return ns;
     });
+    setTimeout(() => {
+      document.getElementById(`model-id-${d.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById(`model-id-${d.key}`)?.focus();
+    }, 50);
   }
 
   function removeDraft(key: string) {
@@ -547,13 +566,20 @@ function ModelsModal({
     }
   })();
 
-  const validationMsg = validate();
+  // 实时校验仅用于保存时阻断与行内高亮，不再全局黄条常驻（避免空行误导）
+  const validationMsg = null as unknown as string | null; // 保留变量名以兼容后续引用，但置空
 
   async function saveWithPreview() {
     const err = validate();
     if (err) {
       setValidationError(err);
       toast("err", err);
+      // 滚动到首个非法行
+      const idx = drafts.findIndex((d) => !d.id.trim() || drafts.filter((x) => x.id === d.id).length > 1);
+      if (idx >= 0) {
+        const key = drafts[idx]?.key;
+        if (key) setTimeout(() => document.getElementById(`model-id-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+      }
       return;
     }
     setValidationError(null);
@@ -642,12 +668,7 @@ function ModelsModal({
           <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;id&gt;</code>
         </div>
 
-        {validationMsg && (
-          <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
-            {validationMsg}
-          </div>
-        )}
-        {validationError && !validationMsg && (
+        {validationError && (
           <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200">
             {validationError}
           </div>

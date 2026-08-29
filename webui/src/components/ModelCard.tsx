@@ -87,6 +87,7 @@ export function ModelCard({
 
         <div className="flex min-w-0 flex-1 gap-2">
           <Input
+            id={`model-id-${draft.key}`}
             value={draft.id}
             onChange={(e) => update({ id: e.target.value })}
             placeholder={t("Model ID")}

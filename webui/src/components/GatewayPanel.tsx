@@ -106,6 +106,19 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }
 
   function addModel() {
+    const empty = drafts.find((d) => !d.id.trim());
+    if (empty) {
+      setExpandedKeys((s) => {
+        const ns = new Set(s);
+        ns.add(empty.key);
+        return ns;
+      });
+      setTimeout(() => {
+        document.getElementById(`model-id-${empty.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        document.getElementById(`model-id-${empty.key}`)?.focus();
+      }, 50);
+      return;
+    }
     const d = newModelDraft();
     setDrafts((prev) => [...prev, d]);
     setExpandedKeys((s) => {
@@ -113,6 +126,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       ns.add(d.key);
       return ns;
     });
+    setTimeout(() => {
+      document.getElementById(`model-id-${d.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById(`model-id-${d.key}`)?.focus();
+    }, 50);
   }
 
   async function handleFetchPreview() {
