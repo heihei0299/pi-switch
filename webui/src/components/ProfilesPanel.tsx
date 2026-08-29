@@ -290,6 +290,11 @@ function ProfileForm({
     else if (!v.userAgent) setSpoof("");
     setMode("structured");
   }
+  function formatProfileJson() {
+    try {
+      setText(JSON.stringify(JSON.parse(text), null, 2));
+    } catch {}
+  }
 
   function applyPreset(id: string) {
     setPreset(id);
@@ -400,13 +405,6 @@ function ProfileForm({
   return (
     <>
       <Modal title={original ? `${t("Edit")} ${original}` : t("Add profile")} onClose={onClose} wide>
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex gap-1 rounded-md border border-white/10 bg-zinc-900 p-0.5">
-            <button type="button" onClick={() => switchToStructured()} className={`rounded px-2 py-1 text-xs ${mode === "structured" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>结构化</button>
-            <button type="button" onClick={() => switchToRaw()} className={`rounded px-2 py-1 text-xs ${mode === "raw" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>JSON</button>
-          </div>
-          <div className="text-xs text-zinc-500">{mode === "structured" ? "结构化编辑" : "JSON 编辑（与 .pi/agent/models.json 同格式）"}</div>
-        </div>
         <Field label={t("Name")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-provider" />
         </Field>
@@ -590,11 +588,21 @@ function ProfileForm({
             {jsonValidation.ok && <div className="text-xs text-emerald-400">✓ JSON valid</div>}
           </div>
         )}
-        <div className="mt-2 flex justify-end gap-2">
-          <Button onClick={onClose}>{t("Cancel")}</Button>
-          <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)} disabled={mode === "raw" && !jsonValidation.ok}>
-            {t("Save")}
-          </Button>
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button onClick={formatProfileJson} className="h-7 text-xs">格式化</Button>
+            {mode === "structured" ? (
+              <Button onClick={() => switchToRaw()} className="h-7 text-xs">JSON</Button>
+            ) : (
+              <Button onClick={() => switchToStructured()} className="h-7 text-xs">结构化</Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={onClose}>{t("Cancel")}</Button>
+            <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)} disabled={mode === "raw" && !jsonValidation.ok}>
+              {t("Save")}
+            </Button>
+          </div>
         </div>
       </Modal>
     </>
@@ -686,6 +694,11 @@ function ModelsModal({
       return new Set([...prev].filter((id) => validIds.has(id)));
     });
     setMode("structured");
+  }
+  function formatModelsJson() {
+    try {
+      setText(JSON.stringify(JSON.parse(text), null, 2));
+    } catch {}
   }
   function addModel() {
     // 如果已存在空 ID 的模型，聚焦该行而非新增，避免连续点击产生大量空行
@@ -868,13 +881,7 @@ function ModelsModal({
     <>
       <Modal title={`${t("Models")} · ${name}`} onClose={onClose} wide>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="text-sm font-medium text-zinc-200">{t("Model config") || "模型配置"}</div>
-            <div className="flex gap-1 rounded-md border border-white/10 bg-zinc-900 p-0.5">
-              <button type="button" onClick={() => switchToStructured()} className={`rounded px-2 py-1 text-xs ${mode === "structured" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>结构化</button>
-              <button type="button" onClick={() => switchToRaw()} className={`rounded px-2 py-1 text-xs ${mode === "raw" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>JSON</button>
-            </div>
-          </div>
+          <div className="text-sm font-medium text-zinc-200">{t("Model config") || "模型配置"}</div>
           <div className="flex gap-2">
             {mode === "structured" && (
               <>
@@ -958,13 +965,16 @@ function ModelsModal({
           </div>
         )}
         <div className="mt-4 flex items-center justify-between">
-          <div className="flex gap-2 text-xs">
-            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set(drafts.map((d) => d.id)))}> 
-              {t("expose all")}
-            </button>
-            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set())}>
-              {t("expose none")}
-            </button>
+          <div className="flex items-center gap-2">
+            <Button onClick={formatModelsJson} className="h-7 text-xs">格式化</Button>
+            {mode === "structured" ? (
+              <Button onClick={() => switchToRaw()} className="h-7 text-xs">JSON</Button>
+            ) : (
+              <Button onClick={() => switchToStructured()} className="h-7 text-xs">结构化</Button>
+            )}
+            <span className="mx-1 text-zinc-600">|</span>
+            <button className="text-zinc-400 hover:text-zinc-200 text-xs" onClick={() => setExposed(new Set(drafts.map((d) => d.id)))}>全部暴露</button>
+            <button className="text-zinc-400 hover:text-zinc-200 text-xs" onClick={() => setExposed(new Set())}>全部不暴露</button>
           </div>
           <div className="flex gap-2">
             <Button onClick={onClose}>{t("Cancel")}</Button>

@@ -48,7 +48,7 @@ describe("ProfileForm JSON dual editor — T3", () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(screen.getByText("Name")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "结构化" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "格式化" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "JSON" })).toBeInTheDocument();
   });
 

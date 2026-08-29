@@ -115,6 +115,30 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }, [draft, drafts, apiType, baseUrl, apiKey, headers, compat]);
 
   const validation = useMemo(() => validateGatewayJson(liveJson), [liveJson]);
+  const [mode, setMode] = useState<"structured" | "raw">("structured");
+  const [rawText, setRawText] = useState(liveJson);
+  const rawValidation = useMemo(() => validateGatewayJson(rawText), [rawText]);
+  useEffect(() => {
+    setRawText(liveJson);
+  }, [liveJson]);
+  function switchToStructuredFromRaw() {
+    if (rawValidation.ok && rawValidation.value) {
+      const rec = asRecord(rawValidation.value);
+      setApiType((rec.api as string) || "openai-completions");
+      setBaseUrl((rec.baseUrl as string) || "");
+      setApiKey((rec.apiKey as string) || "");
+      setHeaders(rec.headers && typeof rec.headers === "object" && !Array.isArray(rec.headers) ? (rec.headers as Record<string, string>) : {});
+      setCompat(rec.compat && typeof rec.compat === "object" && !Array.isArray(rec.compat) ? (rec.compat as Record<string, unknown>) : {});
+      const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
+      setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+    }
+    setMode("structured");
+  }
+  function formatRaw() {
+    try {
+      setRawText(JSON.stringify(JSON.parse(rawText), null, 2));
+    } catch {}
+  }
 
   // diff for status bar: Current vs Proposed (backend) – pending publish count
   const statusDiff = useMemo(() => {
@@ -158,12 +182,13 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }
 
   async function handleApplyToPi() {
-    if (!validation.ok || !validation.value) {
-      toast("err", validation.error ?? "Invalid JSON");
+    const activeValidation = rawValidation;
+    if (!activeValidation.ok || !activeValidation.value) {
+      toast("err", activeValidation.error ?? "Invalid JSON");
       return;
     }
     try {
-      await api.applyGateway(validation.value);
+      await api.applyGateway(activeValidation.value);
       const now = new Date().toISOString();
       try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
       setLastPublishAt(now);
@@ -312,31 +337,38 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
             ))}
           </div>
         </div>
-
-        {/* Live JSON preview */}
+      </Card>
+        {/* Live JSON preview — editable */}
         <div className="mt-6">
           <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON")}</div>
-          <div className="rounded-lg border border-white/10 bg-zinc-950/60 p-3">
-            <pre className="max-h-80 overflow-auto font-mono text-xs text-zinc-300">{liveJson}</pre>
-            {!validation.ok && (
-              <div className="mt-2 rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">
-                Invalid JSON: {validation.error}
-              </div>
+          <div className="space-y-2">
+            <textarea
+              aria-label="gateway json"
+              value={rawText}
+              onChange={(e) => setRawText(e.target.value)}
+              className="h-80 w-full rounded-lg border border-white/10 bg-zinc-950 p-3 font-mono text-xs text-zinc-300 outline-none focus:border-indigo-500/70"
+            />
+            {!rawValidation.ok && (
+              <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {rawValidation.error}</div>
             )}
-            {validation.ok && <div className="mt-2 text-xs text-emerald-400">✓ JSON valid</div>}
+            {rawValidation.ok && <div className="text-xs text-emerald-400">✓ JSON valid</div>}
           </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button onClick={() => void load()}>{t("Cancel")}</Button>
-            <Button
-              variant="primary"
-              disabled={!validation.ok}
-              onClick={() => void run(() => handleApplyToPi(), t("Saved") || "Saved")}
-            >
-              应用到 Pi
-            </Button>
+          <div className="mt-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button onClick={formatRaw} className="h-7 text-xs">格式化</Button>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => void load()}>{t("Cancel")}</Button>
+              <Button
+                variant="primary"
+                disabled={!rawValidation.ok}
+                onClick={() => void run(() => handleApplyToPi(), t("Saved") || "Saved")}
+              >
+                应用到 Pi
+              </Button>
+            </div>
           </div>
         </div>
-      </Card>
     </div>
   );
 }
