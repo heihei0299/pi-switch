@@ -18,7 +18,6 @@ import {
   useToast,
   cx,
 } from "./ui";
-import { GatewayPreviewModal } from "./GatewayPreviewModal";
 import { ModelCard } from "./ModelCard";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
@@ -213,8 +212,6 @@ function ProfileForm({
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
-  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
 
   function applyPreset(id: string) {
     setPreset(id);
@@ -252,33 +249,18 @@ function ProfileForm({
     } as unknown as ProviderProfile;
   }
 
-  async function saveWithPreview() {
+  async function saveLocal() {
     const trimmed = name.trim();
     if (!trimmed) throw new Error(t("name required"));
     const modeError = responsesModeError(apiType, responsesMode);
     if (modeError) throw new Error(t(modeError));
-    setPreviewLoading(true);
-    try {
-      const preview = await api.previewGateway();
-      setGatewayPreview(preview as any);
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
-
-  async function handlePreviewConfirm(edited: unknown) {
-    const trimmed = name.trim();
     const profile = build();
-    // Apply edited gateway first so its hand-written extra is preserved when the profile save re-syncs
-    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
-      await api.applyGateway(edited);
-    }
     if (original) {
       await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
     } else {
       await api.addProfile(trimmed, profile);
     }
-    setGatewayPreview(null);
+    toast("ok", "已保存到本地，需到网关发布");
     await onSaved();
   }
 
@@ -380,20 +362,11 @@ function ProfileForm({
 
         <div className="mt-2 flex justify-end gap-2">
           <Button onClick={onClose}>{t("Cancel")}</Button>
-          <Button variant="primary" disabled={previewLoading} onClick={() => run(saveWithPreview, undefined)}>
-            {previewLoading ? t("Loading…") : t("Save")}
+          <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)}>
+            {t("Save")}
           </Button>
         </div>
       </Modal>
-      {gatewayPreview && (
-        <GatewayPreviewModal
-          current={gatewayPreview.current as any}
-          proposed={gatewayPreview.proposed as any}
-          conflicts={gatewayPreview.conflicts}
-          onClose={() => setGatewayPreview(null)}
-          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Saved"), undefined)}
-        />
-      )}
     </>
   );
 }
@@ -420,7 +393,6 @@ function ModelsModal({
   );
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
-  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   function toggleExposed(id: string) {
@@ -569,7 +541,7 @@ function ModelsModal({
   // 实时校验仅用于保存时阻断与行内高亮，不再全局黄条常驻（避免空行误导）
   const validationMsg = null as unknown as string | null; // 保留变量名以兼容后续引用，但置空
 
-  async function saveWithPreview() {
+  async function saveLocal() {
     const err = validate();
     if (err) {
       setValidationError(err);
@@ -583,24 +555,6 @@ function ModelsModal({
       return;
     }
     setValidationError(null);
-    const previewRaw = await api.previewGateway();
-    const pendingGatewayModels = drafts
-      .filter((d) => exposed.has(d.id))
-      .map((d) => {
-        const p = modelPreview(d) as Record<string, unknown>;
-        return { ...p, id: `${name}/${p.id}` };
-      });
-    const newProposed = {
-      ...(previewRaw as any).proposed,
-      models: pendingGatewayModels,
-    };
-    setGatewayPreview({ current: (previewRaw as any).current, proposed: newProposed, conflicts: (previewRaw as any).conflicts } as any);
-  }
-
-  async function handlePreviewConfirm(edited: unknown) {
-    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
-      await api.applyGateway(edited);
-    }
     // Convert drafts to ModelEntry
     const models: ModelEntry[] = drafts.map((d) => {
       const p = modelPreview(d) as unknown as ModelEntry;
@@ -628,7 +582,7 @@ function ModelsModal({
       name,
       [...exposed].filter((id) => models.some((m) => m.id === id)),
     );
-    setGatewayPreview(null);
+    toast("ok", "已保存到本地，需到网关发布");
     await onSaved();
   }
 
@@ -714,21 +668,12 @@ function ModelsModal({
           </div>
           <div className="flex gap-2">
             <Button onClick={onClose}>{t("Cancel")}</Button>
-            <Button variant="primary" onClick={() => run(saveWithPreview, undefined)}>
+            <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)}>
               {t("Save")}
             </Button>
           </div>
         </div>
       </Modal>
-      {gatewayPreview && (
-        <GatewayPreviewModal
-          current={gatewayPreview.current as any}
-          proposed={gatewayPreview.proposed as any}
-          conflicts={gatewayPreview.conflicts}
-          onClose={() => setGatewayPreview(null)}
-          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Models saved"), undefined)}
-        />
-      )}
     </>
   );
 }

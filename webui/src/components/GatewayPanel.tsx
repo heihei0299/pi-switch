@@ -3,12 +3,11 @@ import { api } from "../api";
 import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useAction, useToast } from "./ui";
-import { GatewayPreviewModal } from "./GatewayPreviewModal";
 import { ModelCard } from "./ModelCard";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
-import { validateGatewayJson } from "../lib/gatewayDiff";
+import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import type { ModelEntry } from "../types";
 
 const API_OPTIONS = [
@@ -23,11 +22,15 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
+const LAST_PUBLISH_KEY = "pi-switch-gateway-last-publish";
+
 export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const { t } = useI18n() as any;
   const toast = useToast();
   const run = useAction();
   const [current, setCurrent] = useState<Record<string, unknown> | null>(null);
+  const [proposed, setProposed] = useState<Record<string, unknown> | null>(null);
+  const [conflicts, setConflicts] = useState<string[]>([]);
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<ModelDraft[]>([]);
@@ -37,8 +40,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [apiType, setApiType] = useState("openai-completions");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [previewData, setPreviewData] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
+  const [lastPublishAt, setLastPublishAt] = useState<string | null>(() => {
+    try { return typeof window !== "undefined" ? window.localStorage?.getItem(LAST_PUBLISH_KEY) ?? null : null; } catch { return null; }
+  });
+  const [showMismatchBanner, setShowMismatchBanner] = useState(false);
+  const [hasCheckedMismatch, setHasCheckedMismatch] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -46,7 +52,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       const preview = await api.previewGateway();
       const cur = (preview as any).current as Record<string, unknown> | null;
       const prop = (preview as any).proposed as Record<string, unknown>;
+      const conf = (preview as any).conflicts as string[] ?? [];
       setCurrent(cur);
+      setProposed(prop);
+      setConflicts(conf);
       const src = prop ?? cur ?? {};
       setDraft(src);
       const rec = asRecord(src);
@@ -65,6 +74,17 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       );
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+      // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
+      if (!hasCheckedMismatch) {
+        const curForDiff = cur as Record<string, unknown> | null;
+        const propForDiff = prop as Record<string, unknown>;
+        if (propForDiff) {
+          const d = diffGateway(curForDiff, propForDiff);
+          const hasDiff = d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
+          if (hasDiff) setShowMismatchBanner(true);
+        }
+        setHasCheckedMismatch(true);
+      }
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     } finally {
@@ -88,7 +108,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       ...(Object.keys(compat).length ? { compat } : { compat: undefined }),
       models: modelsPreview,
     };
-    // remove undefined headers/compat if empty to match cc-switch no-empty-write
     if (!Object.keys(headers).length) delete (next as any).headers;
     if (!Object.keys(compat).length) delete (next as any).compat;
     if (!apiKey) delete (next as any).apiKey;
@@ -97,13 +116,19 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
 
   const validation = useMemo(() => validateGatewayJson(liveJson), [liveJson]);
 
-  function updateDraftField(key: string, value: unknown) {
-    setDraft((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev, [key]: value };
-      return next;
-    });
-  }
+  // diff for status bar: Current vs Proposed (backend) – pending publish count
+  const statusDiff = useMemo(() => {
+    if (!proposed) return { added: [], removed: [], changed: [] };
+    return diffGateway(current, proposed as Record<string, unknown>);
+  }, [current, proposed]);
+
+  const pendingCount = statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length;
+
+  // preview diff for mismatch banner (current vs proposed before edits)
+  const previewDiff = useMemo(() => {
+    if (!proposed) return null;
+    return diffGateway(current, proposed);
+  }, [current, proposed]);
 
   function addModel() {
     const empty = drafts.find((d) => !d.id.trim());
@@ -132,49 +157,76 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     }, 50);
   }
 
-  async function handleFetchPreview() {
-    try {
-      const p = await api.previewGateway();
-      setPreviewData(p as any);
-      setShowPreviewModal(true);
-    } catch (e) {
-      toast("err", e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  async function handleApply() {
+  async function handleApplyToPi() {
     if (!validation.ok || !validation.value) {
       toast("err", validation.error ?? "Invalid JSON");
       return;
     }
     try {
       await api.applyGateway(validation.value);
+      const now = new Date().toISOString();
+      try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
+      setLastPublishAt(now);
+      setShowMismatchBanner(false);
       toast("ok", t("Saved") || "Saved");
       await load();
       await refresh();
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
+      // 失败保留 config，不 reload
     }
-  }
-
-  async function handleModalConfirm(edited: unknown) {
-    await api.applyGateway(edited);
-    setShowPreviewModal(false);
-    setPreviewData(null);
-    toast("ok", t("Saved") || "Saved");
-    await load();
-    await refresh();
   }
 
   if (loading) return <div className="text-sm text-zinc-500">{t("Loading…")}</div>;
 
   const tOr = (k: string, fallback: string) => (t(k) !== k ? t(k) : fallback);
 
+  const lastPublishLabel = (() => {
+    if (lastPublishAt) {
+      try { return new Date(lastPublishAt).toLocaleString(); } catch { return lastPublishAt; }
+    }
+    if (!current) return "尚未发布";
+    return "未知";
+  })();
+
   return (
     <div>
       <SectionTitle hint={t("Provider config injected into ./pi/agent/models.json") || "Gateway injection"}>
         {t("Gateway") || "Gateway"}
       </SectionTitle>
+
+      {/* Current vs Proposed 状态条 */}
+      <div className="mb-3 rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-medium text-zinc-200">Current vs Proposed</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-emerald-300">+{statusDiff.added.length} added</span>
+          <span className="text-red-300">-{statusDiff.removed.length} removed</span>
+          <span className="text-zinc-300">~{statusDiff.changed.length} changed</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-zinc-200">待发布数: {pendingCount}</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-zinc-400">上次发布时间: {lastPublishLabel}</span>
+        </div>
+        {conflicts.length > 0 && (
+          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.join(", ")}</div>
+        )}
+      </div>
+
+      {/* 首次进入不一致提示，默认不自动写 */}
+      {showMismatchBanner && previewDiff && (previewDiff.added.length + previewDiff.removed.length + previewDiff.changed.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <span className="text-sm text-amber-200">检测到本地与 Pi 网关不一致，是否立即同步</span>
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={() => void run(() => handleApplyToPi(), undefined)} className="h-7 text-xs">
+              立即同步
+            </Button>
+            <Button onClick={() => setShowMismatchBanner(false)} className="h-7 text-xs">
+              稍后
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Card className="mb-4">
         <div className="grid gap-x-4 sm:grid-cols-2">
@@ -217,13 +269,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-medium text-zinc-200">{t("Model config")}</div>
             <div className="flex gap-2">
-              <Button
-                type="button"
-                onClick={() => void handleFetchPreview()}
-                className="h-8"
-              >
-                {t("Fetch models")}
-              </Button>
               <Button type="button" variant="primary" onClick={addModel} className="h-8">
                 + {t("Add model")}
               </Button>
@@ -268,7 +313,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           </div>
         </div>
 
-        {/* Live JSON preview — cc-switch 配置 JSON 区域 */}
+        {/* Live JSON preview */}
         <div className="mt-6">
           <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON")}</div>
           <div className="rounded-lg border border-white/10 bg-zinc-950/60 p-3">
@@ -285,26 +330,13 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
             <Button
               variant="primary"
               disabled={!validation.ok}
-              onClick={() => void run(() => handleApply(), t("Saved") || "Saved")}
+              onClick={() => void run(() => handleApplyToPi(), t("Saved") || "Saved")}
             >
-              {t("Save") || "Save"}
+              应用到 Pi
             </Button>
           </div>
         </div>
       </Card>
-
-      {showPreviewModal && previewData && (
-        <GatewayPreviewModal
-          current={previewData.current as any}
-          proposed={previewData.proposed as any}
-          conflicts={previewData.conflicts}
-          onClose={() => {
-            setShowPreviewModal(false);
-            setPreviewData(null);
-          }}
-          onConfirm={(edited) => run(() => handleModalConfirm(edited), t("Saved") || "Saved")}
-        />
-      )}
     </div>
   );
 }

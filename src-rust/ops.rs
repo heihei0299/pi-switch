@@ -78,7 +78,6 @@ pub fn set_failover(failover_profiles: Vec<String>) -> Result<Option<PathBuf>> {
     let backup = backup_config("config")?;
     config.settings.proxy.failover = failover_profiles;
     save_config(&config)?;
-    sync_gateway_to_pi()?;
     Ok(backup)
 }
 
@@ -154,8 +153,6 @@ pub fn update_exposed_models(name: &str, model_ids: Vec<String>) -> Result<Optio
 
     save_config(&config)?;
 
-    // Refresh the single gateway provider in pi's models.json
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
@@ -231,8 +228,6 @@ pub fn update_provider_models_with_stats(
 
     save_config(&config)?;
 
-    // Refresh the gateway so model metadata in pi's models.json stays current
-    sync_gateway_to_pi()?;
 
     Ok((backup, stats))
 }
@@ -1327,8 +1322,6 @@ pub fn use_profile(name: &str, mode: Option<&str>) -> Result<UseOutcome> {
         }
     }
 
-    // Sync the gateway provider to pi config
-    sync_gateway_to_pi()?;
 
     let config_backup = backup_config("config")?;
 
@@ -1386,8 +1379,6 @@ pub fn upsert_profile(
     }
     save_config(&config)?;
 
-    // Keep pi's gateway model list in sync with the profiles
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
@@ -1406,8 +1397,6 @@ pub fn remove_profile(name: &str) -> Result<Option<PathBuf>> {
     }
     save_config(&config)?;
 
-    // Rebuild the gateway provider without the removed profile's models
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
