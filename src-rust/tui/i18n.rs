@@ -641,7 +641,7 @@ pub fn help_form_enter() -> &'static str {
 pub fn help_form_space() -> &'static str {
     t!(
         "    Space           cycle API type",
-        "    Space           切换 API 类型"
+        "    Space           切换接口格式"
     )
 }
 pub fn help_form_ctrl_s() -> &'static str {
@@ -989,7 +989,11 @@ pub fn field_name() -> &'static str {
     t!("name", "名称")
 }
 pub fn field_api() -> &'static str {
-    t!("api", "API 类型")
+    t!("api", "接口格式")
+}
+#[allow(dead_code)]
+pub fn field_api_help() -> &'static str {
+    t!("Select the API interface format for the AI service.", "选择 AI 服务的 API 接口格式")
 }
 pub fn field_base_url() -> &'static str {
     t!("baseUrl", "API 地址")

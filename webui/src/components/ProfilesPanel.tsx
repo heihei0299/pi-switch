@@ -18,12 +18,13 @@ import {
   cx,
 } from "./ui";
 import { GatewayPreviewModal } from "./GatewayPreviewModal";
-const API_TYPES = [
-  "openai-completions",
-  "openai-responses",
-  "anthropic-messages",
-  "google-generative-ai",
+const API_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "openai-completions", label: "OpenAI Chat Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "anthropic-messages", label: "Anthropic Messages" },
+  { value: "google-generative-ai", label: "Google Gemini" },
 ];
+const API_TYPES = API_TYPE_OPTIONS.map((o) => o.value);
 const SPOOFS = [
   { value: "", label: "none" },
   { value: "claude-code", label: "claude-code" },
@@ -291,12 +292,16 @@ function ProfileForm({
           </Field>
           <Field label={t("API type")}>
             <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-              {API_TYPES.map((a) => (
-                <option key={a} value={a}>
-                  {a}
+              {API_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
+              {!API_TYPES.includes(apiType) && apiType && (
+                <option value={apiType}>{apiType}</option>
+              )}
             </Select>
+            <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the AI service.")}</p>
           </Field>
           <Field label={t("Responses mode")}>
             <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>

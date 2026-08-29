@@ -1657,7 +1657,7 @@ impl App {
 
         // Build a temporary profile to fetch from
         let temp_profile = crate::config::ProviderProfile {
-            api: super::form::API_CHOICES[form.api_idx].to_string(),
+            api: form.current_api(),
             base_url: form.base_url.value.trim().to_string(),
             api_key: form.api_key.value.trim().to_string(),
             models: vec![],
