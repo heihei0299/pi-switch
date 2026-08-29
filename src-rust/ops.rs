@@ -1714,7 +1714,7 @@ fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::
     let host = &config.settings.proxy.host;
     let port = config.settings.proxy.port;
     serde_json::json!({
-        "api": "openai-completions",
+        "api": config.settings.gateway_api.clone(),
         "baseUrl": format!("http://{}:{}/v1", host, port),
         "apiKey": "pi-switch-proxy",
         "models": gateway_models,

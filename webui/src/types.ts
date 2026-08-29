@@ -77,6 +77,7 @@ export interface Settings {
   providerPrefix: string;
   writeMode: string;
   injectOpenCodeAttribution: boolean;
+  gatewayApi: string;
   language?: string | null;
   proxy: ProxySettings;
   web: WebSettings;

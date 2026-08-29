@@ -245,6 +245,8 @@ pub struct Settings {
     #[serde(default = "default_true")]
     #[serde(rename = "injectOpenCodeAttribution")]
     pub inject_opencode_attribution: bool,
+    #[serde(default = "default_gateway_api", rename = "gatewayApi")]
+    pub gateway_api: String,
     #[serde(default)]
     pub proxy: ProxySettings,
     #[serde(default)]
@@ -288,6 +290,9 @@ fn default_web_port() -> u16 {
 fn default_prefix() -> String {
     "pi-switch".into()
 }
+fn default_gateway_api() -> String {
+    "openai-completions".into()
+}
 fn default_write_mode() -> String {
     "merge".into()
 }
@@ -312,6 +317,7 @@ impl Default for PiSwitchConfig {
                 write_mode: default_write_mode(),
                 language: None,
                 inject_opencode_attribution: default_true(),
+                gateway_api: default_gateway_api(),
                 proxy: ProxySettings {
                     host: default_host(),
                     port: default_port(),
@@ -919,6 +925,13 @@ pub fn validate_config() -> Result<Vec<ValidationIssue>> {
                 message: format!("Failover provider '{}' does not exist", name),
             });
         }
+    }
+    if !SUPPORTED_APIS.contains(&config.settings.gateway_api.as_str()) {
+        issues.push(ValidationIssue {
+            level: "error".into(),
+            path: "settings.gatewayApi".into(),
+            message: format!("gatewayApi is not supported: {}", config.settings.gateway_api),
+        });
     }
 
     Ok(issues)

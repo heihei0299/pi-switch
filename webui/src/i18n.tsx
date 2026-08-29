@@ -282,6 +282,8 @@ const zh: Record<string, string> = {
   "Preset (prefill)": "预设（预填）",
   "API type": "接口格式",
   "Select the API interface format for the AI service.": "选择 AI 服务的 API 接口格式",
+  "Gateway API (injected config)": "网关接口格式（注入配置）",
+  "Select the API interface format for the injected gateway config.": "选择注入网关配置的 API 接口格式",
   "Disguise (User-Agent)": "伪装（User-Agent）",
   "API key (supports $ENV_VAR)": "API 密钥（支持 $ENV_VAR）",
   "Model IDs (one per line)": "模型 ID（每行一个）",

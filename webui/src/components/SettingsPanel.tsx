@@ -61,6 +61,15 @@ export function SettingsPanel({
               <option value="exclusive">exclusive</option>
             </Select>
           </Field>
+          <Field label={t("Gateway API (injected config)")}>
+            <Select value={s.gatewayApi ?? "openai-completions"} onChange={(e) => set({ gatewayApi: e.target.value })}>
+              <option value="openai-completions">OpenAI Chat Completions</option>
+              <option value="openai-responses">OpenAI Responses</option>
+              <option value="anthropic-messages">Anthropic Messages</option>
+              <option value="google-generative-ai">Google Gemini</option>
+            </Select>
+            <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the injected gateway config.")}</p>
+          </Field>
           <Field label={t("Language")}>
             <Select
               value={s.language ?? ""}
