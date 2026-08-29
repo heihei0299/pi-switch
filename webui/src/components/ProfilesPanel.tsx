@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
+import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import {
@@ -18,6 +19,9 @@ import {
   cx,
 } from "./ui";
 import { GatewayPreviewModal } from "./GatewayPreviewModal";
+import { ModelCard } from "./ModelCard";
+import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 const API_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "openai-responses", label: "OpenAI Responses" },
@@ -196,6 +200,16 @@ function ProfileForm({
   const [proxy, setProxy] = useState(existing?.proxy ?? false);
   const [preset, setPreset] = useState(existing?.preset ?? "");
   const [modelsDevProvider, setModelsDevProvider] = useState(existing?.modelsDevProvider ?? "");
+  const [headers, setHeaders] = useState<Record<string, string>>(() => {
+    const h = (existing as any)?.headers;
+    if (h && typeof h === "object" && !Array.isArray(h)) return h as Record<string, string>;
+    return {};
+  });
+  const [compat, setCompat] = useState<Record<string, unknown>>(() => {
+    const c = (existing as any)?.compat;
+    if (c && typeof c === "object" && !Array.isArray(c)) return c as Record<string, unknown>;
+    return {};
+  });
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
@@ -232,8 +246,10 @@ function ProfileForm({
       preset: preset || undefined,
       modelsDevProvider: modelsDevProvider.trim() || undefined,
       userAgent: spoof || undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
+      compat: Object.keys(compat).length ? compat : undefined,
       updatedAt: new Date().toISOString(),
-    } as ProviderProfile;
+    } as unknown as ProviderProfile;
   }
 
   async function saveWithPreview() {
@@ -334,6 +350,19 @@ function ProfileForm({
             </Field>
           </div>
           <div className="sm:col-span-2">
+            <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
+          </div>
+          <div className="sm:col-span-2">
+            <StructuredOptionsEditor
+              title={t("Compatibility") !== "接口兼容性" ? t("Compatibility") : "接口兼容性"}
+              hint={t("Adjust compatibility for endpoints or local services.") !== "调整兼容端点或本地服务的请求行为。" ? t("Adjust compatibility for endpoints or local services.") : "调整兼容端点或本地服务的请求行为。"}
+              emptyLabel={t("No compatibility options") !== "暂无兼容性选项" ? t("No compatibility options") : "暂无兼容性选项"}
+              addLabel={t("Add") !== "添加" ? t("Add") : "添加"}
+              options={compat}
+              onOptionsChange={setCompat}
+            />
+          </div>
+          <div className="sm:col-span-2">
             <Field label={t("Model IDs (one per line)")}>
               <Textarea
                 rows={4}
@@ -385,15 +414,16 @@ function ModelsModal({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
-  const [models, setModels] = useState<ModelEntry[]>(profile.models ?? []);
+  const [drafts, setDrafts] = useState<ModelDraft[]>(() => (profile.models ?? []).map((m) => draftFromEntry(m)));
   const [exposed, setExposed] = useState<Set<string>>(
     new Set(profile.exposedModels ?? []),
   );
-  const [newId, setNewId] = useState("");
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
   const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  function toggle(id: string) {
+  function toggleExposed(id: string) {
     setExposed((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -401,32 +431,87 @@ function ModelsModal({
     });
   }
 
-  function addId(id: string) {
-    const trimmed = id.trim();
-    if (!trimmed || models.some((m) => m.id === trimmed)) return;
-    setModels((m) => [...m, defaultModel(trimmed)]);
+  function updateDraft(key: string, next: ModelDraft) {
+    setDrafts((prev) => {
+      const old = prev.find((d) => d.key === key);
+      // If id changed and old id was exposed, move exposure
+      if (old && old.id !== next.id) {
+        const oldId = old.id;
+        const newId = next.id;
+        if (exposed.has(oldId) && newId.trim()) {
+          setExposed((s) => {
+            const ns = new Set(s);
+            ns.delete(oldId);
+            ns.add(newId);
+            return ns;
+          });
+        }
+      }
+      return prev.map((d) => (d.key === key ? next : d));
+    });
+  }
+
+  function addModel() {
+    const d = newModelDraft();
+    setDrafts((prev) => [...prev, d]);
+    setExpandedKeys((s) => {
+      const ns = new Set(s);
+      ns.add(d.key);
+      return ns;
+    });
+  }
+
+  function removeDraft(key: string) {
+    const removed = drafts.find((d) => d.key === key);
+    setDrafts((prev) => prev.filter((d) => d.key !== key));
+    setExpandedKeys((s) => {
+      const ns = new Set(s);
+      ns.delete(key);
+      return ns;
+    });
+    if (removed) {
+      setExposed((s) => {
+        const ns = new Set(s);
+        ns.delete(removed.id);
+        return ns;
+      });
+    }
+  }
+
+  function toggleExpanded(key: string) {
+    setExpandedKeys((s) => {
+      const ns = new Set(s);
+      ns.has(key) ? ns.delete(key) : ns.add(key);
+      return ns;
+    });
   }
 
   async function fetchFromProvider() {
     setFetching(true);
     try {
       const { models: ids, enrich } = await api.fetchModels(name);
-      setModels((prev) => {
-        const have = new Set(prev.map((m) => m.id));
-        const added = ids.filter((id) => !have.has(id)).map(defaultModel);
+      setDrafts((prev) => {
+        const have = new Set(prev.map((d) => d.id));
+        const added = ids.filter((id) => !have.has(id)).map((id) => {
+          const d = newModelDraft();
+          d.id = id;
+          d.name = id;
+          d.hasName = true;
+          return d;
+        });
         return [...prev, ...added];
       });
-      // 可观测性：上游模型列表 + 模型目录 enrich 统计（术语：模型目录/模型元数据 vs 上游模型列表）
       if (enrich) {
         const isZh = (lang as string) === "zh";
         const base = t("Fetch from provider");
-        const enrichMsg = enrich.failed > 0
-          ? isZh
-            ? `上游模型列表 ${ids.length} 条 · 模型元数据 enrich 失败 ${enrich.failed} 条，跳过 ${enrich.skipped} 条，已 enrich ${enrich.enriched} 条`
-            : `upstream ${ids.length} · model metadata enrich failed ${enrich.failed}, skipped ${enrich.skipped}, enriched ${enrich.enriched}`
-          : isZh
-            ? `上游模型列表 ${ids.length} 条 · 已 enrich ${enrich.enriched} 条模型元数据，跳过 ${enrich.skipped} 条（模型目录未覆盖）`
-            : `upstream ${ids.length} · enriched ${enrich.enriched} model metadata, skipped ${enrich.skipped} (not in catalog)`;
+        const enrichMsg =
+          enrich.failed > 0
+            ? isZh
+              ? `上游模型列表 ${ids.length} 条 · 模型元数据 enrich 失败 ${enrich.failed} 条，跳过 ${enrich.skipped} 条，已 enrich ${enrich.enriched} 条`
+              : `upstream ${ids.length} · model metadata enrich failed ${enrich.failed}, skipped ${enrich.skipped}, enriched ${enrich.enriched}`
+            : isZh
+              ? `上游模型列表 ${ids.length} 条 · 已 enrich ${enrich.enriched} 条模型元数据，跳过 ${enrich.skipped} 条（模型目录未覆盖）`
+              : `upstream ${ids.length} · enriched ${enrich.enriched} model metadata, skipped ${enrich.skipped} (not in catalog)`;
         const warningPart = enrich.warning ? ` · ${enrich.warning}` : "";
         toast("ok", `${base}: ${enrichMsg}${warningPart}`);
       }
@@ -437,7 +522,41 @@ function ModelsModal({
     }
   }
 
+  function validate(): string | null {
+    const seen = new Set<string>();
+    for (let i = 0; i < drafts.length; i++) {
+      const d = drafts[i];
+      if (!d.id.trim()) return `模型 ${i + 1}: 模型 ID 不能为空`;
+      if (seen.has(d.id)) return `模型 ID 重复: ${d.id}`;
+      seen.add(d.id);
+      if (d.hasName && !d.name.trim()) return `模型 ${d.id}: 显示名称不能为空`;
+      const cw = d.contextWindow.trim();
+      if (cw && (!Number.isFinite(Number(cw)) || Number(cw) <= 0)) return `模型 ${d.id}: 上下文长度必须为正数`;
+      const mt = d.maxTokens.trim();
+      if (mt && (!Number.isFinite(Number(mt)) || Number(mt) <= 0)) return `模型 ${d.id}: 最大输出 Token 必须为正数`;
+    }
+    return null;
+  }
+
+  const previewJson = (() => {
+    try {
+      const modelsPreview = drafts.map((d) => modelPreview(d));
+      return JSON.stringify({ models: modelsPreview, exposedModels: [...exposed] }, null, 2);
+    } catch {
+      return "{}";
+    }
+  })();
+
+  const validationMsg = validate();
+
   async function saveWithPreview() {
+    const err = validate();
+    if (err) {
+      setValidationError(err);
+      toast("err", err);
+      return;
+    }
+    setValidationError(null);
     const preview = await api.previewGateway();
     setGatewayPreview(preview as any);
   }
@@ -446,21 +565,33 @@ function ModelsModal({
     if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
       await api.applyGateway(edited);
     }
+    // Convert drafts to ModelEntry
+    const models: ModelEntry[] = drafts.map((d) => {
+      const p = modelPreview(d) as unknown as ModelEntry;
+      // Ensure required fields have defaults if UI left blank (keep previous behavior for new models)
+      if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
+      if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
+      if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
+      return p;
+    });
     const res = await api.updateModels(name, models);
-    // 可观测性：模型目录 enrich 结果合并到保存提示
-    if (res.enrich) {
+    if ((res as any).enrich) {
+      const e = (res as any).enrich;
       const isZh = (lang as string) === "zh";
-      const e = res.enrich;
-      const enrichMsg = e.failed > 0
-        ? isZh
-          ? `模型元数据 enrich 失败 ${e.failed} 条` + (e.warning ? ` · ${e.warning}` : "")
-          : `model metadata enrich failed ${e.failed}` + (e.warning ? ` · ${e.warning}` : "")
-        : isZh
-          ? `已 enrich ${e.enriched} 条，跳过 ${e.skipped} 条（模型目录未覆盖）` + (e.warning ? ` · ${e.warning}` : "")
-          : `enriched ${e.enriched}, skipped ${e.skipped} (not in catalog)` + (e.warning ? ` · ${e.warning}` : "");
+      const enrichMsg =
+        e.failed > 0
+          ? isZh
+            ? `模型元数据 enrich 失败 ${e.failed} 条` + (e.warning ? ` · ${e.warning}` : "")
+            : `model metadata enrich failed ${e.failed}` + (e.warning ? ` · ${e.warning}` : "")
+          : isZh
+            ? `已 enrich ${e.enriched} 条，跳过 ${e.skipped} 条（模型目录未覆盖）` + (e.warning ? ` · ${e.warning}` : "")
+            : `enriched ${e.enriched}, skipped ${e.skipped} (not in catalog)` + (e.warning ? ` · ${e.warning}` : "");
       toast("ok", enrichMsg);
     }
-    await api.expose(name, [...exposed].filter((id) => models.some((m) => m.id === id)));
+    await api.expose(
+      name,
+      [...exposed].filter((id) => models.some((m) => m.id === id)),
+    );
     setGatewayPreview(null);
     await onSaved();
   }
@@ -468,81 +599,85 @@ function ModelsModal({
   return (
     <>
       <Modal title={`${t("Models")} · ${name}`} onClose={onClose} wide>
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Input
-            value={newId}
-            onChange={(e) => setNewId(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                addId(newId);
-                setNewId("");
-              }
-            }}
-            placeholder={t("add model id + Enter")}
-            className="max-w-xs"
-          />
-          <Button
-            onClick={() => void fetchFromProvider()}
-            disabled={fetching}
-          >
-            {fetching ? t("Fetching…") : t("Fetch from provider")}
-          </Button>
-          <span className="text-xs text-zinc-500">
-            {t("Checked = exposed to pi as")} <code>{name}/&lt;id&gt;</code>
-          </span>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-zinc-200">{t("Model config") || "模型配置"}</div>
+          <div className="flex gap-2">
+            <Button onClick={() => void fetchFromProvider()} disabled={fetching} className="h-8">
+              {fetching ? t("Fetching…") : `↓ ${t("Fetch from provider")}`}
+            </Button>
+            <Button variant="primary" onClick={addModel} className="h-8">
+              + {t("Add model") || "添加模型"}
+            </Button>
+          </div>
+        </div>
+        <div className="mb-1 flex items-center gap-2 text-xs text-zinc-500">
+          <span className="w-9" />
+          <span className="flex-1">{t("Model ID") || "模型 ID"} *</span>
+          <span className="flex-1">{t("Display name") || "显示名称"} *</span>
+          <span className="w-8" />
         </div>
 
-        <div className="max-h-80 space-y-1 overflow-y-auto rounded-lg border border-white/10 p-2">
-          {models.length === 0 && (
+        <div className="max-h-[42vh] space-y-2 overflow-y-auto rounded-lg border border-white/10 p-2">
+          {drafts.length === 0 && (
             <div className="p-3 text-sm text-zinc-500">
               {t("No models. Add ids above or fetch from the provider.")}
             </div>
           )}
-          {models.map((m) => (
-            <div
-              key={m.id}
-              className={cx(
-                "flex items-center justify-between rounded-md px-2 py-1.5 text-sm",
-                exposed.has(m.id) ? "bg-emerald-500/10" : "hover:bg-white/5",
-              )}
-            >
-              <label className="flex min-w-0 items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={exposed.has(m.id)}
-                  onChange={() => toggle(m.id)}
-                />
-                <span className="truncate text-zinc-200">{m.id}</span>
-              </label>
-              <button
-                className="text-xs text-zinc-500 hover:text-red-300"
-                onClick={() => {
-                  setModels((prev) => prev.filter((x) => x.id !== m.id));
-                  setExposed((prev) => {
-                    const n = new Set(prev);
-                    n.delete(m.id);
-                    return n;
-                  });
-                }}
-              >
-                {t("remove")}
-              </button>
-            </div>
+          {drafts.map((d) => (
+            <ModelCard
+              key={d.key}
+              draft={d}
+              exposed={exposed.has(d.id)}
+              onToggleExposed={() => toggleExposed(d.id)}
+              onChange={(next) => updateDraft(d.key, next)}
+              onRemove={() => removeDraft(d.key)}
+              expanded={expandedKeys.has(d.key)}
+              onToggleExpanded={() => toggleExpanded(d.key)}
+            />
           ))}
+        </div>
+
+        <div className="mt-2 text-xs text-zinc-500">
+          {t("Configure available models and display names") || "配置可用的模型及其显示名称"} ·{" "}
+          <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;id&gt;</code>
+        </div>
+
+        {validationMsg && (
+          <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
+            {validationMsg}
+          </div>
+        )}
+        {validationError && !validationMsg && (
+          <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200">
+            {validationError}
+          </div>
+        )}
+
+        <div className="mt-4">
+          <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON") || "配置 JSON"}</div>
+          <pre className="max-h-40 overflow-auto rounded-lg border border-white/10 bg-zinc-950 p-2 font-mono text-xs text-zinc-300">
+            {previewJson}
+          </pre>
+          <div className="mt-1 flex justify-end">
+            <Button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(previewJson).catch(() => {});
+                toast("ok", t("Copied") || "Copied");
+              }}
+              className="h-7 text-xs"
+            >
+              {t("Copy") || "复制"}
+            </Button>
+          </div>
         </div>
 
         <div className="mt-4 flex items-center justify-between">
           <div className="flex gap-2 text-xs">
-            <button
-              className="text-zinc-400 hover:text-zinc-200"
-              onClick={() => setExposed(new Set(models.map((m) => m.id)))}
-            >
+            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set(drafts.map((d) => d.id)))}>
               {t("expose all")}
             </button>
-            <button
-              className="text-zinc-400 hover:text-zinc-200"
-              onClick={() => setExposed(new Set())}
-            >
+            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set())}>
               {t("expose none")}
             </button>
           </div>

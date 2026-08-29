@@ -11,12 +11,14 @@ import { StatsPanel } from "./components/StatsPanel";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { DoctorPanel } from "./components/DoctorPanel";
+import { GatewayPanel } from "./components/GatewayPanel";
 
-type NavKey = "home" | "profiles" | "proxy" | "packages" | "stats" | "backups" | "settings" | "doctor";
+type NavKey = "home" | "profiles" | "gateway" | "proxy" | "packages" | "stats" | "backups" | "settings" | "doctor";
 
 const NAV: { key: NavKey; label: string; icon: string }[] = [
   { key: "home", label: "Home", icon: "🏠" },
   { key: "profiles", label: "Profiles", icon: "👤" },
+  { key: "gateway", label: "Gateway", icon: "🧩" },
   { key: "proxy", label: "Proxy", icon: "🔄" },
   { key: "packages", label: "Packages", icon: "📦" },
   { key: "stats", label: "Stats", icon: "📊" },
@@ -227,6 +229,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
             <>
               {nav === "home" && <HomePanel state={state} refresh={refresh} onNavigate={handleNav} />}
               {nav === "profiles" && <ProfilesPanel state={state} refresh={refresh} />}
+              {nav === "gateway" && <GatewayPanel refresh={refresh} />}
               {nav === "proxy" && <ProxyPanel state={state} refresh={refresh} />}
               {nav === "packages" && <PackagesPanel refresh={refresh} />}
               {nav === "stats" && <StatsPanel state={state} refresh={refresh} />}

@@ -12,7 +12,7 @@ describe("GatewayPreviewModal", () => {
     render(<GatewayPreviewModal current={current} proposed={proposed} conflicts={["baseUrl"]} onConfirm={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText(/Current vs Proposed/i)).toBeInTheDocument();
     expect(screen.getByText(/proposed json/i)).toBeInTheDocument();
-    expect(screen.getByDisplayValue(/http:\/\/b\/v1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/http:\/\/b\/v1/).length).toBeGreaterThan(0);
   });
 
   it("highlights conflicts", () => {
@@ -23,6 +23,7 @@ describe("GatewayPreviewModal", () => {
 
   it("disables confirm when json invalid", () => {
     render(<GatewayPreviewModal current={current} proposed={proposed} conflicts={[]} onConfirm={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^JSON$/i }));
     const ta = screen.getByLabelText(/proposed json/i);
     fireEvent.change(ta, { target: { value: "{ invalid" } });
     const btn = screen.getByRole("button", { name: /confirm/i });
@@ -41,6 +42,7 @@ describe("GatewayPreviewModal", () => {
   it("edits json and confirms edited value", () => {
     const onConfirm = vi.fn();
     render(<GatewayPreviewModal current={current} proposed={proposed} conflicts={[]} onConfirm={onConfirm} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^JSON$/i }));
     const ta = screen.getByLabelText(/proposed json/i);
     const edited = { ...proposed, baseUrl: "http://edited/v1" };
     fireEvent.change(ta, { target: { value: JSON.stringify(edited, null, 2) } });
