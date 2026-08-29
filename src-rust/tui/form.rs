@@ -386,9 +386,11 @@ mod tests {
 
     #[test]
     fn validate_rejects_illegal_api_via_unknown_sentinel() {
-        let mut profile = ProviderProfile::default();
-        profile.api = "unknown-api".into();
-        profile.base_url = "https://example.com/v1".into();
+        let profile = ProviderProfile {
+            api: "unknown-api".into(),
+            base_url: "https://example.com/v1".into(),
+            ..Default::default()
+        };
         let form = ProviderFormState::from_existing("test", &profile);
         assert_eq!(form.current_api(), "unknown-api");
         assert_eq!(form.current_api_label(), "unknown-api");
@@ -398,9 +400,11 @@ mod tests {
 
     #[test]
     fn unknown_api_preserved_and_cycle_moves_to_known() {
-        let mut profile = ProviderProfile::default();
-        profile.api = "bad-api".into();
-        profile.base_url = "https://example.com/v1".into();
+        let profile = ProviderProfile {
+            api: "bad-api".into(),
+            base_url: "https://example.com/v1".into(),
+            ..Default::default()
+        };
         let mut form = ProviderFormState::from_existing("test", &profile);
         assert_eq!(form.api_idx, API_CHOICES.len());
         form.cycle_api(true);
