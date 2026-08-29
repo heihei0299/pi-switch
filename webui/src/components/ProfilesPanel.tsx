@@ -251,6 +251,21 @@ function ProfileForm({
     }
   });
   const jsonValidation = useMemo(() => validateProfileJson(text), [text]);
+  const profileErrorLine = useMemo(() => {
+    try {
+      JSON.parse(text);
+      return null;
+    } catch (e) {
+      const m = String(e).match(/at position (\d+)/);
+      if (m) {
+        const pos = Number(m[1]);
+        return text.slice(0, pos).split("\n").length;
+      }
+      const m2 = String(e).match(/line (\d+)/i);
+      if (m2) return Number(m2[1]);
+      return 1;
+    }
+  }, [text]);
   function switchToRaw() {
     const preview: Record<string, unknown> = {
       api: apiType,
@@ -577,7 +592,7 @@ function ProfileForm({
           </div>
         ) : (
           <div className="space-y-2">
-            <JsonEditor value={text} onChange={setText} label="profile json" className="h-64 sm:h-80" />
+            <JsonEditor value={text} onChange={setText} label="profile json" className="h-64 sm:h-80" errorLine={profileErrorLine} />
             {!jsonValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
             )}
@@ -637,6 +652,21 @@ function ModelsModal({
     }
   });
   const jsonValidation = useMemo(() => validateModelsJson(text), [text]);
+  const modelsErrorLine = useMemo(() => {
+    try {
+      JSON.parse(text);
+      return null;
+    } catch (e) {
+      const m = String(e).match(/at position (\d+)/);
+      if (m) {
+        const pos = Number(m[1]);
+        return text.slice(0, pos).split("\n").length;
+      }
+      const m2 = String(e).match(/line (\d+)/i);
+      if (m2) return Number(m2[1]);
+      return 1;
+    }
+  }, [text]);
 
   function toggleExposed(id: string) {
     setExposed((prev) => {
@@ -948,7 +978,7 @@ function ModelsModal({
           </>
         ) : (
           <div className="space-y-2">
-            <JsonEditor value={text} onChange={setText} label="models json" className="h-64 sm:h-80" />
+            <JsonEditor value={text} onChange={setText} label="models json" className="h-64 sm:h-80" errorLine={modelsErrorLine} />
             {!jsonValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
             )}

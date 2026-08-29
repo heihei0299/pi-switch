@@ -119,6 +119,21 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const [rawText, setRawText] = useState(liveJson);
   const rawValidation = useMemo(() => validateGatewayJson(rawText), [rawText]);
+  const gatewayErrorLine = useMemo(() => {
+    try {
+      JSON.parse(rawText);
+      return null;
+    } catch (e) {
+      const m = String(e).match(/at position (\d+)/);
+      if (m) {
+        const pos = Number(m[1]);
+        return rawText.slice(0, pos).split("\n").length;
+      }
+      const m2 = String(e).match(/line (\d+)/i);
+      if (m2) return Number(m2[1]);
+      return 1;
+    }
+  }, [rawText]);
   useEffect(() => {
     setRawText(liveJson);
   }, [liveJson]);
@@ -343,7 +358,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         <div className="mt-6">
           <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON")}</div>
           <div className="space-y-2">
-            <JsonEditor value={rawText} onChange={setRawText} label="gateway json" className="h-80" />
+            <JsonEditor value={rawText} onChange={setRawText} label="gateway json" className="h-80" errorLine={gatewayErrorLine} />
             {!rawValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {rawValidation.error}</div>
             )}

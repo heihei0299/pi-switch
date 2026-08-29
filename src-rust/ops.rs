@@ -1441,6 +1441,10 @@ pub async fn test_provider(name: &str) -> Result<TestResult> {
     let profile: ProviderProfile = serde_json::from_value(profile_value.clone())
         .map_err(|e| AppError::Message(format!("invalid profile: {}", e)))?;
 
+    test_provider_inner(&profile).await
+}
+
+pub(crate) async fn test_provider_inner(profile: &ProviderProfile) -> Result<TestResult> {
     let start = std::time::Instant::now();
 
     // Build test request based on API type
@@ -1449,17 +1453,31 @@ pub async fn test_provider(name: &str) -> Result<TestResult> {
         .build()
         .map_err(|e| AppError::Message(format!("HTTP client error: {}", e)))?;
 
-    let test_body = match profile.api.as_str() {
-        "openai-completions" => serde_json::json!({
-            "model": profile.models.first().map(|m| &m.id).unwrap_or(&"gpt-3.5-turbo".to_string()),
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 5
-        }),
-        "anthropic-messages" => serde_json::json!({
-            "model": profile.models.first().map(|m| &m.id).unwrap_or(&"claude-3-haiku-20240307".to_string()),
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 5
-        }),
+    let (test_body, path) = match profile.api.as_str() {
+        "openai-completions" => (
+            serde_json::json!({
+                "model": profile.models.first().map(|m| &m.id).unwrap_or(&"gpt-3.5-turbo".to_string()),
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 5
+            }),
+            "/chat/completions",
+        ),
+        "openai-responses" => (
+            serde_json::json!({
+                "model": profile.models.first().map(|m| &m.id).unwrap_or(&"gpt-3.5-turbo".to_string()),
+                "input": "test",
+                "max_output_tokens": 5
+            }),
+            "/responses",
+        ),
+        "anthropic-messages" => (
+            serde_json::json!({
+                "model": profile.models.first().map(|m| &m.id).unwrap_or(&"claude-3-haiku-20240307".to_string()),
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 5
+            }),
+            "/chat/completions",
+        ),
         _ => {
             return Ok(TestResult {
                 success: false,
@@ -1470,8 +1488,9 @@ pub async fn test_provider(name: &str) -> Result<TestResult> {
     };
 
     let url = format!(
-        "{}/chat/completions",
-        profile.primary_base_url().trim_end_matches('/')
+        "{}{}",
+        profile.primary_base_url().trim_end_matches('/'),
+        path
     );
     let mut req = client.post(&url).json(&test_body);
 
@@ -1822,4 +1841,105 @@ pub fn update_settings(new_settings: &serde_json::Value) -> Result<Option<PathBu
     save_config(&config)?;
     sync_gateway_to_pi()?;
     Ok(backup)
+}
+
+#[cfg(test)]
+mod test_provider_tests {
+    use super::*;
+    use crate::config::{ModelEntry, ProviderProfile};
+    use axum::{body::Body, http::StatusCode, routing::post, Router};
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
+
+    fn make_profile(api: &str, base_url: &str) -> ProviderProfile {
+        ProviderProfile {
+            api: api.to_string(),
+            base_url: base_url.to_string(),
+            api_key: "test-key-123".to_string(),
+            models: vec![ModelEntry { id: "gpt-4o".into(), ..Default::default() }],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_responses_success_uses_responses_endpoint() {
+        let seen_body: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
+        let seen_headers: Arc<Mutex<Option<axum::http::HeaderMap>>> = Arc::new(Mutex::new(None));
+        let seen_body_clone = seen_body.clone();
+        let seen_headers_clone = seen_headers.clone();
+
+        let app = Router::new().route(
+            "/v1/responses",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let seen_body = seen_body_clone.clone();
+                let seen_headers = seen_headers_clone.clone();
+                async move {
+                    *seen_headers.lock().unwrap() = Some(req.headers().clone());
+                    let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024).await.unwrap();
+                    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    *seen_body.lock().unwrap() = Some(v);
+                    axum::response::Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"ok":true}"#))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let base = format!("http://{}/v1", addr);
+        let profile = make_profile("openai-responses", &base);
+        let result = test_provider_inner(&profile).await.unwrap();
+
+        assert!(result.success, "expected success for openai-responses mock 200, got {:?}", result.message);
+        assert!(result.message.contains("200"), "message should contain 200, got {}", result.message);
+        assert!(result.response_time_ms.is_some());
+
+        let body = seen_body.lock().unwrap().clone().expect("server should have seen body");
+        assert_eq!(body["model"], "gpt-4o");
+        assert_eq!(body["input"], "test");
+        assert_eq!(body["max_output_tokens"], 5);
+
+        let headers = seen_headers.lock().unwrap().clone().unwrap();
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer test-key-123");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn openai_responses_non_2xx_propagates() {
+        let app = Router::new().route(
+            "/v1/responses",
+            post(|| async {
+                axum::response::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::from("bad request"))
+                    .unwrap()
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://{}/v1", addr);
+        let profile = make_profile("openai-responses", &base);
+        let result = test_provider_inner(&profile).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("400") || result.message.contains("HTTP"), "got {}", result.message);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unsupported_api_still_returns_unsupported() {
+        let profile = make_profile("google-generative-ai", "http://example.com");
+        let result = test_provider_inner(&profile).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("Unsupported API type"), "got {}", result.message);
+        assert_eq!(result.response_time_ms, None);
+        let profile2 = make_profile("bedrock-converse-stream", "http://example.com");
+        let result2 = test_provider_inner(&profile2).await.unwrap();
+        assert!(result2.message.contains("Unsupported API type"));
+    }
 }
