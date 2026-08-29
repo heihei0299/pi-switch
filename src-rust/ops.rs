@@ -244,7 +244,7 @@ pub fn update_provider_models_with_stats(
 /// - 仅 enrich 已有 `models` 中的 id，目录有但本地无的不自动新增
 /// - 未命中或字段缺失时保留本地原值，不清 cost/limit
 /// - 按分字段策略覆盖：limit.context/output、cost.input/output/cache_read、reasoning、modalities.input 按目录覆盖，name 仅缺省时补齐
-/// - extra/compat/headers/thinkingLevelMap 不覆盖；cost 仅外层 input/output/cache_read，忽略 tiers/context_over_200k
+/// - extra/compat/headers 不覆盖（thinkingLevelMap 仅当本地为空时按 reasoning_options 派生，留空不设默认）；cost 仅外层 input/output/cache_read，忽略 tiers/context_over_200k
 #[allow(dead_code)]
 pub fn enrich_models_with_catalog(
     profile: &config::ProviderProfile,
@@ -423,6 +423,86 @@ pub async fn enrich_models_from_catalog_with_stats(
     enrich_models_with_catalog_with_stats(profile, models, catalog_opt.as_ref(), warning)
 }
 
+/// 从模型目录的 reasoning_options 派生 thinkingLevelMap（模型目录驱动，仅当本地为空时填充）
+/// - reasoning != true 时不生成
+/// - 无 effort 类型或 effort values 为空/仅含 none 时不生成（留空不设默认）
+/// - off 始终映射为 null，其余 pi 7 级按强度最近匹配 catalog 可用值
+fn build_thinking_level_map(catalog_model: &Value) -> Option<Value> {
+    let reasoning = catalog_model.get("reasoning").and_then(|v| v.as_bool());
+    if reasoning != Some(true) {
+        return None;
+    }
+    // 收集 effort values，过滤 "none"
+    let mut effort_values: Vec<String> = Vec::new();
+    if let Some(opts) = catalog_model
+        .get("reasoning_options")
+        .and_then(|v| v.as_array())
+    {
+        for opt in opts {
+            if opt.get("type").and_then(|v| v.as_str()) == Some("effort") {
+                if let Some(vals) = opt.get("values").and_then(|v| v.as_array()) {
+                    for v in vals {
+                        if let Some(s) = v.as_str() {
+                            if s != "none" && !s.trim().is_empty() && !effort_values.contains(&s.to_string()) {
+                                effort_values.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if effort_values.is_empty() {
+        return None;
+    }
+    fn intensity(level: &str) -> i32 {
+        match level {
+            "minimal" => 1,
+            "low" => 2,
+            "medium" => 3,
+            "high" => 4,
+            "xhigh" => 5,
+            "max" => 6,
+            _ => 0,
+        }
+    }
+    let pi_levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    let mut map = serde_json::Map::new();
+    for &pi_level in &pi_levels {
+        if pi_level == "off" {
+            map.insert("off".to_string(), Value::Null);
+        } else if effort_values.contains(&pi_level.to_string()) {
+            map.insert(pi_level.to_string(), Value::String(pi_level.to_string()));
+        } else {
+            let pi_int = intensity(pi_level);
+            let mut best: Option<&String> = None;
+            let mut best_dist = i32::MAX;
+            let mut best_int = -1;
+            for cand in &effort_values {
+                let cand_int = intensity(cand);
+                let dist = (cand_int - pi_int).abs();
+                if dist < best_dist || (dist == best_dist && cand_int > best_int) {
+                    best_dist = dist;
+                    best_int = cand_int;
+                    best = Some(cand);
+                }
+            }
+            if let Some(b) = best {
+                map.insert(pi_level.to_string(), Value::String(b.clone()));
+            }
+        }
+    }
+    Some(Value::Object(map))
+}
+
+fn is_thinking_level_map_empty(map: &Option<Value>) -> bool {
+    match map {
+        None => true,
+        Some(v) => v.as_object().map(|o| o.is_empty()).unwrap_or(true),
+    }
+}
+
+
 /// 解析单个 catalog model entry 并按分字段策略覆盖到 ModelEntry（保持 extra 等不动）
 fn enrich_single_entry(mut entry: config::ModelEntry, catalog_model: &Value) -> config::ModelEntry {
     // limit.context -> contextWindow, limit.output -> maxTokens
@@ -516,6 +596,13 @@ fn enrich_single_entry(mut entry: config::ModelEntry, catalog_model: &Value) -> 
             if !name_str.trim().is_empty() {
                 entry.name = Some(name_str.to_string());
             }
+        }
+    }
+
+    // thinkingLevelMap：仅当本地为空时按模型目录派生（非空即手工，留空不设默认）
+    if is_thinking_level_map_empty(&entry.thinking_level_map) {
+        if let Some(derived) = build_thinking_level_map(catalog_model) {
+            entry.thinking_level_map = Some(derived);
         }
     }
 
@@ -992,6 +1079,213 @@ mod enrich_tests {
         assert_eq!(stats.enriched, 0);
         assert_eq!(stats.warning, warning);
     }
+    // ── 思考等级 thinkingLevelMap enrich ──────────────────────────
+    #[test]
+    fn enrich_thinking_level_map_generated_when_empty_and_effort_present() {
+        let profile = profile_openai();
+        // 目录命中：reasoning=true + effort ["high","max"]（如 deepseek）
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "deepseek-v4": {
+                        "id": "deepseek-v4",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["high", "max"]}]
+                    }
+                }
+            }
+        });
+        let models = vec![ModelEntry { id: "deepseek-v4".into(), thinking_level_map: None, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let map = out[0].thinking_level_map.as_ref().expect("应生成 thinkingLevelMap");
+        let obj = map.as_object().expect("map is object");
+        // off 始终为 null
+        assert_eq!(obj.get("off"), Some(&Value::Null));
+        // high 精确命中
+        assert_eq!(obj.get("high").and_then(|v| v.as_str()), Some("high"));
+        // max 精确命中
+        assert_eq!(obj.get("max").and_then(|v| v.as_str()), Some("max"));
+        // xhigh 不在 ["high","max"] 中，应回退到 max（最近）
+        assert_eq!(obj.get("xhigh").and_then(|v| v.as_str()), Some("max"));
+        // minimal/low/medium 不在目录中，应回退到 high（最小可用）
+        assert_eq!(obj.get("minimal").and_then(|v| v.as_str()), Some("high"));
+        assert_eq!(obj.get("low").and_then(|v| v.as_str()), Some("high"));
+        assert_eq!(obj.get("medium").and_then(|v| v.as_str()), Some("high"));
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_openai_four_levels() {
+        let profile = profile_openai();
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "gpt-5": {
+                        "id": "gpt-5",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["minimal", "low", "medium", "high"]}]
+                    }
+                }
+            }
+        });
+        let models = vec![ModelEntry { id: "gpt-5".into(), thinking_level_map: None, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let map = out[0].thinking_level_map.as_ref().expect("应生成 map");
+        let obj = map.as_object().unwrap();
+        assert_eq!(obj.get("off"), Some(&Value::Null));
+        assert_eq!(obj.get("minimal").and_then(|v| v.as_str()), Some("minimal"));
+        assert_eq!(obj.get("low").and_then(|v| v.as_str()), Some("low"));
+        assert_eq!(obj.get("medium").and_then(|v| v.as_str()), Some("medium"));
+        assert_eq!(obj.get("high").and_then(|v| v.as_str()), Some("high"));
+        // xhigh/max 不在目录，回退到 high
+        assert_eq!(obj.get("xhigh").and_then(|v| v.as_str()), Some("high"));
+        assert_eq!(obj.get("max").and_then(|v| v.as_str()), Some("high"));
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_with_none_value_filters() {
+        let profile = profile_openai();
+        // 含 none 的目录值（如 gpt-5.6）应过滤 none，off 仍为 null
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "gpt-5.6": {
+                        "id": "gpt-5.6",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["none", "low", "medium", "high", "xhigh", "max"]}]
+                    }
+                }
+            }
+        });
+        let models = vec![ModelEntry { id: "gpt-5.6".into(), thinking_level_map: None, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        let map = out[0].thinking_level_map.as_ref().expect("应生成 map");
+        let obj = map.as_object().unwrap();
+        assert_eq!(obj.get("off"), Some(&Value::Null));
+        // minimal 不在有效值，回退到 low
+        assert_eq!(obj.get("minimal").and_then(|v| v.as_str()), Some("low"));
+        assert_eq!(obj.get("low").and_then(|v| v.as_str()), Some("low"));
+        assert_eq!(obj.get("xhigh").and_then(|v| v.as_str()), Some("xhigh"));
+        assert_eq!(obj.get("max").and_then(|v| v.as_str()), Some("max"));
+        // 不应出现 "none" 字符串
+        for (_k, v) in obj.iter() {
+            assert_ne!(v.as_str(), Some("none"), "map 不应包含 none 字符串");
+        }
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_preserves_manual_value() {
+        let profile = profile_openai();
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "my-model": {
+                        "id": "my-model",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["high", "max"]}]
+                    }
+                }
+            }
+        });
+        let manual = json!({"off": null, "high": "high"});
+        let models = vec![ModelEntry { id: "my-model".into(), thinking_level_map: Some(manual.clone()), ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        // 非空即手工：应保留原值不覆盖
+        assert_eq!(out[0].thinking_level_map, Some(manual));
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_remains_empty_when_no_effort() {
+        let profile = profile_openai();
+        // reasoning=true 但无 effort（仅 toggle 或空数组）→ 留空不设默认
+        let catalog_toggle = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "kimi-toggle": {
+                        "id": "kimi-toggle",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "toggle"}]
+                    }
+                }
+            }
+        });
+        let models = vec![ModelEntry { id: "kimi-toggle".into(), thinking_level_map: None, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog_toggle));
+        assert!(out[0].thinking_level_map.is_none(), "toggle-only 不应生成 map，留空");
+
+        // 空 reasoning_options
+        let catalog_empty = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "empty-opts": {
+                        "id": "empty-opts",
+                        "reasoning": true,
+                        "reasoning_options": []
+                    }
+                }
+            }
+        });
+        let models2 = vec![ModelEntry { id: "empty-opts".into(), thinking_level_map: None, ..Default::default() }];
+        let out2 = enrich_models_with_catalog(&profile, models2, Some(&catalog_empty));
+        assert!(out2[0].thinking_level_map.is_none(), "空数组不应生成 map");
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_remains_empty_when_reasoning_false() {
+        let profile = profile_openai();
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "gpt-4o": {
+                        "id": "gpt-4o",
+                        "reasoning": false
+                    }
+                }
+            }
+        });
+        let models = vec![ModelEntry { id: "gpt-4o".into(), thinking_level_map: None, ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert!(out[0].thinking_level_map.is_none(), "reasoning=false 不应生成 map");
+        // 若原有空 object 也不覆盖？视为空，仍不生成
+        let models2 = vec![ModelEntry { id: "gpt-4o".into(), thinking_level_map: Some(json!({})), ..Default::default() }];
+        let out2 = enrich_models_with_catalog(&profile, models2, Some(&catalog));
+        // 空对象视为手工？当前定义非空即手工，空对象应被视为可填充但因 reasoning=false 仍为 None/空 → 保持空
+        // 实现可选择保留空对象或 None，此处断言不生成有效映射
+        if let Some(v) = out2[0].thinking_level_map.as_ref() {
+            assert!(v.as_object().map(|o| o.is_empty()).unwrap_or(true), "reasoning=false 时空对象不应被填充为有效 map");
+        }
+    }
+
+    #[test]
+    fn enrich_thinking_level_map_empty_object_treated_as_empty() {
+        let profile = profile_openai();
+        let catalog = json!({
+            "openai": {
+                "id": "openai",
+                "models": {
+                    "deepseek-v4": {
+                        "id": "deepseek-v4",
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["high", "max"]}]
+                    }
+                }
+            }
+        });
+        // 空对象视为可填充（与 None 同等）
+        let models = vec![ModelEntry { id: "deepseek-v4".into(), thinking_level_map: Some(json!({})), ..Default::default() }];
+        let out = enrich_models_with_catalog(&profile, models, Some(&catalog));
+        assert!(out[0].thinking_level_map.is_some(), "空对象应被填充");
+        let obj = out[0].thinking_level_map.as_ref().unwrap().as_object().unwrap();
+        assert_eq!(obj.get("off"), Some(&Value::Null));
+    }
+
+
 }
 
 fn backup_models() -> Option<PathBuf> {
