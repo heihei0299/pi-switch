@@ -9,6 +9,7 @@ import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import type { ModelEntry } from "../types";
+import { JsonEditor } from "./JsonEditor";
 
 const API_OPTIONS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
@@ -342,12 +343,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         <div className="mt-6">
           <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON")}</div>
           <div className="space-y-2">
-            <textarea
-              aria-label="gateway json"
-              value={rawText}
-              onChange={(e) => setRawText(e.target.value)}
-              className="h-80 w-full rounded-lg border border-white/10 bg-zinc-950 p-3 font-mono text-xs text-zinc-300 outline-none focus:border-indigo-500/70"
-            />
+            <JsonEditor value={rawText} onChange={setRawText} label="gateway json" className="h-80" />
             {!rawValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {rawValidation.error}</div>
             )}

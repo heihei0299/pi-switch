@@ -3,6 +3,7 @@ import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, Re
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
 import { draftFromEntry, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
+import { JsonEditor } from "./JsonEditor";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import {
@@ -576,12 +577,7 @@ function ProfileForm({
           </div>
         ) : (
           <div className="space-y-2">
-            <textarea
-              aria-label="profile json"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              className="h-64 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70 sm:h-80"
-            />
+            <JsonEditor value={text} onChange={setText} label="profile json" className="h-64 sm:h-80" />
             {!jsonValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
             )}
@@ -952,12 +948,7 @@ function ModelsModal({
           </>
         ) : (
           <div className="space-y-2">
-            <textarea
-              aria-label="models json"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              className="h-64 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70 sm:h-80"
-            />
+            <JsonEditor value={text} onChange={setText} label="models json" className="h-64 sm:h-80" />
             {!jsonValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
             )}
