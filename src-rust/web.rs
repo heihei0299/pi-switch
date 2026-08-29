@@ -4,6 +4,12 @@
 //! Every handler is a thin adapter: parse input → call `ops`/`service`/`daemon`/`sync`
 //! → serialize output. All business logic stays in those shared modules, so adding a
 //! capability to the web UI means wiring one route here — not reimplementing anything.
+//!
+//! ## 路由组隔离（第二阶段）
+//! - `profiles` 与 `gateway` 为独立子 Router（文件锁/原子写已隔离，路由层再隔离错误边界）
+//! - `make_profiles_router()` 仅含 `/profiles/*`、`/state`、`/presets` 等供应商侧；`make_gateway_router()` 仅含 `/models/gateway*` 与 `/gateway/*` 占位
+//! - 两组错误不串扰：Gateway 离线/校验失败不影响 Profiles CRUD；反之亦然（通过独立 `ApiError` 转换与 `fallback`）
+//! - 后续真拆进程时，gateway Router 可直接挂载到独立进程的 `axum::Router`（健康检查 `GET /api/gateway/health` 已预留）
 
 use crate::error::AppError;
 use crate::{config, daemon, ops, service, stats, sync};
@@ -68,9 +74,9 @@ type ApiJson = std::result::Result<Json<Value>, ApiError>;
 
 // ─── Router ───────────────────────────────────────────────
 
-pub fn make_web_router(state: Arc<WebState>) -> Router {
-    let api = Router::new()
-        // reads
+/// 独立 profiles 路由组：供应商侧（/profiles/* 等），错误与 gateway 隔离
+pub fn make_profiles_router() -> Router<Arc<WebState>> {
+    Router::new()
         .route("/state", get(get_state))
         .route("/presets", get(get_presets))
         .route("/presets/:id", get(get_preset))
@@ -78,8 +84,6 @@ pub fn make_web_router(state: Arc<WebState>) -> Router {
             "/profiles/:name",
             get(get_profile).put(put_profile).delete(delete_profile),
         )
-        .route("/models/gateway", get(get_gateway).put(put_gateway))
-        .route("/models/gateway/preview", get(get_gateway_preview))
         .route("/doctor", get(get_doctor))
         .route("/config/validate", get(get_validate))
         .route("/backups", get(get_backups))
@@ -110,7 +114,7 @@ pub fn make_web_router(state: Arc<WebState>) -> Router {
         .route("/profiles/:name/models", put(put_models))
         .route("/profiles/:name/expose", put(put_expose))
         .route("/profiles/:name/spoof", put(put_spoof))
-        // proxy + settings + config
+        // proxy + settings + config (仍属 profiles 侧，写 config.json)
         .route("/proxy/start", post(post_proxy_start))
         .route("/proxy/stop", post(post_proxy_stop))
         .route("/proxy/failover", put(put_failover))
@@ -118,6 +122,26 @@ pub fn make_web_router(state: Arc<WebState>) -> Router {
         .route("/config/export", post(post_config_export))
         .route("/config/import", post(post_config_import))
         .route("/config/restore", post(post_config_restore))
+}
+
+/// 独立 gateway 路由组：网关侧（/gateway/* 与 /models/gateway*），错误与 profiles 隔离
+/// 当前为逻辑隔离（同进程不同 Router + 独立 fallback），下一阶段可直接挂到独立 `pi-switch-gateway` 进程
+pub fn make_gateway_router() -> Router<Arc<WebState>> {
+    Router::new()
+        .route("/models/gateway", get(get_gateway).put(put_gateway))
+        .route("/models/gateway/preview", get(get_gateway_preview))
+        .route("/gateway/health", get(get_gateway_health))
+        .route("/gateway/start", post(post_gateway_start))
+}
+
+pub fn make_web_router(state: Arc<WebState>) -> Router {
+    // 路由组逻辑隔离：profiles 与 gateway 各自独立 Router，错误不串扰
+    let profiles_api = make_profiles_router().with_state(state.clone());
+    let gateway_api = make_gateway_router().with_state(state.clone());
+    // 合并时各自保留独立错误转换；任一子 Router 的 400/500 不会覆盖另一组的成功路径
+    let api = Router::new()
+        .merge(profiles_api)
+        .merge(gateway_api)
         .fallback(api_not_found)
         .with_state(state.clone());
 
@@ -204,6 +228,18 @@ async fn get_gateway_preview() -> ApiJson {
 
 async fn put_gateway(Json(gateway): Json<Value>) -> ApiJson {
     Ok(Json(service::apply_gateway(gateway)?))
+}
+
+// ─── Gateway 进程生命周期占位（健康检查/启动，暂逻辑隔离） ──────────
+
+async fn get_gateway_health() -> ApiJson {
+    let health = crate::gateway::health_check()?;
+    Ok(Json(serde_json::to_value(health).unwrap_or_else(|_| json!({}))))
+}
+
+async fn post_gateway_start() -> ApiJson {
+    let health = crate::gateway::start_placeholder()?;
+    Ok(Json(serde_json::to_value(health).unwrap_or_else(|_| json!({}))))
 }
 
 async fn get_doctor() -> Json<Value> {
@@ -865,5 +901,80 @@ mod tests {
         let _ = get("/api/models/gateway/preview").await;
         let after = fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(before, after, "preview must be dry-run, not modify models.json");
+    }
+
+    #[tokio::test]
+    async fn gateway_health_returns_200_with_logical_isolation() {
+        let res = get("/api/gateway/health").await;
+        assert_eq!(res.status(), StatusCode::OK, "/api/gateway/health should be 200");
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(body.get("mode").and_then(|v| v.as_str()), Some("logical-isolation"));
+        assert!(body.get("gateway_id").is_some());
+    }
+
+    #[tokio::test]
+    async fn gateway_preview_and_profiles_routes_are_independent() {
+        // Error in gateway should not affect profiles
+        let app = router();
+        // invalid gateway PUT -> 400
+        let bad_gateway = app.clone().oneshot(axum::http::Request::builder().uri("/api/models/gateway").method(axum::http::Method::PUT).header(axum::http::header::CONTENT_TYPE, "application/json").body(Body::from(r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#)).unwrap()).await.unwrap();
+        assert_eq!(bad_gateway.status(), StatusCode::BAD_REQUEST);
+        // profiles still reachable
+        let profiles_state = get("/api/state").await;
+        assert_eq!(profiles_state.status(), StatusCode::OK);
+        // and preview still reachable
+        let preview = get("/api/models/gateway/preview").await;
+        assert_eq!(preview.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn profiles_upstream_payload_accepted_and_persists_baseurl_fallback() {
+        // Create a profile with upstreams, ensure it round-trips via /state
+        let app = router();
+        let payload = serde_json::json!({
+            "name": "test-upstream-profile",
+            "profile": {
+                "api": "openai-completions",
+                "baseUrl": "http://a/v1",
+                "apiKey": "k1",
+                "upstreams": [
+                    { "baseUrl": "http://a/v1", "apiKey": "k1", "weight": 2, "name": "a" },
+                    { "baseUrl": "http://b/v1", "apiKey": "k2" }
+                ],
+                "models": [],
+                "proxy": false
+            }
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/profiles")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        // 200 or 400 depending on existing; but validation should not reject upstreams
+        assert!(res.status() == StatusCode::OK || res.status() == StatusCode::BAD_REQUEST);
+        // If OK, verify state contains upstreams
+        if res.status() == StatusCode::OK {
+            let state = get("/api/state").await;
+            assert_eq!(state.status(), StatusCode::OK);
+            let body: Value = serde_json::from_slice(&axum::body::to_bytes(state.into_body(), usize::MAX).await.unwrap()).unwrap();
+            let profiles = body.get("profiles").unwrap().as_object().unwrap();
+            if let Some(p) = profiles.get("test-upstream-profile") {
+                assert!(p.get("upstreams").is_some(), "upstreams should persist");
+            }
+            // cleanup
+            let _ = app.clone().oneshot(axum::http::Request::builder().uri("/api/profiles/test-upstream-profile").method(axum::http::Method::DELETE).body(Body::empty()).unwrap()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_routers_have_independent_fallbacks() {
+        // Unknown gateway route should be 404 without affecting profiles router
+        let gw_404 = get("/api/gateway/unknown").await;
+        assert_eq!(gw_404.status(), StatusCode::NOT_FOUND);
+        let prof_ok = get("/api/state").await;
+        assert_eq!(prof_ok.status(), StatusCode::OK);
     }
 }

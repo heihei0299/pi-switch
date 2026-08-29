@@ -30,12 +30,23 @@ export interface ModelEntry {
 
 export type ResponsesMode = "auto" | "passthrough" | "convert";
 
+export interface Upstream {
+  baseUrl: string;
+  apiKey: string;
+  headers?: Record<string, string>;
+  weight?: number;
+  name?: string;
+  [key: string]: unknown;
+}
+
 export interface ProviderProfile {
   name?: string;
   api: string;
   responsesMode?: ResponsesMode;
   baseUrl: string;
   apiKey: string;
+  /** 多上游配置（进程隔离后独立调度）。空时回退到单 baseUrl/apiKey/headers，兼容旧字段 */
+  upstreams?: Upstream[];
   models: ModelEntry[];
   oauth?: "radius";
   preset?: string;
@@ -51,6 +62,18 @@ export interface ProviderProfile {
   exposedModels?: string[];
   userAgent?: string;
   [key: string]: unknown;
+}
+
+export function hasUpstreams(profile: ProviderProfile): boolean {
+  return Array.isArray(profile.upstreams) && profile.upstreams.length > 0;
+}
+
+export function resolvedUpstreams(profile: ProviderProfile): Upstream[] {
+  if (hasUpstreams(profile)) return profile.upstreams!;
+  if (profile.baseUrl || profile.apiKey || profile.headers) {
+    return [{ baseUrl: profile.baseUrl, apiKey: profile.apiKey, headers: profile.headers }];
+  }
+  return [];
 }
 
 export interface CircuitBreakerSettings {

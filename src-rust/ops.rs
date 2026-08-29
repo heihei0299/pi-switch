@@ -1471,17 +1471,17 @@ pub async fn test_provider(name: &str) -> Result<TestResult> {
 
     let url = format!(
         "{}/chat/completions",
-        profile.base_url.trim_end_matches('/')
+        profile.primary_base_url().trim_end_matches('/')
     );
     let mut req = client.post(&url).json(&test_body);
 
     // Add authorization header
     if profile.api == "anthropic-messages" {
         req = req
-            .header("x-api-key", &profile.api_key)
+            .header("x-api-key", profile.primary_api_key())
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.header("Authorization", format!("Bearer {}", profile.api_key));
+        req = req.header("Authorization", format!("Bearer {}", profile.primary_api_key()));
     }
 
     match req.send().await {
@@ -1527,10 +1527,11 @@ async fn fetch_upstream_ids(profile: &ProviderProfile) -> Result<Vec<String>> {
         .build()
         .map_err(|e| AppError::Message(format!("HTTP client error: {}", e)))?;
 
-    let api_key = crate::config::resolve_env(&profile.api_key);
-
+    // 兼容多上游：取首个生效 upstream（向后兼容单 baseUrl）
+    let api_key = crate::config::resolve_env(profile.primary_api_key());
+    let base_url = profile.primary_base_url();
     // Build candidate URLs (try multiple common endpoints)
-    let candidate_urls = build_model_fetch_urls(&profile.base_url, &profile.api);
+    let candidate_urls = build_model_fetch_urls(base_url, &profile.api);
     let mut last_error = String::from("No candidate URLs");
 
     for url in candidate_urls {
@@ -1641,229 +1642,39 @@ pub async fn fetch_models_with_stats(name: &str) -> Result<(Vec<String>, EnrichS
 }
 
 // ─── Sync Gateway Provider to Pi Config ──────────────────
+// 注意：已拆分至 `crate::gateway` 独立模块（文件锁/原子写隔离）。
+// - Providers 侧仅操作 config.json（`config::save_config` 独立锁）
+// - Gateway 侧仅操作 models.json（`gateway::write_models_atomic` 独立锁与 notify）
+// - 互不阻塞，供应商离线/失败不影响 Gateway 读/预览/应用；错误边界已隔离
+// - Gateway 进程间通过文件 `gateway.notify` 或未来 channel/ipc 通知
 
-/// Write a single "gateway" provider into pi's models.json. It advertises every non-proxy
-/// profile's exposedModels as `profile/realModelId`, all pointing at the local proxy, so pi
-/// sees one provider and the proxy routes by the model name in the request body.
-///
-/// This is the only pi provider pi-switch manages. Any legacy per-profile `{prefix}-*` entries
-/// (from the old routing model) are removed; foreign providers are left untouched.
-pub fn sync_gateway_to_pi() -> Result<()> {
-    let config = load_config()?;
-    let mut models = load_models_value()?;
-    sync_gateway_with_current(&config, &mut models)?;
-    write_models_atomic(&models)
-}
-// ─── Gateway pre-edit (preview / apply) ─────────────────
+#[allow(unused_imports)]
+pub use crate::gateway::{apply_gateway, get_gateway, preview_gateway, sync_gateway_to_pi, GatewayPreview};
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct GatewayPreview {
-    pub current: Option<serde_json::Value>,
-    pub proposed: serde_json::Value,
-    pub conflicts: Vec<String>,
+/// Provider 独立 mod：仅负责供应商 profile 的 CRUD/校验/enrich，不触碰 Gateway 文件
+/// 未来可整体移至 `crate::provider` 并独立进程化
+pub mod provider {
+    // 语义占位：当前实现仍在 `super::`，下一阶段抽离为独立文件 `provider.rs`
+    // 供调用方以 `ops::provider::*` 明确边界；错误不穿透至 gateway
 }
 
-fn load_models_value() -> Result<serde_json::Value> {
-    let models_path = config::models_path();
-    if models_path.exists() {
-        let text =
-            std::fs::read_to_string(&models_path).map_err(|e| AppError::io(&models_path, e))?;
-        Ok(serde_json::from_str::<serde_json::Value>(&text).unwrap_or(serde_json::json!({ "providers": {} })))
-    } else {
-        Ok(serde_json::json!({ "providers": {} }))
-    }
-}
-
-fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::Value {
-    let mut gateway_models: Vec<serde_json::Value> = Vec::new();
-    for (name, profile_value) in &config.profiles {
-        let profile: ProviderProfile = match serde_json::from_value(profile_value.clone()) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if profile.proxy {
-            continue;
-        }
-        for real_id in &profile.exposed_models {
-            let mut entry = profile
-                .models
-                .iter()
-                .find(|m| &m.id == real_id)
-                .cloned()
-                .unwrap_or_else(|| config::ModelEntry {
-                    id: real_id.clone(),
-                    ..Default::default()
-                });
-            entry.id = format!("{}/{}", name, real_id);
-            if let Ok(v) = serde_json::to_value(&entry) {
-                gateway_models.push(v);
-            }
-        }
-    }
-    let host = &config.settings.proxy.host;
-    let port = config.settings.proxy.port;
-    serde_json::json!({
-        "api": config.settings.gateway_api.clone(),
-        "baseUrl": format!("http://{}:{}/v1", host, port),
-        "apiKey": "pi-switch-proxy",
-        "models": gateway_models,
-        "proxy": false,
-    })
-}
-
-fn merge_gateway_extra(current: &serde_json::Value, proposed: &mut serde_json::Value) {
-    // Preserve any top-level keys present in current but not in proposed (handwritten extra)
-    if let (Some(cur_obj), Some(prop_obj)) = (current.as_object(), proposed.as_object_mut()) {
-        for (k, v) in cur_obj {
-            if !prop_obj.contains_key(k) {
-                prop_obj.insert(k.clone(), v.clone());
-            }
-        }
-        // For models array, preserve per-model extra fields when ids match:
-        // if current model has keys not in proposed model, copy them (handwritten model extra)
-        if let (Some(cur_models), Some(prop_models)) = (
-            cur_obj.get("models").and_then(|v| v.as_array()),
-            prop_obj.get_mut("models").and_then(|v| v.as_array_mut()),
-        ) {
-            let cur_by_id: std::collections::HashMap<String, &serde_json::Value> = cur_models
-                .iter()
-                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|id| (id.to_string(), m)))
-                .collect();
-            for prop_model in prop_models.iter_mut() {
-                if let Some(id) = prop_model.get("id").and_then(|id| id.as_str()) {
-                    if let Some(cur_model) = cur_by_id.get(id) {
-                        if let (Some(cur_mo), Some(prop_mo)) =
-                            (cur_model.as_object(), prop_model.as_object_mut())
-                        {
-                            for (k, v) in cur_mo {
-                                if !prop_mo.contains_key(k) {
-                                    prop_mo.insert(k.clone(), v.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn compute_gateway_conflicts(current: &serde_json::Value, proposed: &serde_json::Value) -> Vec<String> {
-    let mut conflicts = Vec::new();
-    let generated_keys = ["api", "baseUrl", "apiKey", "models", "proxy"];
-    if let (Some(cur_obj), Some(prop_obj)) = (current.as_object(), proposed.as_object()) {
-        for key in generated_keys {
-            if let (Some(cur_val), Some(prop_val)) = (cur_obj.get(key), prop_obj.get(key)) {
-                if cur_val != prop_val {
-                    conflicts.push(key.to_string());
-                }
-            }
-        }
-        // Extra keys that would have been overwritten if they existed in proposed — but our merge preserves them,
-        // so no conflict for extra keys. However we still report if a preserved extra's value differs? That case
-        // doesn't happen because we only preserve missing keys. So conflicts are only generated keys.
-    }
-    conflicts
-}
-
-pub fn get_gateway() -> Result<Option<serde_json::Value>> {
-    let config = load_config()?;
-    let models = load_models_value()?;
-    let gateway_id = config.settings.provider_prefix.clone();
-    let entry = models
-        .get("providers")
-        .and_then(|p| p.get(&gateway_id))
-        .cloned();
-    Ok(entry)
-}
-
-pub fn preview_gateway() -> Result<GatewayPreview> {
-    let config = load_config()?;
-    let models = load_models_value()?;
-    let gateway_id = config.settings.provider_prefix.clone();
-    let current = models
-        .get("providers")
-        .and_then(|p| p.get(&gateway_id))
-        .cloned();
-
-    let mut proposed = build_proposed_gateway_entry(&config);
-    let conflicts = if let Some(ref cur) = current {
-        let c = compute_gateway_conflicts(cur, &proposed);
-        merge_gateway_extra(cur, &mut proposed);
-        c
-    } else {
-        Vec::new()
+/// Gateway 独立 mod：Sync/Preview/Apply 已隔离至 `crate::gateway`
+/// - 读写均在独立文件锁与原子写内完成（providers.json vs gateway.json 语义隔离：config.json vs models.json）
+/// - 进程间通过文件 `gateway.notify` 通知，错误边界隔离（gateway 失败不阻断 providers）
+pub mod gateway {
+    #[allow(unused_imports)]
+    pub use crate::gateway::{
+        apply_gateway, get_gateway, notify_gateway_changed, preview_gateway, sync_gateway_to_pi,
+        GatewayPreview,
     };
-
-    Ok(GatewayPreview {
-        current,
-        proposed,
-        conflicts,
-    })
+    /// 显式文件通知通道（轻量 mtime），下一阶段可替换为 channel/ipc；错误已隔离不阻断主流程
+    #[allow(dead_code)]
+    pub fn notify_via_file() -> crate::error::Result<()> {
+        crate::gateway::notify_gateway_changed()
+    }
 }
 
-fn validate_gateway_value(value: &serde_json::Value) -> std::result::Result<(), String> {
-    let obj = value.as_object().ok_or("gateway must be an object")?;
-    let api = obj.get("api").and_then(|v| v.as_str()).unwrap_or("");
-    if api.is_empty() {
-        return Err("gateway.api is required".into());
-    }
-    if !crate::config::SUPPORTED_APIS.contains(&api) {
-        return Err(format!("gateway.api is not supported: {}", api));
-    }
-    let base_url = obj.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("");
-    if base_url.is_empty() {
-        return Err("gateway.baseUrl is required".into());
-    }
-    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-        return Err("gateway.baseUrl must start with http:// or https://".into());
-    }
-    let models = obj.get("models").and_then(|v| v.as_array()).ok_or("gateway.models must be an array")?;
-    for (i, m) in models.iter().enumerate() {
-        let mid = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        if mid.trim().is_empty() {
-            return Err(format!("gateway.models[{}].id must not be empty", i));
-        }
-    }
-    Ok(())
-}
-
-pub fn apply_gateway(edited: serde_json::Value) -> Result<()> {
-    validate_gateway_value(&edited).map_err(AppError::Message)?;
-    let config = load_config()?;
-    let mut models = load_models_value()?;
-    let providers = models["providers"]
-        .as_object_mut()
-        .ok_or_else(|| AppError::Message("invalid models.json".into()))?;
-    let gateway_id = config.settings.provider_prefix.clone();
-    // backup models.json before write
-    let _ = backup_models();
-    providers.insert(gateway_id, edited);
-    write_models_atomic(&models)
-}
-
-// Helper for sync_gateway_to_pi to reuse preview merging
-fn sync_gateway_with_current(config: &config::PiSwitchConfig, models: &mut serde_json::Value) -> Result<()> {
-    let gateway_id = config.settings.provider_prefix.clone();
-    let current = models
-        .get("providers")
-        .and_then(|p| p.get(&gateway_id))
-        .cloned();
-    let mut proposed = build_proposed_gateway_entry(config);
-    if let Some(ref cur) = current {
-        // compute conflicts is not needed for sync, but we merge
-        merge_gateway_extra(cur, &mut proposed);
-    }
-    let providers = models["providers"]
-        .as_object_mut()
-        .ok_or_else(|| AppError::Message("invalid models.json".into()))?;
-    let legacy_prefix = format!("{}-", gateway_id);
-    providers.retain(|k, _| k != &gateway_id && !k.starts_with(&legacy_prefix));
-    providers.insert(gateway_id, proposed);
-    Ok(())
-}
-
-
+// Build multiple candidate URLs to try (following cc-switch logic)
 // Build multiple candidate URLs to try (following cc-switch logic)
 pub fn build_model_fetch_urls(base_url: &str, api_type: &str) -> Vec<String> {
     let base = base_url.trim().trim_end_matches('/');

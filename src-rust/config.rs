@@ -100,6 +100,48 @@ pub struct ModelCostTier {
     pub extra: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Upstream {
+    #[serde(default, skip_serializing_if = "String::is_empty", rename = "baseUrl")]
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty", rename = "apiKey")]
+    pub api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Map<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Upstream {
+    /// 校验单个上游配置
+    pub fn validate(&self, path: &str) -> std::result::Result<(), String> {
+        if !self.base_url.is_empty()
+            && !self.base_url.starts_with("http://")
+            && !self.base_url.starts_with("https://")
+        {
+            return Err(format!("{path}.baseUrl must start with http:// or https://"));
+        }
+        if let Some(headers) = &self.headers {
+            validate_string_map(&Value::Object(headers.clone()), &format!("{path}.headers"))?;
+        }
+        if let Some(w) = self.weight {
+            if w == 0 {
+                return Err(format!("{path}.weight must be greater than 0"));
+            }
+        }
+        if let Some(name) = &self.name {
+            if name.trim().is_empty() {
+                return Err(format!("{path}.name must not be empty if set"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,6 +156,9 @@ pub struct ProviderProfile {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[serde(rename = "apiKey")]
     pub api_key: String,
+    /// 多上游配置（进程隔离后每个 Upstream 独立调度）。为空时回退到单 baseUrl/apiKey/headers。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upstreams: Vec<Upstream>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,6 +199,63 @@ pub struct ProviderProfile {
     pub spoof: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl ProviderProfile {
+    /// 是否配置多上游
+    #[allow(dead_code)]
+    pub fn has_upstreams(&self) -> bool {
+        !self.upstreams.is_empty()
+    }
+
+    /// 解析生效的上游列表：upstreams 非空时直接返回，否则回退构造单 upstream（兼容旧字段）
+    #[allow(dead_code)]
+    pub fn resolved_upstreams(&self) -> Vec<Upstream> {
+        if !self.upstreams.is_empty() {
+            self.upstreams.clone()
+        } else if !self.base_url.is_empty() || !self.api_key.is_empty() || self.headers.is_some() {
+            vec![Upstream {
+                base_url: self.base_url.clone(),
+                api_key: self.api_key.clone(),
+                headers: self.headers.clone(),
+                weight: None,
+                name: None,
+                extra: Map::new(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// 主 baseUrl（多上游时取首个，否则回退单字段）
+    pub fn primary_base_url(&self) -> &str {
+        if let Some(first) = self.upstreams.first() {
+            if !first.base_url.is_empty() {
+                return &first.base_url;
+            }
+        }
+        &self.base_url
+    }
+
+    /// 主 apiKey（多上游时取首个，否则回退单字段）
+    pub fn primary_api_key(&self) -> &str {
+        if let Some(first) = self.upstreams.first() {
+            if !first.api_key.is_empty() {
+                return &first.api_key;
+            }
+        }
+        &self.api_key
+    }
+
+    /// 主 headers（多上游时取首个，否则回退）
+    pub fn primary_headers(&self) -> Option<&Map<String, Value>> {
+        if let Some(first) = self.upstreams.first() {
+            if first.headers.is_some() {
+                return first.headers.as_ref();
+            }
+        }
+        self.headers.as_ref()
+    }
 }
 
 /// 将 preset id 推断为模型目录的 provider key（用于模型元数据 enrich）。
@@ -743,7 +845,17 @@ pub fn validate_provider_profile(
     {
         return Err("baseUrl must start with http:// or https://".into());
     }
-    if !profile.models.is_empty() && profile.base_url.is_empty() {
+    // 校验多上游（新增字段，向后兼容：单 baseUrl 仍可用）
+    for (idx, upstream) in profile.upstreams.iter().enumerate() {
+        upstream.validate(&format!("upstreams[{idx}]"))?;
+    }
+    // baseUrl 必填校验：兼容多上游，回退到首个 upstream
+    let has_effective_base = if !profile.upstreams.is_empty() {
+        profile.upstreams.iter().any(|u| !u.base_url.is_empty())
+    } else {
+        !profile.base_url.is_empty()
+    };
+    if !profile.models.is_empty() && !has_effective_base {
         return Err("baseUrl is required when models are defined".into());
     }
     if !profile.models.is_empty()

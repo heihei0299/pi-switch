@@ -119,6 +119,8 @@ export const api = {
   getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
   previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[] }>("GET", "/models/gateway/preview"),
   applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
+  getGatewayHealth: () => req<{ running: boolean; mode: string; gateway_id: string; has_models_file: boolean; last_notify: string | null; upstreams_total: number; message: string }>("GET", "/gateway/health"),
+  startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start"),
   exportConfig: (passphrase: string) =>
     req<{ path: string }>("POST", "/config/export", { passphrase }),
   importConfig: (filePath: string, passphrase: string) =>

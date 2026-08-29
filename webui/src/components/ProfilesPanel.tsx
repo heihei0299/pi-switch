@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode } from "../types";
+import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
+import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { api } from "../api";
@@ -89,7 +90,7 @@ export function ProfilesPanel({
                   {exposed > 0 && <Badge tone="green">{exposed} {t("exposed")}</Badge>}
                 </div>
                 <div className="mt-0.5 truncate text-xs text-zinc-500">
-                  {p.baseUrl || t("no base url")} · {p.models?.length ?? 0} {t("models")}
+                  {(hasUpstreams(p) ? resolvedUpstreams(p)[0]?.baseUrl : p.baseUrl) || t("no base url")} · {p.models?.length ?? 0} {t("models")} {hasUpstreams(p) ? `· ${resolvedUpstreams(p).length} upstream(s)` : ""}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
@@ -209,6 +210,21 @@ function ProfileForm({
     if (c && typeof c === "object" && !Array.isArray(c)) return c as Record<string, unknown>;
     return {};
   });
+  // Upstream 列表：基于 has_upstreams/resolved_upstreams 回退，单字段兼容
+  const [upstreams, setUpstreams] = useState<Array<{ key: string; baseUrl: string; apiKey: string; weight: string; name: string; headers: Record<string, string> }>>(() => {
+    const existingUps = (existing as any)?.upstreams as Upstream[] | undefined;
+    if (existingUps && existingUps.length > 0) {
+      return existingUps.map((u, idx) => ({
+        key: `us-${idx}-${u.baseUrl.slice(0, 8)}`,
+        baseUrl: u.baseUrl ?? "",
+        apiKey: u.apiKey ?? "",
+        weight: u.weight != null ? String(u.weight) : "",
+        name: u.name ?? "",
+        headers: (u.headers as Record<string, string>) ?? {},
+      }));
+    }
+    return [];
+  });
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
@@ -231,19 +247,41 @@ function ProfileForm({
     const prevById = new Map((existing?.models ?? []).map((m) => [m.id, m]));
     const models = ids.map((id) => prevById.get(id) ?? defaultModel(id));
     const exposedModels = (existing?.exposedModels ?? []).filter((id) => ids.includes(id));
+    // Upstream 回退：有 upstreams 时持久化多上游，否则回退单字段（兼容旧配置）
+    let upstreamPayload: Upstream[] | undefined;
+    let effectiveBaseUrl = baseUrl.trim();
+    let effectiveApiKey = apiKey.trim();
+    let effectiveHeaders: Record<string, string> | undefined = Object.keys(headers).length ? headers : undefined;
+    if (upstreams.length > 0) {
+      upstreamPayload = upstreams.map((u) => ({
+        baseUrl: u.baseUrl.trim(),
+        apiKey: u.apiKey.trim(),
+        headers: Object.keys(u.headers).length ? u.headers : undefined,
+        weight: u.weight.trim() ? Number(u.weight) : undefined,
+        name: u.name.trim() || undefined,
+      } as Upstream)).filter((u) => u.baseUrl || u.apiKey);
+      if (upstreamPayload.length === 0) upstreamPayload = undefined;
+      else {
+        // 单字段同步首个 upstream，保持 has_upstreams=false 读者兼容
+        effectiveBaseUrl = upstreamPayload[0]?.baseUrl ?? effectiveBaseUrl;
+        effectiveApiKey = upstreamPayload[0]?.apiKey ?? effectiveApiKey;
+        effectiveHeaders = (upstreamPayload[0]?.headers as Record<string, string>) ?? effectiveHeaders;
+      }
+    }
     return {
       ...(existing ?? {}),
       api: apiType,
       responsesMode,
-      baseUrl: baseUrl.trim(),
-      apiKey: apiKey.trim(),
+      baseUrl: effectiveBaseUrl,
+      apiKey: effectiveApiKey,
+      upstreams: upstreamPayload,
       models,
       proxy,
       exposedModels,
       preset: preset || undefined,
       modelsDevProvider: modelsDevProvider.trim() || undefined,
       userAgent: spoof || undefined,
-      headers: Object.keys(headers).length ? headers : undefined,
+      headers: effectiveHeaders,
       compat: Object.keys(compat).length ? compat : undefined,
       updatedAt: new Date().toISOString(),
     } as unknown as ProviderProfile;
@@ -317,22 +355,99 @@ function ProfileForm({
               ))}
             </Select>
           </Field>
+          {upstreams.length === 0 ? (
+            <>
+              <div className="sm:col-span-2">
+                <Field label={t("Base URL")}>
+                  <Input
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://api.example.com/v1"
+                  />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label={t("API key (supports $ENV_VAR)")}>
+                  <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
+              </div>
+            </>
+          ) : null}
           <div className="sm:col-span-2">
-            <Field label={t("Base URL")}>
-              <Input
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.example.com/v1"
-              />
-            </Field>
-          </div>
-          <div className="sm:col-span-2">
-            <Field label={t("API key (supports $ENV_VAR)")}>
-              <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-            </Field>
-          </div>
-          <div className="sm:col-span-2">
-            <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-200">{t("Upstreams")} {upstreams.length > 0 ? `· ${upstreams.length}` : `· ${t("single fallback")}`}</span>
+              <div className="flex gap-2">
+                {upstreams.length === 0 && (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const first: any = { key: `us-${Date.now()}`, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), weight: "", name: "", headers: { ...headers } };
+                      setUpstreams([first]);
+                    }}
+                  >
+                    {t("Manage upstreams")}
+                  </Button>
+                )}
+                {upstreams.length > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={() => setUpstreams((prev) => [...prev, { key: `us-${Date.now()}-${prev.length}`, baseUrl: "", apiKey: "", weight: "", name: "", headers: {} }])}
+                    >
+                      + {t("Add upstream")}
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        // 回退到单字段：清空 upstreams，保留首个到单字段
+                        if (upstreams.length > 0) {
+                          setBaseUrl(upstreams[0].baseUrl);
+                          setApiKey(upstreams[0].apiKey);
+                          setHeaders(upstreams[0].headers ?? {});
+                        }
+                        setUpstreams([]);
+                      }}
+                    >
+                      {t("Use single")}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+            {upstreams.length > 0 && (
+              <div className="space-y-3 rounded-lg border border-white/10 bg-zinc-900/30 p-3">
+                <div className="text-xs text-zinc-500">{t("has_upstreams / resolved_upstreams 回退，多上游为空时使用单 Base URL/API Key。增删即时生效，保存后需到网关发布。")}</div>
+                {upstreams.map((u, idx) => (
+                  <div key={u.key} className="rounded-lg border border-white/10 bg-zinc-950 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium text-zinc-300">Upstream #{idx + 1} {u.name ? `· ${u.name}` : ""}</span>
+                      <Button type="button" onClick={() => setUpstreams((prev) => prev.filter((x) => x.key !== u.key))} className="h-7 text-xs">{t("Remove")}</Button>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label={t("Base URL")}>
+                        <Input value={u.baseUrl} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, baseUrl: e.target.value } : x))} placeholder="https://api.example.com/v1" />
+                      </Field>
+                      <Field label={t("API key")}>
+                        <Input value={u.apiKey} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, apiKey: e.target.value } : x))} placeholder="sk-…" />
+                      </Field>
+                      <Field label={t("Weight")}>
+                        <Input value={u.weight} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, weight: e.target.value } : x))} placeholder="1" />
+                      </Field>
+                      <Field label={t("Name")}>
+                        <Input value={u.name} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, name: e.target.value } : x))} placeholder="upstream-a" />
+                      </Field>
+                    </div>
+                    <div className="mt-2">
+                      <RequestHeadersEditor headers={u.headers} onHeadersChange={(next) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, headers: next } : x))} />
+                    </div>
+                  </div>
+                ))}
+                {upstreams.length === 0 && <div className="text-xs text-zinc-500">{t("No upstreams yet.")}</div>}
+              </div>
+            )}
           </div>
           <div className="sm:col-span-2">
             <StructuredOptionsEditor

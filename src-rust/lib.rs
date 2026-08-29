@@ -5,6 +5,7 @@ mod config;
 mod daemon;
 mod database;
 mod error;
+mod gateway;
 mod ops;
 mod package;
 mod package_ops;

@@ -1870,7 +1870,7 @@ fn build_upstream_headers(
         }
         output.append(name.clone(), value.clone());
     }
-    if let Some(custom) = &profile.headers {
+    if let Some(custom) = profile.primary_headers() {
         for (name, value) in custom {
             let Some(value) = value.as_str() else {
                 continue;
@@ -2015,8 +2015,8 @@ async fn forward_responses_mixed(
         }
         let effective_spoof = profile.spoof.as_deref().or(global_spoof);
         let (client, user_agent, disguise) = build_disguised_client(effective_spoof);
-        let api_key = crate::config::resolve_env(&profile.api_key);
-        let base = profile.base_url.trim_end_matches('/');
+        let api_key = crate::config::resolve_env(profile.primary_api_key());
+        let base = profile.primary_base_url().trim_end_matches('/');
         let url = if is_native {
             format!("{base}/responses")
         } else {
@@ -2270,8 +2270,8 @@ async fn forward_responses_mixed_stream(
         }
         let effective_spoof = profile.spoof.as_deref().or(global_spoof);
         let (client, user_agent, disguise) = build_disguised_client(effective_spoof);
-        let api_key = crate::config::resolve_env(&profile.api_key);
-        let base = profile.base_url.trim_end_matches('/');
+        let api_key = crate::config::resolve_env(profile.primary_api_key());
+        let base = profile.primary_base_url().trim_end_matches('/');
         let url = if is_native {
             format!("{base}/responses")
         } else {
@@ -2521,12 +2521,12 @@ async fn forward_with_failover(
         let effective_spoof = profile.spoof.as_deref().or(global_spoof);
         let (client, user_agent, disguise) = build_disguised_client(effective_spoof);
 
-        let api_key = crate::config::resolve_env(&profile.api_key);
+        let api_key = crate::config::resolve_env(profile.primary_api_key());
 
         if is_anthropic {
             // Convert OpenAI -> Anthropic
             let anthro_body = openai_to_anthropic_body(body);
-            let url = format!("{}/messages", profile.base_url.trim_end_matches('/'));
+            let url = format!("{}/messages", profile.primary_base_url().trim_end_matches('/'));
 
             let mut req = client
                 .post(&url)
@@ -2632,7 +2632,7 @@ async fn forward_with_failover(
             }
         } else {
             // OpenAI-compatible
-            let url = format!("{}/{}", profile.base_url.trim_end_matches('/'), target_path);
+            let url = format!("{}/{}", profile.primary_base_url().trim_end_matches('/'), target_path);
 
             let mut req = client
                 .post(&url)
@@ -2793,8 +2793,8 @@ async fn forward_anthropic_with_failover(
         let effective_spoof = profile.spoof.as_deref().or(global_spoof);
         let (client, user_agent, disguise) = build_disguised_client(effective_spoof);
 
-        let api_key = crate::config::resolve_env(&profile.api_key);
-        let url = format!("{}/messages", profile.base_url.trim_end_matches('/'));
+        let api_key = crate::config::resolve_env(profile.primary_api_key());
+        let url = format!("{}/messages", profile.primary_base_url().trim_end_matches('/'));
 
         let mut req = client
             .post(&url)

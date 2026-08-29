@@ -12,6 +12,7 @@ import { BackupsPanel } from "./components/BackupsPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { DoctorPanel } from "./components/DoctorPanel";
 import { GatewayPanel } from "./components/GatewayPanel";
+import * as React from "react";
 
 type NavKey = "home" | "profiles" | "gateway" | "proxy" | "packages" | "stats" | "backups" | "settings" | "doctor";
 
@@ -30,6 +31,34 @@ const NAV: { key: NavKey; label: string; icon: string }[] = [
 export interface PanelProps {
   state: AppState;
   refresh: () => Promise<void>;
+}
+
+class PanelErrorBoundary extends React.Component<{ fallback?: React.ReactNode; children: React.ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: unknown) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  componentDidCatch(err: unknown) {
+    console.error("[PanelErrorBoundary]", err);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+          <div className="font-medium">Panel crashed</div>
+          <div className="mt-1 break-words text-red-300/80">{this.state.error}</div>
+          <button
+            className="mt-3 rounded bg-white/10 px-3 py-1 text-zinc-200 hover:bg-white/20"
+            onClick={() => this.setState({ error: null })}
+          >
+            Retry
+          </button>
+          {this.props.fallback}
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
 }
 
 export default function App() {
@@ -228,8 +257,16 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           {state && (
             <>
               {nav === "home" && <HomePanel state={state} refresh={refresh} onNavigate={handleNav} />}
-              {nav === "profiles" && <ProfilesPanel state={state} refresh={refresh} />}
-              {nav === "gateway" && <GatewayPanel refresh={refresh} />}
+              {nav === "profiles" && (
+                <PanelErrorBoundary>
+                  <ProfilesPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "gateway" && (
+                <PanelErrorBoundary fallback={<div className="text-xs text-zinc-500">Gateway 离线时不影响 Profiles CRUD。</div>}>
+                  <GatewayPanel refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
               {nav === "proxy" && <ProxyPanel state={state} refresh={refresh} />}
               {nav === "packages" && <PackagesPanel refresh={refresh} />}
               {nav === "stats" && <StatsPanel state={state} refresh={refresh} />}
