@@ -22,3 +22,5 @@ opencode.jsonc
 .codegraph/
 .cortexkit/
 .agents/
+
+.scratch/

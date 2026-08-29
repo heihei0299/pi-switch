@@ -119,10 +119,10 @@ pi-switch stats                                     # View request statistics
 
 | Category | Highlights |
 |----------|------------|
-| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, expose to pi agent, configure Responses API passthrough/conversion mode |
+| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with baseUrl/apiKey/headers/weight), expose to pi agent, configure Responses API passthrough/conversion mode |
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
-| 🌉 **Model-Name Gateway** | Stateless routing by `profile/model` in the request body, SSE streaming, User-Agent disguise, request-body filtering, OpenAI ↔ Anthropic conversion, Responses ↔ Chat Completions conversion with function tools, native OpenAI Responses passthrough, failover, circuit breaker |
+| 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
 | 🗂️ **Model Catalog** | Auto-enrich model metadata (cost/limit/reasoning/input) from https://models.dev with 24h cache, per-profile `modelsDevProvider` mapping & global fallback |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
 | 🖥️ **Interactive TUI** | ratatui-powered, Dracula theme, mouse support, vim keys (`hjkl`) |
@@ -214,13 +214,20 @@ pi-switch provider add provider-a --api openai-completions --base-url https://ap
 ```
 In TUI: `Profiles → a → fill form → Ctrl+S`
 
-**2. Expose models to pi agent** — choose which models appear in `~/.pi/agent/models.json`
+**2. Expose models to pi agent** — choose which models appear in `~/.pi/agent/models.json` (local only)
 ```bash
 pi-switch provider expose provider-a gpt-5.4
 ```
-In TUI: `Profiles → select provider → x`
+In TUI/WebUI: `Profiles → select provider → x` (does not yet write `models.json`)
 
-**3. Start the proxy** — it writes a single `pi-switch` gateway provider to pi
+**2.5 Publish to Pi** — Gateway explicitly writes the aggregated provider
+```bash
+# WebUI: Gateway → Current vs Proposed → Apply to Pi
+# or via API: PUT /api/models/gateway
+```
+In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback)
+
+**3. Start the proxy** — it reads the published `pi-switch` gateway provider
 ```bash
 pi-switch proxy failover provider-b,provider-c          # optional same-model fallback
 pi-switch proxy start --daemon
@@ -253,8 +260,9 @@ pi-switch/
 ├── pi-switch-native.cjs     # NAPI loader (auto platform detection)
 ├── src-rust/                # Rust native core (napi-rs)
 │   ├── lib.rs               # NAPI function exports
-│   ├── config.rs            # Config load/save, types
-│   ├── ops.rs               # Core operations
+│   ├── config.rs            # Config load/save, types (ProviderProfile + Upstream)
+│   ├── ops.rs               # Core operations (provider CRUD)
+│   ├── gateway.rs           # Independent gateway (models.json sync, preview/apply, atomic write)
 │   ├── presets.rs           # Built-in provider presets
 │   ├── proxy.rs             # Proxy server (gateway routing, failover, circuit breaker)
 │   ├── daemon.rs            # Daemon lifecycle
@@ -262,7 +270,7 @@ pi-switch/
 │   ├── database.rs          # SQLite persistence
 │   ├── package_ops.rs       # Package management
 │   ├── service.rs           # Shared service layer
-│   ├── web.rs               # WebUI HTTP server
+│   ├── web.rs               # WebUI HTTP server (profiles/gateway split routers)
 │   ├── stats.rs             # Request log aggregation + token usage stats
 │   ├── usage.rs             # Token usage extraction & SSE stream parsing
 │   ├── sync.rs              # Encrypted export/import

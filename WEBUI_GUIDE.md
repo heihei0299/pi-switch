@@ -9,8 +9,9 @@ pi-switch now offers **three ways** to manage the same configuration:
 | **WebUI** | `pi-switch webui start`  | `src-rust/web.rs` (axum) + `webui/` (React) |
 
 All three are **thin adapters over the same Rust core** (`src-rust/ops.rs` +
-`src-rust/config.rs` + `src-rust/service.rs`). No business logic lives in the UI
-layers, so behaviour stays identical across them.
+`src-rust/config.rs` + `src-rust/gateway.rs` + `src-rust/service.rs`). No business logic lives in the UI
+layers, so behaviour stays identical across them. Provider and Gateway are **logically isolated**:
+`ops.rs` only mutates `~/.pi-switch/config.json`, `gateway.rs` exclusively owns `~/.pi/agent/models.json` via explicit `Apply to Pi`.
 
 ---
 
@@ -19,8 +20,9 @@ layers, so behaviour stays identical across them.
 ```
                  ┌──────────── shared Rust core ────────────┐
    CLI (node) ──►│  service.rs  (reads / shaping)           │
-   TUI  (rust) ─►│  ops.rs      (mutations)                 │──► ~/.pi-switch/config.json
-   WebUI(axum) ─►│  config.rs   (data model + load/save)    │──► ~/.pi/agent/models.json
+   TUI  (rust) ─►│  ops.rs      (provider mutations)        │──► ~/.pi-switch/config.json
+   WebUI(axum) ─►│  gateway.rs  (gateway publish, Upstream) │──► ~/.pi/agent/models.json
+                 │  config.rs   (ProviderProfile + Upstream)│
                  └──────────────────────────────────────────┘
         ▲                    ▲                      ▲
    bin/pi-switch.js     src-rust/tui/          src-rust/web.rs  ← REST /api/*
