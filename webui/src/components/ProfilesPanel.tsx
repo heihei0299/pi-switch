@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
-import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
+import { draftFromEntry, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import {
@@ -228,6 +228,68 @@ function ProfileForm({
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
+  const [mode, setMode] = useState<"structured" | "raw">("structured");
+  const [text, setText] = useState<string>(() => {
+    const preview: Record<string, unknown> = {
+      api: existing?.api ?? "openai-completions",
+      responsesMode: existing?.responsesMode ?? "auto",
+      baseUrl: existing?.baseUrl ?? "",
+      apiKey: existing?.apiKey ?? "",
+      ...(existing?.headers && Object.keys(existing.headers as any).length ? { headers: existing.headers } : {}),
+      ...(existing?.compat && Object.keys(existing.compat as any).length ? { compat: existing.compat } : {}),
+      ...(existing?.upstreams ? { upstreams: existing.upstreams } : {}),
+      ...(existing?.proxy ? { proxy: existing.proxy } : {}),
+      ...(existing?.preset ? { preset: existing.preset } : {}),
+      ...(existing?.modelsDevProvider ? { modelsDevProvider: existing.modelsDevProvider } : {}),
+      ...(existing?.userAgent ? { userAgent: existing.userAgent } : {}),
+    };
+    try {
+      return JSON.stringify(preview, null, 2);
+    } catch {
+      return "{}";
+    }
+  });
+  const jsonValidation = useMemo(() => validateProfileJson(text), [text]);
+  function switchToRaw() {
+    const preview: Record<string, unknown> = {
+      api: apiType,
+      responsesMode,
+      baseUrl: baseUrl.trim(),
+      apiKey: apiKey.trim(),
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(Object.keys(compat).length ? { compat } : {}),
+      ...(upstreams.length ? { upstreams: upstreams.map((u) => ({ baseUrl: u.baseUrl.trim(), apiKey: u.apiKey.trim(), headers: Object.keys(u.headers).length ? u.headers : undefined, weight: u.weight.trim() ? Number(u.weight) : undefined, name: u.name.trim() || undefined })) } : {}),
+      ...(proxy ? { proxy } : {}),
+      ...(preset ? { preset } : {}),
+      ...(modelsDevProvider.trim() ? { modelsDevProvider: modelsDevProvider.trim() } : {}),
+      ...(spoof ? { userAgent: spoof } : {}),
+    };
+    try { setText(JSON.stringify(preview, null, 2)); } catch { setText("{}"); }
+    setMode("raw");
+  }
+  function switchToStructured() {
+    if (!jsonValidation.ok || !jsonValidation.value) return;
+    const v = jsonValidation.value as Record<string, unknown>;
+    if (typeof v.api === "string") setApiType(v.api);
+    if (typeof v.responsesMode === "string") setResponsesMode(v.responsesMode as ResponsesMode);
+    if (typeof v.baseUrl === "string") setBaseUrl(v.baseUrl);
+    if (typeof v.apiKey === "string") setApiKey(v.apiKey);
+    if (v.headers && typeof v.headers === "object" && !Array.isArray(v.headers)) setHeaders(v.headers as Record<string, string>);
+    else if (!v.headers) setHeaders({});
+    if (v.compat && typeof v.compat === "object" && !Array.isArray(v.compat)) setCompat(v.compat as Record<string, unknown>);
+    else if (!v.compat) setCompat({});
+    if (Array.isArray(v.upstreams)) {
+      setUpstreams((v.upstreams as Upstream[]).map((u, idx) => ({ key: `us-${idx}-${String(u.baseUrl).slice(0,8)}`, baseUrl: (u as any).baseUrl ?? "", apiKey: (u as any).apiKey ?? "", weight: (u as any).weight != null ? String((u as any).weight) : "", name: (u as any).name ?? "", headers: (u as any).headers ?? {} })));
+    } else if (!v.upstreams) setUpstreams([]);
+    if (typeof v.proxy === "boolean") setProxy(v.proxy);
+    if (typeof v.preset === "string") setPreset(v.preset);
+    else if (!v.preset) setPreset("");
+    if (typeof v.modelsDevProvider === "string") setModelsDevProvider(v.modelsDevProvider);
+    else if (!v.modelsDevProvider) setModelsDevProvider("");
+    if (typeof v.userAgent === "string") setSpoof(v.userAgent);
+    else if (!v.userAgent) setSpoof("");
+    setMode("structured");
+  }
 
   function applyPreset(id: string) {
     setPreset(id);
@@ -290,6 +352,39 @@ function ProfileForm({
   async function saveLocal() {
     const trimmed = name.trim();
     if (!trimmed) throw new Error(t("name required"));
+    if (mode === "raw") {
+      if (!jsonValidation.ok || !jsonValidation.value) throw new Error(jsonValidation.error ?? "Invalid JSON");
+      const v = jsonValidation.value as Record<string, unknown>;
+      const rawApi = v.api as string;
+      const rawMode = (v.responsesMode as ResponsesMode) ?? "auto";
+      const modeError2 = responsesModeError(rawApi, rawMode);
+      if (modeError2) throw new Error(t(modeError2));
+      const profile = {
+        ...(existing ?? {}),
+        api: rawApi,
+        responsesMode: rawMode,
+        baseUrl: v.baseUrl as string,
+        apiKey: (v.apiKey as string) ?? "",
+        upstreams: v.upstreams as Upstream[] | undefined,
+        headers: v.headers as Record<string, string> | undefined,
+        compat: v.compat as Record<string, unknown> | undefined,
+        proxy: (v.proxy as boolean) ?? false,
+        preset: v.preset as string | undefined,
+        modelsDevProvider: v.modelsDevProvider as string | undefined,
+        userAgent: v.userAgent as string | undefined,
+        models: existing?.models ?? [],
+        exposedModels: existing?.exposedModels ?? [],
+        updatedAt: new Date().toISOString(),
+      } as unknown as ProviderProfile;
+      if (original) {
+        await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
+      } else {
+        await api.addProfile(trimmed, profile);
+      }
+      toast("ok", "已保存到本地，需到网关发布");
+      await onSaved();
+      return;
+    }
     const modeError = responsesModeError(apiType, responsesMode);
     if (modeError) throw new Error(t(modeError));
     const profile = build();
@@ -305,179 +400,199 @@ function ProfileForm({
   return (
     <>
       <Modal title={original ? `${t("Edit")} ${original}` : t("Add profile")} onClose={onClose} wide>
-        <div className="grid gap-x-4 sm:grid-cols-2">
-          <Field label={t("Name")}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-provider" />
-          </Field>
-          <Field label={t("Preset (prefill)")}>
-            <Select value={preset} onChange={(e) => applyPreset(e.target.value)}>
-              <option value="">— {t("none")} —</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label={t("模型目录 Provider")}>
-            <Input
-              value={modelsDevProvider}
-              onChange={(e) => setModelsDevProvider(e.target.value)}
-              placeholder="如 openai/anthropic/deepseek，留空按 preset 推断"
-            />
-          </Field>
-          <Field label={t("API type")}>
-            <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-              {API_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-              {!API_TYPES.includes(apiType) && apiType && (
-                <option value={apiType}>{apiType}</option>
-              )}
-            </Select>
-            <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the AI service.")}</p>
-          </Field>
-          <Field label={t("Responses mode")}>
-            <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>
-              <option value="auto">auto — {t("automatic by API type")}</option>
-              <option value="passthrough">passthrough — {t("native Responses only")}</option>
-              <option value="convert">convert — {t("Chat Completions only")}</option>
-            </Select>
-          </Field>
-          <Field label={t("Disguise (User-Agent)")}>
-            <Select value={spoof} onChange={(e) => setSpoof(e.target.value)}>
-              {SPOOFS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {upstreams.length === 0 ? (
-            <>
-              <div className="sm:col-span-2">
-                <Field label={t("Base URL")}>
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://api.example.com/v1"
-                  />
-                </Field>
-              </div>
-              <div className="sm:col-span-2">
-                <Field label={t("API key (supports $ENV_VAR)")}>
-                  <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-                </Field>
-              </div>
-              <div className="sm:col-span-2">
-                <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
-              </div>
-            </>
-          ) : null}
-          <div className="sm:col-span-2">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-sm font-medium text-zinc-200">{t("Upstreams")} {upstreams.length > 0 ? `· ${upstreams.length}` : `· ${t("single fallback")}`}</span>
-              <div className="flex gap-2">
-                {upstreams.length === 0 && (
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      const first: any = { key: `us-${Date.now()}`, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), weight: "", name: "", headers: { ...headers } };
-                      setUpstreams([first]);
-                    }}
-                  >
-                    {t("Manage upstreams")}
-                  </Button>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex gap-1 rounded-md border border-white/10 bg-zinc-900 p-0.5">
+            <button type="button" onClick={() => switchToStructured()} className={`rounded px-2 py-1 text-xs ${mode === "structured" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>结构化</button>
+            <button type="button" onClick={() => switchToRaw()} className={`rounded px-2 py-1 text-xs ${mode === "raw" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>JSON</button>
+          </div>
+          <div className="text-xs text-zinc-500">{mode === "structured" ? "结构化编辑" : "JSON 编辑（与 .pi/agent/models.json 同格式）"}</div>
+        </div>
+        <Field label={t("Name")}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-provider" />
+        </Field>
+        {mode === "structured" ? (
+          <div className="grid gap-x-4 sm:grid-cols-2">
+            <Field label={t("Preset (prefill)")}>
+              <Select value={preset} onChange={(e) => applyPreset(e.target.value)}>
+                <option value="">— {t("none")} —</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label={t("模型目录 Provider")}>
+              <Input
+                value={modelsDevProvider}
+                onChange={(e) => setModelsDevProvider(e.target.value)}
+                placeholder="如 openai/anthropic/deepseek，留空按 preset 推断"
+              />
+            </Field>
+            <Field label={t("API type")}>
+              <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
+                {API_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+                {!API_TYPES.includes(apiType) && apiType && (
+                  <option value={apiType}>{apiType}</option>
                 )}
-                {upstreams.length > 0 && (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={() => setUpstreams((prev) => [...prev, { key: `us-${Date.now()}-${prev.length}`, baseUrl: "", apiKey: "", weight: "", name: "", headers: {} }])}
-                    >
-                      + {t("Add upstream")}
-                    </Button>
+              </Select>
+              <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the AI service.")}</p>
+            </Field>
+            <Field label={t("Responses mode")}>
+              <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>
+                <option value="auto">auto — {t("automatic by API type")}</option>
+                <option value="passthrough">passthrough — {t("native Responses only")}</option>
+                <option value="convert">convert — {t("Chat Completions only")}</option>
+              </Select>
+            </Field>
+            <Field label={t("Disguise (User-Agent)")}>
+              <Select value={spoof} onChange={(e) => setSpoof(e.target.value)}>
+                {SPOOFS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {upstreams.length === 0 ? (
+              <>
+                <div className="sm:col-span-2">
+                  <Field label={t("Base URL")}>
+                    <Input
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder="https://api.example.com/v1"
+                    />
+                  </Field>
+                </div>
+                <div className="sm:col-span-2">
+                  <Field label={t("API key (supports $ENV_VAR)")}>
+                    <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+                  </Field>
+                </div>
+                <div className="sm:col-span-2">
+                  <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
+                </div>
+              </>
+            ) : null}
+            <div className="sm:col-span-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-sm font-medium text-zinc-200">{t("Upstreams")} {upstreams.length > 0 ? `· ${upstreams.length}` : `· ${t("single fallback")}`}</span>
+                <div className="flex gap-2">
+                  {upstreams.length === 0 && (
                     <Button
                       type="button"
                       onClick={() => {
-                        // 回退到单字段：清空 upstreams，保留首个到单字段
-                        if (upstreams.length > 0) {
-                          setBaseUrl(upstreams[0].baseUrl);
-                          setApiKey(upstreams[0].apiKey);
-                          setHeaders(upstreams[0].headers ?? {});
-                        }
-                        setUpstreams([]);
+                        const first: any = { key: `us-${Date.now()}`, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), weight: "", name: "", headers: { ...headers } };
+                        setUpstreams([first]);
                       }}
                     >
-                      {t("Use single")}
+                      {t("Manage upstreams")}
                     </Button>
-                  </>
-                )}
+                  )}
+                  {upstreams.length > 0 && (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => setUpstreams((prev) => [...prev, { key: `us-${Date.now()}-${prev.length}`, baseUrl: "", apiKey: "", weight: "", name: "", headers: {} }])}
+                      >
+                        + {t("Add upstream")}
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          if (upstreams.length > 0) {
+                            setBaseUrl(upstreams[0].baseUrl);
+                            setApiKey(upstreams[0].apiKey);
+                            setHeaders(upstreams[0].headers ?? {});
+                          }
+                          setUpstreams([]);
+                        }}
+                      >
+                        {t("Use single")}
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
+              {upstreams.length > 0 && (
+                <div className="space-y-3 rounded-lg border border-white/10 bg-zinc-900/30 p-3">
+                  <div className="text-xs text-zinc-500">{t("has_upstreams / resolved_upstreams 回退，多上游为空时使用单 Base URL/API Key。增删即时生效，保存后需到网关发布。")}</div>
+                  {upstreams.map((u, idx) => (
+                    <div key={u.key} className="rounded-lg border border-white/10 bg-zinc-950 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-medium text-zinc-300">Upstream #{idx + 1} {u.name ? `· ${u.name}` : ""}</span>
+                        <Button type="button" onClick={() => setUpstreams((prev) => prev.filter((x) => x.key !== u.key))} className="h-7 text-xs">{t("Remove")}</Button>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label={t("Base URL")}>
+                          <Input value={u.baseUrl} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, baseUrl: e.target.value } : x))} placeholder="https://api.example.com/v1" />
+                        </Field>
+                        <Field label={t("API key")}>
+                          <Input value={u.apiKey} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, apiKey: e.target.value } : x))} placeholder="sk-…" />
+                        </Field>
+                        <Field label={t("Weight")}>
+                          <Input value={u.weight} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, weight: e.target.value } : x))} placeholder="1" />
+                        </Field>
+                        <Field label={t("Name")}>
+                          <Input value={u.name} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, name: e.target.value } : x))} placeholder="upstream-a" />
+                        </Field>
+                      </div>
+                      <div className="mt-2">
+                        <RequestHeadersEditor headers={u.headers} onHeadersChange={(next) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, headers: next } : x))} />
+                      </div>
+                    </div>
+                  ))}
+                  {upstreams.length === 0 && <div className="text-xs text-zinc-500">{t("No upstreams yet.")}</div>}
+                </div>
+              )}
             </div>
-            {upstreams.length > 0 && (
-              <div className="space-y-3 rounded-lg border border-white/10 bg-zinc-900/30 p-3">
-                <div className="text-xs text-zinc-500">{t("has_upstreams / resolved_upstreams 回退，多上游为空时使用单 Base URL/API Key。增删即时生效，保存后需到网关发布。")}</div>
-                {upstreams.map((u, idx) => (
-                  <div key={u.key} className="rounded-lg border border-white/10 bg-zinc-950 p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs font-medium text-zinc-300">Upstream #{idx + 1} {u.name ? `· ${u.name}` : ""}</span>
-                      <Button type="button" onClick={() => setUpstreams((prev) => prev.filter((x) => x.key !== u.key))} className="h-7 text-xs">{t("Remove")}</Button>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Field label={t("Base URL")}>
-                        <Input value={u.baseUrl} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, baseUrl: e.target.value } : x))} placeholder="https://api.example.com/v1" />
-                      </Field>
-                      <Field label={t("API key")}>
-                        <Input value={u.apiKey} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, apiKey: e.target.value } : x))} placeholder="sk-…" />
-                      </Field>
-                      <Field label={t("Weight")}>
-                        <Input value={u.weight} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, weight: e.target.value } : x))} placeholder="1" />
-                      </Field>
-                      <Field label={t("Name")}>
-                        <Input value={u.name} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, name: e.target.value } : x))} placeholder="upstream-a" />
-                      </Field>
-                    </div>
-                    <div className="mt-2">
-                      <RequestHeadersEditor headers={u.headers} onHeadersChange={(next) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, headers: next } : x))} />
-                    </div>
-                  </div>
-                ))}
-                {upstreams.length === 0 && <div className="text-xs text-zinc-500">{t("No upstreams yet.")}</div>}
-              </div>
-            )}
-          </div>
-          <div className="sm:col-span-2">
-            <StructuredOptionsEditor
-              title={t("Compatibility") !== "接口兼容性" ? t("Compatibility") : "接口兼容性"}
-              hint={t("Adjust compatibility for endpoints or local services.") !== "调整兼容端点或本地服务的请求行为。" ? t("Adjust compatibility for endpoints or local services.") : "调整兼容端点或本地服务的请求行为。"}
-              emptyLabel={t("No compatibility options") !== "暂无兼容性选项" ? t("No compatibility options") : "暂无兼容性选项"}
-              addLabel={t("Add") !== "添加" ? t("Add") : "添加"}
-              options={compat}
-              onOptionsChange={setCompat}
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <Field label={t("Model IDs (one per line)")}>
-              <Textarea
-                rows={4}
-                value={modelIds}
-                onChange={(e) => setModelIds(e.target.value)}
-                placeholder={"gpt-4o\ngpt-4o-mini"}
+            <div className="sm:col-span-2">
+              <StructuredOptionsEditor
+                title={t("Compatibility") !== "接口兼容性" ? t("Compatibility") : "接口兼容性"}
+                hint={t("Adjust compatibility for endpoints or local services.") !== "调整兼容端点或本地服务的请求行为。" ? t("Adjust compatibility for endpoints or local services.") : "调整兼容端点或本地服务的请求行为。"}
+                emptyLabel={t("No compatibility options") !== "暂无兼容性选项" ? t("No compatibility options") : "暂无兼容性选项"}
+                addLabel={t("Add") !== "添加" ? t("Add") : "添加"}
+                options={compat}
+                onOptionsChange={setCompat}
               />
-            </Field>
+            </div>
+            <div className="sm:col-span-2">
+              <Field label={t("Model IDs (one per line)")}>
+                <Textarea
+                  rows={4}
+                  value={modelIds}
+                  onChange={(e) => setModelIds(e.target.value)}
+                  placeholder={"gpt-4o\ngpt-4o-mini"}
+                />
+              </Field>
+            </div>
+            <label className="mb-3 flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
+              <input type="checkbox" checked={proxy} onChange={(e) => setProxy(e.target.checked)} />
+              {t("Mark as a proxy profile (excluded from failover, not exposed to pi)")}
+            </label>
           </div>
-          <label className="mb-3 flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
-            <input type="checkbox" checked={proxy} onChange={(e) => setProxy(e.target.checked)} />
-            {t("Mark as a proxy profile (excluded from failover, not exposed to pi)")}
-          </label>
-        </div>
-
+        ) : (
+          <div className="space-y-2">
+            <textarea
+              aria-label="profile json"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="h-64 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70 sm:h-80"
+            />
+            {!jsonValidation.ok && (
+              <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
+            )}
+            {jsonValidation.ok && <div className="text-xs text-emerald-400">✓ JSON valid</div>}
+          </div>
+        )}
         <div className="mt-2 flex justify-end gap-2">
           <Button onClick={onClose}>{t("Cancel")}</Button>
-          <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)}>
+          <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)} disabled={mode === "raw" && !jsonValidation.ok}>
             {t("Save")}
           </Button>
         </div>
@@ -509,6 +624,15 @@ function ModelsModal({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"structured" | "raw">("structured");
+  const [text, setText] = useState<string>(() => {
+    try {
+      return JSON.stringify((profile.models ?? []).map((m) => modelPreview(draftFromEntry(m as ModelEntry))), null, 2);
+    } catch {
+      return "[]";
+    }
+  });
+  const jsonValidation = useMemo(() => validateModelsJson(text), [text]);
 
   function toggleExposed(id: string) {
     setExposed((prev) => {
@@ -538,6 +662,31 @@ function ModelsModal({
     });
   }
 
+
+  function switchToRaw() {
+    try {
+      setText(JSON.stringify(drafts.map((d) => modelPreview(d)), null, 2));
+    } catch {
+      setText("[]");
+    }
+    setMode("raw");
+  }
+
+  function switchToStructured() {
+    if (!jsonValidation.ok || !jsonValidation.value) return;
+    const prevById = new Map(drafts.map((d) => [d.id, d.key]));
+    const nextDrafts = (jsonValidation.value as unknown as ModelEntry[]).map((m) => {
+      const id = (m as any).id as string || "";
+      const key = prevById.get(id);
+      return draftFromEntry(m as ModelEntry, key);
+    });
+    setDrafts(nextDrafts);
+    setExposed((prev) => {
+      const validIds = new Set(nextDrafts.map((d) => d.id));
+      return new Set([...prev].filter((id) => validIds.has(id)));
+    });
+    setMode("structured");
+  }
   function addModel() {
     // 如果已存在空 ID 的模型，聚焦该行而非新增，避免连续点击产生大量空行
     const empty = drafts.find((d) => !d.id.trim());
@@ -657,28 +806,42 @@ function ModelsModal({
   const validationMsg = null as unknown as string | null; // 保留变量名以兼容后续引用，但置空
 
   async function saveLocal() {
-    const err = validate();
-    if (err) {
-      setValidationError(err);
-      toast("err", err);
-      // 滚动到首个非法行
-      const idx = drafts.findIndex((d) => !d.id.trim() || drafts.filter((x) => x.id === d.id).length > 1);
-      if (idx >= 0) {
-        const key = drafts[idx]?.key;
-        if (key) setTimeout(() => document.getElementById(`model-id-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    let models: ModelEntry[];
+    if (mode === "raw") {
+      if (!jsonValidation.ok || !jsonValidation.value) {
+        const msg = jsonValidation.error ?? "Invalid JSON";
+        setValidationError(msg);
+        toast("err", msg);
+        return;
       }
-      return;
+      models = (jsonValidation.value as unknown as ModelEntry[]).map((p) => {
+        if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
+        if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
+        if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
+        return p as ModelEntry;
+      });
+      setValidationError(null);
+    } else {
+      const err = validate();
+      if (err) {
+        setValidationError(err);
+        toast("err", err);
+        const idx = drafts.findIndex((d) => !d.id.trim() || drafts.filter((x) => x.id === d.id).length > 1);
+        if (idx >= 0) {
+          const key = drafts[idx]?.key;
+          if (key) setTimeout(() => document.getElementById(`model-id-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+        }
+        return;
+      }
+      setValidationError(null);
+      models = drafts.map((d) => {
+        const p = modelPreview(d) as unknown as ModelEntry;
+        if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
+        if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
+        if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
+        return p;
+      });
     }
-    setValidationError(null);
-    // Convert drafts to ModelEntry
-    const models: ModelEntry[] = drafts.map((d) => {
-      const p = modelPreview(d) as unknown as ModelEntry;
-      // Ensure required fields have defaults if UI left blank (keep previous behavior for new models)
-      if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
-      if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
-      if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
-      return p;
-    });
     const res = await api.updateModels(name, models);
     if ((res as any).enrich) {
       const e = (res as any).enrich;
@@ -705,76 +868,98 @@ function ModelsModal({
     <>
       <Modal title={`${t("Models")} · ${name}`} onClose={onClose} wide>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-medium text-zinc-200">{t("Model config") || "模型配置"}</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-medium text-zinc-200">{t("Model config") || "模型配置"}</div>
+            <div className="flex gap-1 rounded-md border border-white/10 bg-zinc-900 p-0.5">
+              <button type="button" onClick={() => switchToStructured()} className={`rounded px-2 py-1 text-xs ${mode === "structured" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>结构化</button>
+              <button type="button" onClick={() => switchToRaw()} className={`rounded px-2 py-1 text-xs ${mode === "raw" ? "bg-white/10 text-zinc-100" : "text-zinc-400"}`}>JSON</button>
+            </div>
+          </div>
           <div className="flex gap-2">
-            <Button onClick={() => void fetchFromProvider()} disabled={fetching} className="h-8">
-              {fetching ? t("Fetching…") : `↓ ${t("Fetch from provider")}`}
-            </Button>
-            <Button variant="primary" onClick={addModel} className="h-8">
-              + {t("Add model") || "添加模型"}
-            </Button>
+            {mode === "structured" && (
+              <>
+                <Button onClick={() => void fetchFromProvider()} disabled={fetching} className="h-8">
+                  {fetching ? t("Fetching…") : `↓ ${t("Fetch from provider")}`}
+                </Button>
+                <Button variant="primary" onClick={addModel} className="h-8">
+                  + {t("Add model") || "添加模型"}
+                </Button>
+              </>
+            )}
           </div>
         </div>
-        <div className="mb-1 flex items-center gap-2 text-xs text-zinc-500">
-          <span className="w-9" />
-          <span className="flex-1">{t("Model ID") || "模型 ID"} *</span>
-          <span className="flex-1">{t("Display name") || "显示名称"} *</span>
-          <span className="w-8" />
-        </div>
-
-        <div className="max-h-[42vh] space-y-2 overflow-y-auto rounded-lg border border-white/10 p-2">
-          {drafts.length === 0 && (
-            <div className="p-3 text-sm text-zinc-500">
-              {t("No models. Add ids above or fetch from the provider.")}
+        {mode === "structured" ? (
+          <>
+            <div className="mb-1 flex items-center gap-2 text-xs text-zinc-500">
+              <span className="w-9" />
+              <span className="flex-1">{t("Model ID") || "模型 ID"} *</span>
+              <span className="flex-1">{t("Display name") || "显示名称"} *</span>
+              <span className="w-8" />
             </div>
-          )}
-          {drafts.map((d) => (
-            <ModelCard
-              key={d.key}
-              draft={d}
-              exposed={exposed.has(d.id)}
-              onToggleExposed={() => toggleExposed(d.id)}
-              onChange={(next) => updateDraft(d.key, next)}
-              onRemove={() => removeDraft(d.key)}
-              expanded={expandedKeys.has(d.key)}
-              onToggleExpanded={() => toggleExpanded(d.key)}
+            <div className="max-h-[42vh] space-y-2 overflow-y-auto rounded-lg border border-white/10 p-2">
+              {drafts.length === 0 && (
+                <div className="p-3 text-sm text-zinc-500">
+                  {t("No models. Add ids above or fetch from the provider.")}
+                </div>
+              )}
+              {drafts.map((d) => (
+                <ModelCard
+                  key={d.key}
+                  draft={d}
+                  exposed={exposed.has(d.id)}
+                  onToggleExposed={() => toggleExposed(d.id)}
+                  onChange={(next) => updateDraft(d.key, next)}
+                  onRemove={() => removeDraft(d.key)}
+                  expanded={expandedKeys.has(d.key)}
+                  onToggleExpanded={() => toggleExpanded(d.key)}
+                />
+              ))}
+            </div>
+            <div className="mt-2 text-xs text-zinc-500">
+              {t("Configure available models and display names") || "配置可用的模型及其显示名称"} ·{" "}
+              <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;id&gt;</code>
+            </div>
+            {validationError && (
+              <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200">
+                {validationError}
+              </div>
+            )}
+            <div className="mt-4">
+              <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON") || "配置 JSON"}</div>
+              <pre className="max-h-40 overflow-auto rounded-lg border border-white/10 bg-zinc-950 p-2 font-mono text-xs text-zinc-300">
+                {previewJson}
+              </pre>
+              <div className="mt-1 flex justify-end">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(previewJson).catch(() => {});
+                    toast("ok", t("Copied") || "Copied");
+                  }}
+                  className="h-7 text-xs"
+                >
+                  {t("Copy") || "复制"}
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-2">
+            <textarea
+              aria-label="models json"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="h-64 w-full rounded-md border border-white/10 bg-zinc-900 p-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500/70 sm:h-80"
             />
-          ))}
-        </div>
-
-        <div className="mt-2 text-xs text-zinc-500">
-          {t("Configure available models and display names") || "配置可用的模型及其显示名称"} ·{" "}
-          <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;id&gt;</code>
-        </div>
-
-        {validationError && (
-          <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200">
-            {validationError}
+            {!jsonValidation.ok && (
+              <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
+            )}
+            {jsonValidation.ok && <div className="text-xs text-emerald-400">✓ JSON valid</div>}
           </div>
         )}
-
-        <div className="mt-4">
-          <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON") || "配置 JSON"}</div>
-          <pre className="max-h-40 overflow-auto rounded-lg border border-white/10 bg-zinc-950 p-2 font-mono text-xs text-zinc-300">
-            {previewJson}
-          </pre>
-          <div className="mt-1 flex justify-end">
-            <Button
-              type="button"
-              onClick={() => {
-                navigator.clipboard?.writeText(previewJson).catch(() => {});
-                toast("ok", t("Copied") || "Copied");
-              }}
-              className="h-7 text-xs"
-            >
-              {t("Copy") || "复制"}
-            </Button>
-          </div>
-        </div>
-
         <div className="mt-4 flex items-center justify-between">
           <div className="flex gap-2 text-xs">
-            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set(drafts.map((d) => d.id)))}>
+            <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set(drafts.map((d) => d.id)))}> 
               {t("expose all")}
             </button>
             <button className="text-zinc-400 hover:text-zinc-200" onClick={() => setExposed(new Set())}>
@@ -783,7 +968,7 @@ function ModelsModal({
           </div>
           <div className="flex gap-2">
             <Button onClick={onClose}>{t("Cancel")}</Button>
-            <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)}>
+            <Button variant="primary" onClick={() => run(() => saveLocal(), undefined)} disabled={mode === "raw" && !jsonValidation.ok}>
               {t("Save")}
             </Button>
           </div>
