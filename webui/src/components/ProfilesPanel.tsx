@@ -583,8 +583,18 @@ function ModelsModal({
       return;
     }
     setValidationError(null);
-    const preview = await api.previewGateway();
-    setGatewayPreview(preview as any);
+    const previewRaw = await api.previewGateway();
+    const pendingGatewayModels = drafts
+      .filter((d) => exposed.has(d.id))
+      .map((d) => {
+        const p = modelPreview(d) as Record<string, unknown>;
+        return { ...p, id: `${name}/${p.id}` };
+      });
+    const newProposed = {
+      ...(previewRaw as any).proposed,
+      models: pendingGatewayModels,
+    };
+    setGatewayPreview({ current: (previewRaw as any).current, proposed: newProposed, conflicts: (previewRaw as any).conflicts } as any);
   }
 
   async function handlePreviewConfirm(edited: unknown) {
