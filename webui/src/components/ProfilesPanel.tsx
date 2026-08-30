@@ -21,6 +21,7 @@ import {
   cx,
 } from "./ui";
 import { ModelCard } from "./ModelCard";
+import { SupplierCreditsPanel } from "./SupplierCreditsPanel";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 const API_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -80,7 +81,8 @@ export function ProfilesPanel({
           const isCurrent = state.current === name;
           const exposed = p.exposedModels?.length ?? 0;
           return (
-            <Card key={name} className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <Card key={name} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-100">{name}</span>
@@ -131,6 +133,8 @@ export function ProfilesPanel({
                   }}
                 />
               </div>
+              </div>
+              <SupplierCreditsPanel name={name} profile={p} />
             </Card>
           );
         })}

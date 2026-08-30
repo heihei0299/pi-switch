@@ -17,6 +17,7 @@ import type {
   ValidationIssue,
 } from "./types";
 import type { ConversationRange, StatsRange } from "./lib/statsWindow";
+import type { NormalizedCredits } from "./lib/credits";
 
 // Single point of coupling to the backend. Every call maps to one REST route in
 // src-rust/web.rs, which in turn delegates to the shared ops/service layer.
@@ -109,6 +110,8 @@ export const api = {
     req("PUT", `/profiles/${enc(name)}/expose`, { modelIds }),
   setSpoof: (name: string, spoof: string | null) =>
     req("PUT", `/profiles/${enc(name)}/spoof`, { spoof }),
+  getCredits: (name: string) =>
+    req<NormalizedCredits>("GET", `/profiles/${enc(name)}/credits`),
 
   // proxy + settings + config
   proxyStart: (host?: string, port?: number) =>
