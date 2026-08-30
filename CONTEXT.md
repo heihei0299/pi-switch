@@ -47,3 +47,19 @@ _Avoid_: 模型源、模型网站
 **模型元数据（Model Metadata）**：
 目录中单条模型的字段集合，包含 `cost`（input/output/cacheRead，按 $/1M）、`limit.context/output`（映射为 contextWindow/maxTokens）、`reasoning`、`modalities.input`（映射为 input）与 `name`；enrich 时按分字段策略与本地 ModelEntry 合并。
 _Avoid_: 模型参数、模型信息
+
+**供应商（Supplier）**：
+对应一个 `ProviderProfile`（`config.json: profiles[name]`），拥有 `Upstream[]`、模型列表与已暴露模型集合，是模型与凭证的唯一事实来源。
+_Avoid_: profile、provider、供应商配置
+
+**上游（Upstream）**：
+供应商下的一条上游服务连接，含 `baseUrl/apiKey/headers/weight/name`，多条时由供应商聚合，当前网关仅取首条主上游。
+_Avoid_: endpoint、upstream 配置、节点
+
+**网关（Gateway）**：
+写入 `models.json: providers[providerPrefix]` 的合成 provider 视图，由全部供应商的已暴露模型与全局设置（gatewayApi/host/port）派生，仅经显式发布落盘。
+_Avoid_: gateway provider、pi gateway、网关配置
+
+**网关发布（Gateway Publish）**：
+将供应商与设置的当前状态显式写入网关文件的唯一路径（`PUT /models/gateway` / GatewayPanel「应用到 Pi」），发布外任何供应商变更均不自动写网关。
+_Avoid_: 同步、自动同步、apply

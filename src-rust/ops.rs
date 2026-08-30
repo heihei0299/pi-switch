@@ -177,7 +177,6 @@ pub fn set_profile_spoof(name: &str, spoof: Option<String>) -> Result<Option<Pat
         serde_json::to_value(&profile).map_err(|e| AppError::json(config::config_path(), e))?;
 
     save_config(&config)?;
-    sync_gateway_to_pi()?;
     Ok(backup)
 }
 
@@ -1810,7 +1809,7 @@ pub fn parse_model_ids(payload: &serde_json::Value) -> Vec<String> {
 
 /// Deprecated: routing is now driven by the model name in the request body (gateway mode),
 /// so there is no single "target". Kept for config back-compat — it records the field and
-/// refreshes the gateway, but the value no longer affects routing.
+/// does not auto-write gateway; requires explicit Gateway Publish.
 pub fn set_proxy_target(target: Option<&str>) -> Result<()> {
     let mut config = load_config()?;
 
@@ -1824,13 +1823,12 @@ pub fn set_proxy_target(target: Option<&str>) -> Result<()> {
     }
 
     save_config(&config)?;
-    sync_gateway_to_pi()?;
     Ok(())
 }
 
 /// Replace the whole `settings` object (providerPrefix / writeMode / language / proxy / web).
 /// Front-ends read the current settings via `service::get_state`, edit, and send the full
-/// object back. Re-syncs the gateway since prefix/host/port feed pi's models.json.
+/// object back. Does not auto-write gateway; changes produce pending diff until explicit Gateway Publish.
 pub fn update_settings(new_settings: &serde_json::Value) -> Result<Option<PathBuf>> {
     let mut config = load_config()?;
     let settings: config::Settings = serde_json::from_value(new_settings.clone())
@@ -1839,7 +1837,6 @@ pub fn update_settings(new_settings: &serde_json::Value) -> Result<Option<PathBu
     let backup = backup_config("config")?;
     config.settings = settings;
     save_config(&config)?;
-    sync_gateway_to_pi()?;
     Ok(backup)
 }
 

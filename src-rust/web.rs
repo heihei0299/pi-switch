@@ -977,4 +977,169 @@ mod tests {
         let prof_ok = get("/api/state").await;
         assert_eq!(prof_ok.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn tdd_spoof_does_not_trigger_gateway_write() {
+        // Ticket 01 S1: 供应商个性变更不自动写网关 — Red phase expects failure before fix
+        let _health_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let gateway_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let gateway_before_inner = gateway_before.get("gateway").cloned().unwrap_or(Value::Null);
+
+        let profile_name = "tdd-spoof-profile";
+        let create_payload = serde_json::json!({
+            "name": profile_name,
+            "profile": {
+                "api": "openai-completions",
+                "baseUrl": "http://example.com/v1",
+                "apiKey": "test-key",
+                "models": [{"id": "m1"}],
+                "proxy": false
+            }
+        });
+        // ensure profile exists (ignore error if already exists)
+        let _ = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles")
+                    .method(axum::http::Method::POST)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&create_payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let health_before2: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+
+        let spoof_payload = serde_json::json!({"spoof": "test-preset"});
+        let app = router();
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/spoof", profile_name))
+                    .method(axum::http::Method::PUT)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&spoof_payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK, "spoof should be 200");
+
+        let health_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let gateway_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let gateway_after_inner = gateway_after.get("gateway").cloned().unwrap_or(Value::Null);
+
+        assert_eq!(
+            gateway_before_inner, gateway_after_inner,
+            "spoof must not auto-write gateway: current should stay same before explicit publish"
+        );
+        assert_eq!(
+            health_before2.get("last_notify"),
+            health_after.get("last_notify"),
+            "spoof must not trigger gateway notify"
+        );
+
+        // cleanup
+        let _ = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", profile_name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn tdd_settings_does_not_trigger_gateway_write() {
+        let state_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/state").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let settings_before = state_before.get("settings").cloned().expect("state must have settings");
+        let gateway_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let health_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+
+        let current_api = settings_before.get("gatewayApi").and_then(|v| v.as_str()).unwrap_or("openai-completions");
+        let flipped = if current_api == "openai-completions" {
+            "openai-responses"
+        } else {
+            "openai-completions"
+        };
+        let mut new_settings = settings_before.clone();
+        new_settings["gatewayApi"] = Value::String(flipped.to_string());
+
+        let app = router();
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/settings")
+                    .method(axum::http::Method::PUT)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&new_settings).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK, "settings PUT should be 200");
+
+        let gateway_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let preview_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+        let health_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
+        ).unwrap();
+
+        assert_eq!(
+            gateway_before.get("gateway"),
+            gateway_after.get("gateway"),
+            "settings change must not auto-write gateway current"
+        );
+        // preview should show pending: current != proposed and proposed api is flipped
+        let proposed_api = preview_after.get("proposed").and_then(|p| p.get("api")).and_then(|v| v.as_str());
+        assert_eq!(proposed_api, Some(flipped), "preview proposed api should reflect new settings");
+        assert_ne!(
+            preview_after.get("current"),
+            preview_after.get("proposed"),
+            "preview after settings change should show pending (current != proposed)"
+        );
+        assert_eq!(
+            health_before.get("last_notify"),
+            health_after.get("last_notify"),
+            "settings change must not trigger gateway notify until explicit publish"
+        );
+
+        // restore settings
+        let app2 = router();
+        let _ = app2
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/settings")
+                    .method(axum::http::Method::PUT)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&settings_before).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
 }

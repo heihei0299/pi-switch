@@ -121,8 +121,6 @@ function FailoverEditor({
   const run = useAction();
   const { t } = useI18n();
   const [chain, setChain] = useState<string[]>(state.settings.proxy.failover ?? []);
-  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
-  const [pendingChain, setPendingChain] = useState<string[] | null>(null);
 
   const nonProxy = Object.entries(state.profiles)
     .filter(([, p]) => !p.proxy)
@@ -137,19 +135,8 @@ function FailoverEditor({
     setChain(next);
   };
 
-  async function saveWithPreview() {
-    const preview = await api.previewGateway();
-    setPendingChain(chain);
-    setGatewayPreview(preview as any);
-  }
-
-  async function handlePreviewConfirm(edited: unknown) {
-    if (gatewayPreview && JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
-      await api.applyGateway(edited);
-    }
-    await api.setFailover(pendingChain ?? chain);
-    setGatewayPreview(null);
-    setPendingChain(null);
+  async function save() {
+    await api.setFailover(chain);
     await refresh();
   }
 
@@ -211,21 +198,13 @@ function FailoverEditor({
           )}
           <Button
             variant="primary"
-            onClick={() => run(saveWithPreview, undefined)}
+            onClick={() => run(save, t("Failover saved"))}
           >
             {t("Save chain")}
           </Button>
         </div>
       </Card>
-      {gatewayPreview && (
-        <GatewayPreviewModal
-          current={gatewayPreview.current as any}
-          proposed={gatewayPreview.proposed as any}
-          conflicts={gatewayPreview.conflicts}
-          onClose={() => { setGatewayPreview(null); setPendingChain(null); }}
-          onConfirm={(edited) => run(() => handlePreviewConfirm(edited), t("Failover saved"), undefined)}
-        />
-      )}
+
     </>
   );
 }
