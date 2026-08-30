@@ -123,6 +123,7 @@ change only if the feature has a TUI screen.
 | `DELETE /api/profiles/:name` | `ops::remove_profile` |
 | `POST /api/profiles/:name/{duplicate,use,test,fetch-models}` | `ops::{duplicate_profile,use_profile,test_provider,fetch_models}` |
 | `PUT /api/profiles/:name/{models,expose,spoof}` | `ops::{update_provider_models,update_exposed_models,set_profile_spoof}` |
+| `GET /api/profiles/:name/credits` | `credits::fetch_credits_for_profile` (OpencodeGoFetcher, 5s 超时, 仅主上游, 归一化 `{balance,used,total,remaining,percent,resetAt/expiry,raw}`, 不写盘) |
 | `POST /api/proxy/{start,stop}` | `daemon::daemon_{start,stop}(&PROXY, …)` |
 | `PUT /api/proxy/failover` | `ops::set_failover` |
 | `PUT /api/settings` | `ops::update_settings` |
