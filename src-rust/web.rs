@@ -114,6 +114,7 @@ pub fn make_profiles_router() -> Router<Arc<WebState>> {
         .route("/profiles/:name/models", put(put_models))
         .route("/profiles/:name/expose", put(put_expose))
         .route("/profiles/:name/spoof", put(put_spoof))
+        .route("/profiles/:name/credits", get(get_credits))
         // proxy + settings + config (仍属 profiles 侧，写 config.json)
         .route("/proxy/start", post(post_proxy_start))
         .route("/proxy/stop", post(post_proxy_stop))
@@ -617,6 +618,28 @@ struct RestoreBody {
 async fn post_config_restore(Json(body): Json<RestoreBody>) -> ApiJson {
     let current_backup = config::restore_config(&body.backup_path)?;
     ok(json!({ "ok": true, "backup": current_backup.display().to_string() }))
+}
+
+async fn get_credits(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    match crate::credits::fetch_credits_for_profile(&name).await {
+        Ok(data) => Ok(Json(serde_json::to_value(data).unwrap_or_else(|_| json!({})))),
+        Err(e) => Err(map_credits_error(e)),
+    }
+}
+
+fn map_credits_error(e: crate::credits::CreditsError) -> ApiError {
+    use crate::credits::CreditsError as CE;
+    match e {
+        CE::NotFound(msg) => ApiError(StatusCode::NOT_FOUND, msg),
+        CE::Unsupported(msg) => ApiError(StatusCode::NOT_FOUND, msg),
+        CE::Timeout(msg) => ApiError(StatusCode::GATEWAY_TIMEOUT, format!("upstream timeout: {}", msg)),
+        CE::Upstream { status: 401, message } => ApiError(StatusCode::UNAUTHORIZED, format!("upstream 401: {}", message)),
+        CE::Upstream { status: 429, message } => ApiError(StatusCode::TOO_MANY_REQUESTS, format!("upstream 429: {}", message)),
+        CE::Upstream { status, message } if status >= 500 => ApiError(StatusCode::BAD_GATEWAY, format!("upstream {}: {}", status, message)),
+        CE::Upstream { status, message } => ApiError(StatusCode::BAD_REQUEST, format!("upstream {}: {}", status, message)),
+        CE::Network(msg) => ApiError(StatusCode::BAD_GATEWAY, format!("network error: {}", msg)),
+        CE::Parse(msg) => ApiError(StatusCode::BAD_GATEWAY, format!("parse error: {}", msg)),
+    }
 }
 
 async fn api_not_found() -> ApiError {
@@ -1315,5 +1338,267 @@ mod tests {
             .oneshot(axum::http::Request::builder().uri("/api/profiles/tdd-isolation-bad").method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
             .await;
     }
+
+    // ─── Supplier Credits Panel (Issue 01) ──────────────────────────
+
+    async fn start_mock_credits_server(status: StatusCode, body: Value, delay_ms: u64) -> String {
+        use axum::http::Request;
+        use std::time::Duration;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body_clone = body.clone();
+        let app = Router::new().fallback(move |req: Request<Body>| {
+            let body = body_clone.clone();
+            async move {
+                if delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                let path = req.uri().path().to_string();
+                if path.ends_with("/v1/credits") {
+                    (status, Json(body)).into_response()
+                } else {
+                    (StatusCode::NOT_FOUND, Json(json!({"error":"not found"}))).into_response()
+                }
+            }
+        });
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        // baseUrl 需包含 opencode.ai 以命中 fetcher，同时指向 mock 端口
+        format!("http://127.0.0.1:{}/opencode.ai", port)
+    }
+
+    async fn create_profile_with_baseurl(name: &str, base_url: &str) {
+        let payload = serde_json::json!({
+            "name": name,
+            "profile": {
+                "api": "openai-completions",
+                "baseUrl": base_url,
+                "apiKey": "test-key-credits",
+                "models": [{"id": "m1"}],
+                "proxy": false
+            }
+        });
+        let res = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles")
+                    .method(axum::http::Method::POST)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            res.status() == StatusCode::OK || res.status() == StatusCode::BAD_REQUEST,
+            "create profile {} should be OK or BAD_REQUEST, got {:?}", name, res.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn credits_opencode_returns_normalized() {
+        let raw = json!({
+            "balance": 42.5,
+            "total": 100.0,
+            "used": 30.0,
+            "remaining": 70.0,
+            "percent": 30.0,
+            "reset_at": "2026-09-01T00:00:00Z"
+        });
+        let base = start_mock_credits_server(StatusCode::OK, raw.clone(), 0).await;
+        let name = "tdd-credits-normalized";
+        create_profile_with_baseurl(name, &base).await;
+        // 小延迟让 mock 就绪
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let res = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "opencode-go credits should be 200");
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body.get("balance").and_then(|v| v.as_f64()), Some(42.5));
+        assert_eq!(body.get("total").and_then(|v| v.as_f64()), Some(100.0));
+        assert_eq!(body.get("used").and_then(|v| v.as_f64()), Some(30.0));
+        assert_eq!(body.get("remaining").and_then(|v| v.as_f64()), Some(70.0));
+        assert!((body.get("percent").and_then(|v| v.as_f64()).unwrap() - 30.0).abs() < 1e-6);
+        assert_eq!(body.get("resetAt").and_then(|v| v.as_str()), Some("2026-09-01T00:00:00Z"));
+        // raw 保留原体
+        assert_eq!(body.get("raw"), Some(&raw));
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn credits_non_opencode_returns_404_and_isolated() {
+        let name = "tdd-credits-non-hit";
+        let payload = serde_json::json!({
+            "name": name,
+            "profile": {
+                "api": "openai-completions",
+                "baseUrl": "https://example.com/v1",
+                "apiKey": "k",
+                "models": [{"id": "m1"}],
+                "proxy": false
+            }
+        });
+        let _ = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles")
+                    .method(axum::http::Method::POST)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let res = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "non-opencode should be 404");
+        // 隔离：state 与网关仍 200
+        assert_eq!(get("/api/state").await.status(), StatusCode::OK);
+        assert_eq!(get("/api/models/gateway/preview").await.status(), StatusCode::OK);
+        assert_eq!(get("/api/gateway/health").await.status(), StatusCode::OK);
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn credits_upstream_401_returns_normalized_error_and_isolated_no_write() {
+        use std::fs;
+        let raw_err = json!({"error": "unauthorized"});
+        let base = start_mock_credits_server(StatusCode::UNAUTHORIZED, raw_err, 0).await;
+        let name = "tdd-credits-401";
+        create_profile_with_baseurl(name, &base).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let cfg_path = crate::config::config_path();
+        let models_path = crate::config::models_path();
+        let cfg_before = fs::read_to_string(&cfg_path).unwrap_or_default();
+        let models_before = fs::read_to_string(&models_path).unwrap_or_default();
+        let res = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "401 should map to 401");
+        let cfg_after = fs::read_to_string(&cfg_path).unwrap_or_default();
+        let models_after = fs::read_to_string(&models_path).unwrap_or_default();
+        assert_eq!(cfg_before, cfg_after, "credits 401 must not write config.json");
+        assert_eq!(models_before, models_after, "credits 401 must not write models.json");
+        // 隔离：CRUD 与网关仍可用
+        assert_eq!(get("/api/state").await.status(), StatusCode::OK);
+        assert_eq!(get("/api/models/gateway/preview").await.status(), StatusCode::OK);
+        // 供应商 CRUD 仍可用（spoof 不受影响）
+        let spoof_res = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/spoof", name))
+                    .method(axum::http::Method::PUT)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"spoof": null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(spoof_res.status(), StatusCode::OK, "supplier CRUD must remain available after 401");
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn credits_upstream_5xx_returns_502_and_isolated() {
+        let base = start_mock_credits_server(StatusCode::INTERNAL_SERVER_ERROR, json!({"error":"internal"}), 0).await;
+        let name = "tdd-credits-5xx";
+        create_profile_with_baseurl(name, &base).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let res = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_GATEWAY, "5xx should map to 502");
+        assert_eq!(get("/api/state").await.status(), StatusCode::OK);
+        assert_eq!(get("/api/gateway/health").await.status(), StatusCode::OK);
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn credits_timeout_returns_504_and_isolated() {
+        // mock 延迟 6s，超过 5s 超时
+        let base = start_mock_credits_server(StatusCode::OK, json!({"balance":1}), 6000).await;
+        let name = "tdd-credits-timeout";
+        create_profile_with_baseurl(name, &base).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let res = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::GATEWAY_TIMEOUT, "timeout should be 504");
+        assert_eq!(get("/api/state").await.status(), StatusCode::OK);
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn credits_multi_upstream_only_primary() {
+        // primary 指向 mock 成功，secondary 指向另一个 mock 但应被忽略
+        let raw_primary = json!({"balance": 11.0, "total": 100.0, "used": 20.0});
+        let base_primary = start_mock_credits_server(StatusCode::OK, raw_primary.clone(), 0).await;
+        // secondary mock 返回不同值，但不应被查询
+        let raw_secondary = json!({"balance": 999.0, "total": 999.0, "used": 999.0});
+        let secondary_base = start_mock_credits_server(StatusCode::OK, raw_secondary, 0).await;
+        let name = "tdd-credits-multi";
+        let payload = serde_json::json!({
+            "name": name,
+            "profile": {
+                "api": "openai-completions",
+                "baseUrl": "http://fallback.example.com/v1",
+                "apiKey": "fallback",
+                "upstreams": [
+                    {"baseUrl": base_primary, "apiKey": "k1"},
+                    {"baseUrl": secondary_base, "apiKey": "k2"}
+                ],
+                "models": [{"id": "m1"}],
+                "proxy": false
+            }
+        });
+        let _ = router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles")
+                    .method(axum::http::Method::POST)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let res = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "multi upstream should still be 200 via primary");
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        // 验证来自 primary（balance 11），而非 secondary 999
+        assert_eq!(body.get("balance").and_then(|v| v.as_f64()), Some(11.0), "must query primary only");
+        assert_ne!(body.get("balance").and_then(|v| v.as_f64()), Some(999.0));
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
 
 }

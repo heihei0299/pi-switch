@@ -2,6 +2,7 @@ mod ccswitch;
 #[allow(dead_code)]
 mod catalog;
 mod config;
+mod credits;
 mod daemon;
 mod database;
 mod error;
