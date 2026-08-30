@@ -294,6 +294,8 @@ pub fn apply_gateway(edited: serde_json::Value) -> Result<()> {
 }
 
 /// 将当前 profiles/settings 合并为 gateway 并写入 models.json（供启动/设置变更时调用）
+/// 保留供手动调用与未来独立进程 IPC 替换 `gateway.notify` 后使用
+#[allow(dead_code)]
 pub fn sync_gateway_to_pi() -> Result<()> {
     let config = config::load_config()?;
     let mut models = load_models_value()?;
@@ -301,6 +303,7 @@ pub fn sync_gateway_to_pi() -> Result<()> {
     write_models_atomic(&models)
 }
 
+#[allow(dead_code)]
 fn sync_gateway_with_current(
     config: &config::PiSwitchConfig,
     models: &mut serde_json::Value,
