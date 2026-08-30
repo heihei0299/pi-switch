@@ -37,10 +37,11 @@
 - 领域术语/ADR → domain-modeling；模块接口 → codebase-design；巨型规划 → wayfinder
 - 诊断 → diagnose-fix（编排 diagnosing-bugs 诊断 + tdd 修复，修复环节强制 TDD）；审查 → code-review；合并冲突 → resolving-merge-conflicts；提交前 → commit-check（审查文档 + 对齐 README + 目录卫生 + commit message）
 - 分诊 → triage；架构扫描 → improve-codebase-architecture；综合 spec → to-spec；拆票 → to-tickets
+- 功能实测 → functional-test（隔离 HOME + 随机端口 + mock 上游 + 真守护进程，串行实例）
 - 教学 → teach；交接 → handoff；技能写作 → writing-great-skills
 - 兜底 → ask-matt；模板维护 → README.md
 
-显式触发（须用户 `/` 发起）：grill-to-spec、wayfinder、to-spec、to-tickets、triage、improve-codebase-architecture、teach、handoff、writing-great-skills
+显式触发（须用户 `/` 发起）：grill-to-spec、wayfinder、to-spec、to-tickets、triage、improve-codebase-architecture、teach、handoff、writing-great-skills、functional-test
 
 ## 分文件
 
