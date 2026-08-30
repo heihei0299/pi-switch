@@ -81,7 +81,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         const propForDiff = prop as Record<string, unknown>;
         if (propForDiff) {
           const d = diffGateway(curForDiff, propForDiff);
-          const hasDiff = d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
+          const fd = { added: d.added.filter((k) => k !== "api" && k !== "baseUrl"), removed: d.removed.filter((k) => k !== "api" && k !== "baseUrl"), changed: d.changed.filter((k) => k !== "api" && k !== "baseUrl") };
+          const hasDiff = fd.added.length > 0 || fd.removed.length > 0 || fd.changed.length > 0;
           if (hasDiff) setShowMismatchBanner(true);
         }
         setHasCheckedMismatch(true);
@@ -156,18 +157,23 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     } catch {}
   }
 
-  // diff for status bar: Current vs Proposed (backend) – pending publish count
+  // diff for status bar: Current vs Proposed (backend) – pending publish count（过滤预定值 api/baseUrl，0.0.0.0 已归一化）
+  const filteredDiff = (d: ReturnType<typeof diffGateway>) => ({
+    added: d.added.filter((k) => k !== "api" && k !== "baseUrl"),
+    removed: d.removed.filter((k) => k !== "api" && k !== "baseUrl"),
+    changed: d.changed.filter((k) => k !== "api" && k !== "baseUrl"),
+  });
   const statusDiff = useMemo(() => {
     if (!proposed) return { added: [], removed: [], changed: [] };
-    return diffGateway(current, proposed as Record<string, unknown>);
+    return filteredDiff(diffGateway(current, proposed as Record<string, unknown>));
   }, [current, proposed]);
 
   const pendingCount = statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length;
 
-  // preview diff for mismatch banner (current vs proposed before edits)
+  // preview diff for mismatch banner (current vs proposed before edits, 过滤预定值)
   const previewDiff = useMemo(() => {
     if (!proposed) return null;
-    return diffGateway(current, proposed);
+    return filteredDiff(diffGateway(current, proposed));
   }, [current, proposed]);
 
   function addModel() {
@@ -249,8 +255,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           <span className="text-zinc-500">·</span>
           <span className="text-zinc-400">上次发布时间: {lastPublishLabel}</span>
         </div>
-        {conflicts.length > 0 && (
-          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.join(", ")}</div>
+        {conflicts.filter((k) => k !== "api" && k !== "baseUrl").length > 0 && (
+          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.filter((k) => k !== "api" && k !== "baseUrl").join(", ")}</div>
         )}
       </div>
 
@@ -272,7 +278,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       <Card className="mb-4">
         <div className="grid gap-x-4 sm:grid-cols-2">
           <Field label={t("接口格式")}>
-            <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
+            <Select value={apiType} onChange={(e) => setApiType(e.target.value)} disabled>
               {API_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -282,9 +288,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 <option value={apiType}>{apiType}</option>
               )}
             </Select>
+            <p className="mt-1 text-xs text-zinc-500">{t("来源于 Settings → Gateway API，0.0.0.0 已归一化为 127.0.0.1") || "来源于 Settings → Gateway API（0.0.0.0 已归一化为 127.0.0.1）"}</p>
           </Field>
           <Field label={t("Base URL")}>
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" readOnly />
+            <p className="mt-1 text-xs text-zinc-500">{t("来源于 Settings → Proxy host:port 派生，0.0.0.0 已归一化为 127.0.0.1") || "来源于 Settings → Proxy host:port 派生（0.0.0.0 已归一化为 127.0.0.1）"}</p>
           </Field>
           <div className="sm:col-span-2">
             <Field label={t("API key")}>

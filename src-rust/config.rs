@@ -380,6 +380,14 @@ fn default_cooldown() -> u32 {
 fn default_host() -> String {
     "127.0.0.1".into()
 }
+pub fn normalize_gateway_host(host: &str) -> &str {
+    let trimmed = host.trim();
+    if trimmed.is_empty() || trimmed == "0.0.0.0" || trimmed == "::" || trimmed == "[::]" {
+        "127.0.0.1"
+    } else {
+        trimmed
+    }
+}
 fn default_port() -> u16 {
     43112
 }

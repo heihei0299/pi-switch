@@ -118,7 +118,7 @@ fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::
             }
         }
     }
-    let host = &config.settings.proxy.host;
+    let host = config::normalize_gateway_host(&config.settings.proxy.host);
     let port = config.settings.proxy.port;
     serde_json::json!({
         "api": config.settings.gateway_api.clone(),
@@ -163,13 +163,26 @@ fn merge_gateway_extra(current: &serde_json::Value, proposed: &mut serde_json::V
     }
 }
 
+fn normalize_base_url_for_compare(url: &str) -> String {
+    // 归一化监听地址：0.0.0.0/[::] -> 127.0.0.1，保证 preview 不因监听地址误报冲突
+    url.replace("://0.0.0.0:", "://127.0.0.1:")
+        .replace("://[::]:", "://127.0.0.1:")
+}
+
 fn compute_gateway_conflicts(current: &serde_json::Value, proposed: &serde_json::Value) -> Vec<String> {
     let mut conflicts = Vec::new();
     let generated_keys = ["api", "baseUrl", "apiKey", "models", "proxy"];
     if let (Some(cur_obj), Some(prop_obj)) = (current.as_object(), proposed.as_object()) {
         for key in generated_keys {
             if let (Some(cur_val), Some(prop_val)) = (cur_obj.get(key), prop_obj.get(key)) {
-                if cur_val != prop_val {
+                let is_equal = if key == "baseUrl" {
+                    let cur_s = cur_val.as_str().unwrap_or("");
+                    let prop_s = prop_val.as_str().unwrap_or("");
+                    normalize_base_url_for_compare(cur_s) == normalize_base_url_for_compare(prop_s)
+                } else {
+                    cur_val == prop_val
+                };
+                if !is_equal {
                     conflicts.push(key.to_string());
                 }
             }
