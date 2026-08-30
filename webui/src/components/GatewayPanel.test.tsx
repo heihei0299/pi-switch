@@ -126,4 +126,22 @@ describe("GatewayPanel gateway-sep", () => {
     await waitFor(() => expect(screen.queryByText(/检测到本地与 Pi 网关不一致/)).not.toBeInTheDocument());
     expect(apply).not.toHaveBeenCalled();
   });
+
+  it("shows conflicts when preview returns conflicts", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: { ...proposedGw, baseUrl: "http://127.0.0.1:43113/v1" }, conflicts: ["baseUrl", "models"] } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    const conflictEl = screen.getByText(/冲突:/);
+    expect(conflictEl).toBeInTheDocument();
+    expect(conflictEl.textContent).toContain("baseUrl");
+    expect(conflictEl.textContent).toContain("models");
+  });
+
+  it("gateway offline error is caught and does not crash panel (shows toast, retains loading fallback)", async () => {
+    vi.spyOn(api, "previewGateway").mockRejectedValue(new Error("gateway offline"));
+    renderGateway();
+    await waitFor(() => expect(screen.getByText("gateway offline")).toBeInTheDocument());
+    // panel should not crash: status bar still renders (empty) or at least not throw
+    expect(screen.getByText(/Current vs Proposed/) || screen.getByText("gateway offline")).toBeTruthy();
+  });
 });

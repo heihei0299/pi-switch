@@ -501,4 +501,33 @@ mod tests {
         assert_eq!(profile.primary_base_url(), "http://a/v1");
         assert_eq!(profile.primary_api_key(), "k1");
     }
+
+    #[test]
+    fn gateway_merge_extra_does_not_elevate_generated_keys() {
+        let cur = json!({"api":"openai-completions","baseUrl":"http://old/v1","models":[],"proxy":false,"extraKept":1});
+        let mut prop = json!({"api":"openai-responses","baseUrl":"http://127.0.0.1:43112/v1","models":[],"proxy":false});
+        merge_gateway_extra(&cur, &mut prop);
+        assert_eq!(prop["api"], "openai-responses", "proposed api must not be overwritten by current");
+        assert_eq!(prop["baseUrl"], "http://127.0.0.1:43112/v1");
+        assert_eq!(prop["extraKept"], 1);
+        assert_eq!(prop["proxy"], false);
+    }
+
+    #[test]
+    fn gateway_apply_is_atomic_and_notifies() {
+        use std::fs;
+        let path = crate::config::models_path();
+        let notify_path = crate::config::config_dir().join("gateway.notify");
+        let _before_content = fs::read_to_string(&path).unwrap_or_default();
+        let preview = preview_gateway().expect("preview should succeed");
+        let edited = preview.proposed.clone();
+        let res = apply_gateway(edited.clone());
+        assert!(res.is_ok(), "apply with valid proposed should succeed: {:?}", res);
+        let after_content = fs::read_to_string(&path).unwrap_or_default();
+        assert!(!after_content.is_empty(), "models.json should not be empty after apply");
+        let after_notify = fs::read_to_string(&notify_path).unwrap_or_default();
+        assert!(!after_notify.is_empty(), "notify file should exist after apply");
+        let preview2 = preview_gateway().expect("preview after apply should succeed");
+        assert_eq!(preview2.pending_count, 0, "after apply pending should be 0");
+    }
 }

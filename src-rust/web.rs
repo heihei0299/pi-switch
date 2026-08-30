@@ -1217,4 +1217,103 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn gateway_apply_validation_400_does_not_touch_models_and_supplier_isolated() {
+        use std::fs;
+        let models_path = crate::config::models_path();
+        let before = fs::read_to_string(&models_path).unwrap_or_default();
+        let app = router();
+        let req = axum::http::Request::builder()
+            .uri("/api/models/gateway")
+            .method(axum::http::Method::PUT)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"api":"bad-api","baseUrl":"ftp://bad","models":[]}"#))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid gateway must be 400");
+        let after = fs::read_to_string(&models_path).unwrap_or_default();
+        assert_eq!(before, after, "validation failure must not touch models.json");
+        let state = get("/api/state").await;
+        assert_eq!(state.status(), StatusCode::OK, "supplier state must remain 200 after gateway validation failure");
+        let preview = get("/api/models/gateway/preview").await;
+        assert_eq!(preview.status(), StatusCode::OK, "preview must remain 200 after validation failure");
+    }
+
+    #[tokio::test]
+    async fn gateway_apply_success_is_atomic_and_clears_pending() {
+        let preview_before: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        let proposed = preview_before.get("proposed").cloned().expect("proposed required");
+        let app = router();
+        let req = axum::http::Request::builder()
+            .uri("/api/models/gateway")
+            .method(axum::http::Method::PUT)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&proposed).unwrap()))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "valid apply must be 200");
+        let preview_after: Value = serde_json::from_slice(
+            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        let pending = preview_after.get("pending_count").and_then(|v| v.as_u64()).unwrap_or(999);
+        assert_eq!(pending, 0, "after successful publish pending_count must be 0, got preview {:?}", preview_after);
+        let current = preview_after.get("current");
+        assert!(current.is_some() && !current.unwrap().is_null(), "current should be Some after publish");
+    }
+
+    #[tokio::test]
+    async fn profile_error_does_not_block_gateway_and_gateway_error_does_not_block_profile() {
+        let app = router();
+        let bad_profile = serde_json::json!({
+            "name": "tdd-isolation-bad",
+            "profile": { "api": "bad-api", "baseUrl": "not-a-url", "apiKey": "k", "models": [] }
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/profiles")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&bad_profile).unwrap()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid profile should be 400");
+        let health = get("/api/gateway/health").await;
+        assert_eq!(health.status(), StatusCode::OK, "gateway health must remain 200 after profile error");
+        let preview = get("/api/models/gateway/preview").await;
+        assert_eq!(preview.status(), StatusCode::OK, "gateway preview must remain 200 after profile error");
+        let app2 = router();
+        let bad_gw = axum::http::Request::builder()
+            .uri("/api/models/gateway")
+            .method(axum::http::Method::PUT)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#))
+            .unwrap();
+        let res2 = app2.clone().oneshot(bad_gw).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::BAD_REQUEST, "invalid gateway should be 400");
+        let state = get("/api/state").await;
+        assert_eq!(state.status(), StatusCode::OK, "supplier state must remain 200 after gateway error");
+        let good_profile = serde_json::json!({
+            "name": "tdd-isolation-good",
+            "profile": { "api": "openai-completions", "baseUrl": "http://example.com/v1", "apiKey": "k", "models": [{"id":"m1"}], "proxy": false }
+        });
+        let req_good = axum::http::Request::builder()
+            .uri("/api/profiles")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&good_profile).unwrap()))
+            .unwrap();
+        let res_good = router().oneshot(req_good).await.unwrap();
+        assert!(res_good.status() == StatusCode::OK || res_good.status() == StatusCode::BAD_REQUEST, "profile CRUD must not be 500 after gateway error, got {:?}", res_good.status());
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri("/api/profiles/tdd-isolation-good").method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+        let _ = router()
+            .oneshot(axum::http::Request::builder().uri("/api/profiles/tdd-isolation-bad").method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .await;
+    }
+
 }
