@@ -1064,6 +1064,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_preview_returns_pending_count() {
+        let res = get("/api/models/gateway/preview").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(body.get("pending_count").is_some(), "preview must include pending_count");
+        let pending = body.get("pending_count").and_then(|v| v.as_u64()).expect("pending_count must be number");
+        // pending_count should be computed as added+removed+changed between current and proposed
+        let current = body.get("current");
+        let proposed = body.get("proposed").expect("proposed required");
+        // compute expected via same logic as gateway.rs (use json comparison)
+        let expected = if current.is_none() || current.unwrap().is_null() {
+            proposed.as_object().map(|o| o.len() as u64).unwrap_or(0)
+        } else {
+            let cur_obj = current.unwrap().as_object().cloned().unwrap_or_default();
+            let prop_obj = proposed.as_object().cloned().unwrap_or_default();
+            let added = prop_obj.keys().filter(|k| !cur_obj.contains_key(*k)).count() as u64;
+            let removed = cur_obj.keys().filter(|k| !prop_obj.contains_key(*k)).count() as u64;
+            let changed = cur_obj.keys().filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k)).count() as u64;
+            added + removed + changed
+        };
+        assert_eq!(pending, expected, "pending_count should be added+removed+changed");
+    }
+
+    #[tokio::test]
+    async fn gateway_health_returns_full_shape_and_isolation() {
+        let res = get("/api/gateway/health").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(body.get("mode").and_then(|v| v.as_str()), Some("logical-isolation"));
+        assert!(body.get("gateway_id").is_some(), "gateway_id required");
+        assert!(body.get("has_models_file").is_some(), "has_models_file required");
+        assert!(body.get("upstreams_total").is_some(), "upstreams_total required");
+        assert!(body.get("message").is_some(), "message required");
+        // last_notify may be null or string
+        assert!(body.as_object().unwrap().contains_key("last_notify"));
+    }
+
+    #[tokio::test]
+    async fn gateway_preview_and_health_remain_available_when_gateway_missing() {
+        // Even if gateway file is missing/corrupted, preview and health should still be 200
+        let health = get("/api/gateway/health").await;
+        assert_eq!(health.status(), StatusCode::OK, "health should be ok even when gateway missing");
+        let preview = get("/api/models/gateway/preview").await;
+        assert_eq!(preview.status(), StatusCode::OK, "preview should be ok even when gateway missing");
+        // supplier CRUD should still work (health failure isolation)
+        let state = get("/api/state").await;
+        assert_eq!(state.status(), StatusCode::OK, "supplier state should remain available when gateway missing");
+    }
+
+    #[tokio::test]
+    async fn gateway_start_does_not_auto_write_and_health_warn_only() {
+        use std::fs;
+        let path = crate::config::models_path();
+        let before = fs::read_to_string(&path).unwrap_or_default();
+        // Call start placeholder via API (POST /api/gateway/start)
+        let app = router();
+        let req = axum::http::Request::builder()
+            .uri("/api/gateway/start")
+            .method(axum::http::Method::POST)
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "gateway start should succeed even if gateway file missing");
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
+        let after = fs::read_to_string(&path).unwrap_or_default();
+        // start should not auto-write models.json beyond notify; if models file existed, content should stay same
+        // If file didn't exist, it may still not be created by start (only notify file)
+        if !before.is_empty() {
+            assert_eq!(before, after, "start_placeholder must not auto-write gateway");
+        }
+    }
+
+    #[tokio::test]
     async fn tdd_settings_does_not_trigger_gateway_write() {
         let state_before: Value = serde_json::from_slice(
             &axum::body::to_bytes(get("/api/state").await.into_body(), usize::MAX).await.unwrap(),

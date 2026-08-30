@@ -268,9 +268,9 @@ pub fn run_native_tui() -> napi::Result<()> {
 pub async fn run_proxy_server(host: String, port: u16) -> napi::Result<()> {
     use std::sync::Arc;
 
-    // Ensure pi's models.json has a fresh gateway provider before serving.
-    if let Err(e) = ops::sync_gateway_to_pi() {
-        eprintln!("Warning: failed to sync gateway provider: {}", e);
+    // Startup health check: do not auto-write gateway; only warn on failure, do not block.
+    if let Err(e) = crate::gateway::start_placeholder() {
+        eprintln!("Warning: gateway health check failed: {}", e);
     }
 
     // Config is loaded per request inside the handlers, so the running proxy always
@@ -318,6 +318,11 @@ pub async fn run_web_server(
         project_dir,
         password: password.clone(),
     });
+
+    // Startup health check: do not auto-write gateway; only warn on failure, do not block.
+    if let Err(e) = crate::gateway::start_placeholder() {
+        eprintln!("Warning: gateway health check failed: {}", e);
+    }
 
     let app = web::make_web_router(state);
     let addr = format!("{}:{}", host, port);

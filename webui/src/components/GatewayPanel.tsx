@@ -46,6 +46,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   });
   const [showMismatchBanner, setShowMismatchBanner] = useState(false);
   const [hasCheckedMismatch, setHasCheckedMismatch] = useState(false);
+  const [backendPending, setBackendPending] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -54,9 +55,12 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       const cur = (preview as any).current as Record<string, unknown> | null;
       const prop = (preview as any).proposed as Record<string, unknown>;
       const conf = (preview as any).conflicts as string[] ?? [];
+      const pending = (preview as any).pending_count as number | undefined;
       setCurrent(cur);
       setProposed(prop);
       setConflicts(conf);
+      if (typeof pending === "number") setBackendPending(pending);
+      else setBackendPending(null);
       const src = prop ?? cur ?? {};
       setDraft(src);
       const rec = asRecord(src);
@@ -80,8 +84,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         const curForDiff = cur as Record<string, unknown> | null;
         const propForDiff = prop as Record<string, unknown>;
         if (propForDiff) {
-          const d = diffGateway(curForDiff, propForDiff);
-          const hasDiff = d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
+          const pendingVal = typeof pending === "number" ? pending : null;
+          const hasDiff = pendingVal !== null ? pendingVal > 0 : (() => {
+            const d = diffGateway(curForDiff, propForDiff);
+            return d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
+          })();
           if (hasDiff) setShowMismatchBanner(true);
         }
         setHasCheckedMismatch(true);
@@ -162,7 +169,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     return diffGateway(current, proposed as Record<string, unknown>);
   }, [current, proposed]);
 
-  const pendingCount = statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length;
+  const pendingCount = backendPending ?? (statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length);
 
   // preview diff for mismatch banner (current vs proposed before edits)
   const previewDiff = useMemo(() => {

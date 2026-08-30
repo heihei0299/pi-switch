@@ -129,15 +129,15 @@ change only if the feature has a TUI screen.
 | `POST /api/config/{export,import,restore}` | `sync::{encrypt_config,import_config}` · `config::restore_config` |
 | `POST /api/init` | `ops::init` |
 
-### Gateway pre-edit (preserving hand-written fields)
+### Gateway explicit publish (supplier-gateway isolation)
 
-Any operation that triggers `sync_gateway_to_pi` now merges hand-written `extra` fields instead of discarding them. The WebUI wraps every such mutation (`ProfilesPanel`, `SettingsPanel`, `ProxyPanel` failover, `ModelsModal`) in a **preview step**:
+Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel` failover) only write `~/.pi-switch/config.json` and never auto-write `~/.pi/agent/models.json`. They show a toast "已保存到本地，需到网关发布" and leave `GET /api/models/gateway/preview` to reflect the pending diff.
 
-1. `GET /api/models/gateway/preview` — dry-run, returns `{ current, proposed, conflicts }` without writing.
-2. `GatewayPreviewModal` shows left diff (added/removed/changed, conflicts in amber) and right editable JSON (validated).
-3. On confirm, the original mutation runs, then `PUT /api/models/gateway` applies the edited gateway if it differs.
+1. `GET /api/models/gateway/preview` — dry-run, returns `{ current, proposed, conflicts, pending_count }` without writing; `current` is the last published gateway, `proposed` is built from current `config.json`.
+2. `GatewayPanel` shows `Current vs Proposed` and `pending_count`, plus `pending`/`mismatch` banner on first load when `pending_count>0`; it does not auto-apply.
+3. On `Apply to Pi`, `PUT /api/models/gateway` validates and atomically writes `models.json` (merging hand-written `extra` fields via `gateway::merge_gateway_extra`), then notifies via `gateway.notify`.
 
-This prevents `models.json` gateway overwrites from discarding manual `headers`/`compat`/`cost`/`extra` fields (hand-written priority).
+This keeps supplier as the single source of truth, gateway as a read-only derived view, and prevents `models.json` overwrites from discarding manual `headers`/`compat`/`cost`/`extra` fields (merged, not authoritative).
 ---
 
 ## Type sync (frontend ↔ Rust)

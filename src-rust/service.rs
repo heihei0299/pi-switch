@@ -63,6 +63,7 @@ pub fn gateway_preview() -> Result<Value> {
         "current": preview.current,
         "proposed": preview.proposed,
         "conflicts": preview.conflicts,
+        "pending_count": preview.pending_count,
     }))
 }
 

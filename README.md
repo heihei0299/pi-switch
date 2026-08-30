@@ -328,7 +328,7 @@ Profiles in the failover chain that expose the same model are tried in order whe
 
 The `[proxy]` badge indicates this profile is a meta-profile (with `"proxy": true`). Proxy profiles are used to register a pi provider that points to the local gateway. They are excluded from upstream routing.
 
-In the current gateway mode, proxy profiles are typically not needed — the proxy automatically writes a single `pi-switch` gateway provider to pi's models.json on startup.
+In the current gateway mode, proxy profiles are typically not needed — the proxy reads the published `pi-switch` gateway provider from `~/.pi/agent/models.json` (publish explicitly via **Gateway → Apply to Pi**, not automatically on startup).
 
 </details>
 

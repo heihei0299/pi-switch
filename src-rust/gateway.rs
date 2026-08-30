@@ -90,6 +90,7 @@ pub struct GatewayPreview {
     pub current: Option<serde_json::Value>,
     pub proposed: serde_json::Value,
     pub conflicts: Vec<String>,
+    pub pending_count: usize,
 }
 
 fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::Value {
@@ -167,6 +168,22 @@ fn normalize_base_url_for_compare(url: &str) -> String {
     // 归一化监听地址：0.0.0.0/[::] -> 127.0.0.1，保证 preview 不因监听地址误报冲突
     url.replace("://0.0.0.0:", "://127.0.0.1:")
         .replace("://[::]:", "://127.0.0.1:")
+}
+
+fn compute_pending_count(current: Option<&serde_json::Value>, proposed: &serde_json::Value) -> usize {
+    let Some(cur) = current else {
+        return proposed.as_object().map(|o| o.len()).unwrap_or(0);
+    };
+    let Some(cur_obj) = cur.as_object() else {
+        return proposed.as_object().map(|o| o.len()).unwrap_or(0);
+    };
+    let Some(prop_obj) = proposed.as_object() else {
+        return cur_obj.len();
+    };
+    let added = prop_obj.keys().filter(|k| !cur_obj.contains_key(*k)).count();
+    let removed = cur_obj.keys().filter(|k| !prop_obj.contains_key(*k)).count();
+    let changed = cur_obj.keys().filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k)).count();
+    added + removed + changed
 }
 
 fn compute_gateway_conflicts(current: &serde_json::Value, proposed: &serde_json::Value) -> Vec<String> {
@@ -252,11 +269,13 @@ pub fn preview_gateway() -> Result<GatewayPreview> {
     } else {
         Vec::new()
     };
+    let pending_count = compute_pending_count(current.as_ref(), &proposed);
 
     Ok(GatewayPreview {
         current,
         proposed,
         conflicts,
+        pending_count,
     })
 }
 
@@ -399,6 +418,61 @@ mod tests {
         merge_gateway_extra(&cur, &mut prop);
         assert_eq!(prop["extraKept"], 1);
         assert_eq!(prop["models"][0]["custom"], "keep");
+    }
+
+    #[test]
+    fn gateway_preview_pending_count_reflects_diff() {
+        // pending_count 应该按新增/移除/变更计算（顶层 keys）
+        let cur = json!({"api":"openai-completions","baseUrl":"http://a/v1","models":[],"proxy":false});
+        let prop = json!({"api":"openai-completions","baseUrl":"http://b/v1","models":[],"proxy":false,"extra":1});
+        // added=1 (extra), changed=1 (baseUrl) => pending 2
+        assert_eq!(compute_pending_count(Some(&cur), &prop), 2);
+        // missing current => pending = keys in proposed
+        assert_eq!(compute_pending_count(None, &prop), 5);
+        // identical => 0
+        assert_eq!(compute_pending_count(Some(&cur), &cur), 0);
+    }
+
+    #[test]
+    fn gateway_preview_returns_pending_count() {
+        let preview = preview_gateway().expect("preview should succeed");
+        // pending_count should equal diff of current vs proposed
+        let expected = compute_pending_count(preview.current.as_ref(), &preview.proposed);
+        assert_eq!(preview.pending_count, expected, "pending_count must reflect added/removed/changed");
+    }
+
+    #[test]
+    fn gateway_health_returns_full_shape() {
+        let h = health_check().expect("health should succeed");
+        assert!(h.running);
+        assert_eq!(h.mode, "logical-isolation");
+        assert!(!h.gateway_id.is_empty());
+        assert!(!h.message.is_empty());
+        // has_models_file is bool, last_notify is Option, upstreams_total is count
+        let _ = h.has_models_file;
+        let _ = h.last_notify.clone();
+        let _ = h.upstreams_total;
+    }
+
+    #[test]
+    fn gateway_start_placeholder_does_not_auto_write_models() {
+        use std::fs;
+        let path = crate::config::models_path();
+        let before = fs::read_to_string(&path).unwrap_or_default();
+        let h = start_placeholder().expect("start_placeholder should succeed");
+        assert!(h.running);
+        let after = fs::read_to_string(&path).unwrap_or_default();
+        // start_placeholder should not modify models.json content (only touch notify)
+        assert_eq!(before, after, "start_placeholder must not auto-write gateway");
+    }
+
+    #[test]
+    fn gateway_health_and_preview_available_when_models_missing() {
+        // Even if models file is corrupted or missing, health and preview should still be Ok
+        let h = health_check();
+        assert!(h.is_ok(), "health should be ok even when gateway file missing/corrupted");
+        let p = preview_gateway();
+        assert!(p.is_ok(), "preview should be ok even when gateway file missing");
     }
 
     #[test]

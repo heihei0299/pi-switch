@@ -219,7 +219,7 @@ pi-switch provider expose provider-a gpt-5.4
 ```
 TUI 中：`Profiles → 选择 provider → x`
 
-**3. 启动代理** — 自动写入一个 `pi-switch` 网关 provider 到 pi
+**3. 启动代理** — 读取已发布的 `pi-switch` 网关 provider（需先在 **Gateway → 应用到 Pi** 显式发布，启动时不再自动写）
 ```bash
 pi-switch proxy failover provider-b,provider-c          # 可选：同模型故障转移
 pi-switch proxy start --daemon
@@ -319,7 +319,7 @@ pi-switch proxy failover provider-b,provider-c
 
 `[proxy]` 徽章表示该 profile 是一个元 profile（`"proxy": true`），用于在 pi 中注册指向本地网关的 provider，不参与上游路由。
 
-在当前的网关模式下，通常不需要 proxy profile — 代理启动时自动向 pi 的 models.json 写入一个 `pi-switch` 网关 provider。
+在当前的网关模式下，通常不需要 proxy profile — 代理读取已发布的 `pi-switch` 网关 provider（路径 `~/.pi/agent/models.json`，需通过 **Gateway → 应用到 Pi** 显式发布，启动时不再自动写）。
 
 </details>
 
