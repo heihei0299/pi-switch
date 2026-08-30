@@ -81,8 +81,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         const propForDiff = prop as Record<string, unknown>;
         if (propForDiff) {
           const d = diffGateway(curForDiff, propForDiff);
-          const fd = { added: d.added.filter((k) => k !== "api" && k !== "baseUrl"), removed: d.removed.filter((k) => k !== "api" && k !== "baseUrl"), changed: d.changed.filter((k) => k !== "api" && k !== "baseUrl") };
-          const hasDiff = fd.added.length > 0 || fd.removed.length > 0 || fd.changed.length > 0;
+          const hasDiff = d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
           if (hasDiff) setShowMismatchBanner(true);
         }
         setHasCheckedMismatch(true);
@@ -157,23 +156,18 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     } catch {}
   }
 
-  // diff for status bar: Current vs Proposed (backend) – pending publish count（过滤预定值 api/baseUrl，0.0.0.0 已归一化）
-  const filteredDiff = (d: ReturnType<typeof diffGateway>) => ({
-    added: d.added.filter((k) => k !== "api" && k !== "baseUrl"),
-    removed: d.removed.filter((k) => k !== "api" && k !== "baseUrl"),
-    changed: d.changed.filter((k) => k !== "api" && k !== "baseUrl"),
-  });
+  // diff for status bar: Current vs Proposed (backend) – pending publish count
   const statusDiff = useMemo(() => {
     if (!proposed) return { added: [], removed: [], changed: [] };
-    return filteredDiff(diffGateway(current, proposed as Record<string, unknown>));
+    return diffGateway(current, proposed as Record<string, unknown>);
   }, [current, proposed]);
 
   const pendingCount = statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length;
 
-  // preview diff for mismatch banner (current vs proposed before edits, 过滤预定值)
+  // preview diff for mismatch banner (current vs proposed before edits)
   const previewDiff = useMemo(() => {
     if (!proposed) return null;
-    return filteredDiff(diffGateway(current, proposed));
+    return diffGateway(current, proposed);
   }, [current, proposed]);
 
   function addModel() {
@@ -209,8 +203,51 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       toast("err", activeValidation.error ?? "Invalid JSON");
       return;
     }
+    const payload = activeValidation.value as Record<string, unknown>;
+    const newApi = typeof payload.api === "string" ? payload.api : "";
+    const newBaseUrl = typeof payload.baseUrl === "string" ? payload.baseUrl : "";
     try {
       await api.applyGateway(activeValidation.value);
+      // 同步网关的 api / baseUrl 回 Settings（最小实现：api 直写 gatewayApi，baseUrl 解析 host:port）
+      try {
+        const state = await api.getState();
+        const curApi = state.settings.gatewayApi;
+        const curHost = state.settings.proxy.host;
+        const curPort = state.settings.proxy.port;
+        let needUpdate = false;
+        const nextSettings = JSON.parse(JSON.stringify(state.settings)) as typeof state.settings;
+        if (newApi && newApi !== curApi) {
+          (nextSettings as any).gatewayApi = newApi;
+          needUpdate = true;
+        }
+        if (newBaseUrl) {
+          try {
+            const u = new URL(newBaseUrl);
+            const newHost = u.hostname;
+            const rawPort = u.port;
+            // 仅当解析出的 host/port 与当前不一致时同步；0.0.0.0 归一化为 127.0.0.1 与后端一致
+            const normalizedNewHost = newHost === "0.0.0.0" || newHost === "::" || newHost === "[::]" ? "127.0.0.1" : newHost;
+            const normalizedCurHost = curHost === "0.0.0.0" || curHost === "::" || curHost === "[::]" ? "127.0.0.1" : curHost;
+            if (normalizedNewHost && normalizedNewHost !== normalizedCurHost) {
+              nextSettings.proxy.host = normalizedNewHost;
+              needUpdate = true;
+            }
+            if (rawPort) {
+              const newPort = parseInt(rawPort, 10);
+              if (newPort && newPort !== curPort) {
+                nextSettings.proxy.port = newPort;
+                needUpdate = true;
+              }
+            }
+          } catch {}
+        }
+        if (needUpdate) {
+          await api.updateSettings(nextSettings);
+        }
+      } catch (e) {
+        // Settings 同步失败不阻断已成功的 gateway 写入，仅提示
+        console.warn("[gateway] sync settings failed", e);
+      }
       const now = new Date().toISOString();
       try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
       setLastPublishAt(now);
@@ -255,8 +292,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           <span className="text-zinc-500">·</span>
           <span className="text-zinc-400">上次发布时间: {lastPublishLabel}</span>
         </div>
-        {conflicts.filter((k) => k !== "api" && k !== "baseUrl").length > 0 && (
-          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.filter((k) => k !== "api" && k !== "baseUrl").join(", ")}</div>
+        {conflicts.length > 0 && (
+          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.join(", ")}</div>
         )}
       </div>
 
@@ -278,7 +315,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       <Card className="mb-4">
         <div className="grid gap-x-4 sm:grid-cols-2">
           <Field label={t("接口格式")}>
-            <Select value={apiType} onChange={(e) => setApiType(e.target.value)} disabled>
+            <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
               {API_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -288,11 +325,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 <option value={apiType}>{apiType}</option>
               )}
             </Select>
-            <p className="mt-1 text-xs text-zinc-500">{t("来源于 Settings → Gateway API，0.0.0.0 已归一化为 127.0.0.1") || "来源于 Settings → Gateway API（0.0.0.0 已归一化为 127.0.0.1）"}</p>
+            <p className="mt-1 text-xs text-zinc-500">{t("修改后应用到 Pi 时将同步到 Settings → Gateway API") || "修改后应用到 Pi 时将同步到 Settings → Gateway API"}</p>
           </Field>
           <Field label={t("Base URL")}>
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" readOnly />
-            <p className="mt-1 text-xs text-zinc-500">{t("来源于 Settings → Proxy host:port 派生，0.0.0.0 已归一化为 127.0.0.1") || "来源于 Settings → Proxy host:port 派生（0.0.0.0 已归一化为 127.0.0.1）"}</p>
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+            <p className="mt-1 text-xs text-zinc-500">{t("修改后应用到 Pi 时将同步到 Settings → Proxy host:port，0.0.0.0 已归一化为 127.0.0.1") || "修改后应用到 Pi 时将同步到 Settings → Proxy host:port（0.0.0.0 已归一化为 127.0.0.1）"}</p>
           </Field>
           <div className="sm:col-span-2">
             <Field label={t("API key")}>
