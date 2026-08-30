@@ -1,6 +1,6 @@
 ---
 name: commit-check
-description: "Run the pre-commit gate: review docs against the implementation, align README, keep the directory clean, and write a clear commit message. Use before every commit."
+description: "Run the pre-commit gate before any commit: verify docs match the implementation, align README, keep the directory clean, and write a clear commit message. Use whenever the user is about to commit or asks to check anything about the commit — e.g. verifying docs/README are in sync, cleaning up temp files, scanning for secrets/keys/.env in the change, or having you write the commit message. Not for general PR/code review (that's code-review), and not for explaining git/commit conventions (that's a teach task)."
 ---
 
 # Commit Check
@@ -21,11 +21,13 @@ description: "Run the pre-commit gate: review docs against the implementation, a
 - 改动涉及项目结构、分发文件、技能/命令清单时，检查 README 中对应的结构说明、映射表、清单是否同步
 - 改动涉及用法/CLI/配置/示例时，检查 README 对应描述与实际一致
 - 存在模板镜像/分发副本时，确认源文件与副本同步（如有守护测试，跑一遍确认）
+- **特例：skill 与 AGENTS.md 的模板同步增量**：若 `git diff HEAD` 仅涉及 `AGENTS.md` 的 `tdd-implement ↔ implement` 路由行 + `.agents/skills/`/`.pi/skills/`/`.opencode/skills/` 的技能文件 + `.gitignore` 的 `.pi/` 忽略，且同目录存在 `AGENTS.md.bak`（模板同步 `sync`/`init --force` 的备份），视为模板同步的预期增量，禁止自动 `checkout -- AGENTS.md` 回滚；存在性按文件系统判（`ls .agents/skills/<name> .pi/skills/<name> .opencode/skills/<name>` 任一存在即算存在，不以 `git ls-files` 为准）；缺技能则正向补齐而非回滚文档
 
 ### ③ 保持目录卫生
 
 - `git status` 确认工作区只含预期改动：无残留未跟踪文件、无临时产物（调试脚本、日志、备份文件、`[DEBUG-...]` 残留）
-- 清理本次改动产生的临时文件（一次性脚本、转储、探针）——删除或移入明确的非提交位置
+- 清理本次改动产生的临时文件（一次性脚本、转储、探针）——仅删本次产生的未跟踪临时产物，禁止为达干净而执行 `git reset --hard`、`git checkout .`、`git clean -fd`、`git stash push --include-untracked`、`git push --force`、`git rebase -i` 等（需显式用户确认；`stash` 如需使用改用 `--keep-index` 并在 `pop` 后校验 `git merge-base --is-ancestor $BASE_HEAD HEAD`）。详见 `CONTEXT.md` Git History Preservation 与 `docs/agents/skill-design.md` Rule 4
+- 若本次会话记录了 `BASE_HEAD`，commit 前校验 `git merge-base --is-ancestor $BASE_HEAD HEAD`，失败即经 `git reflog` 恢复后才提交
 - 确认没有敏感信息进入改动（密钥、token、`.env`、私钥）——跑 `scripts/scan-sensitive.sh`，不用手写扫描
 - 提交后工作区应为干净状态（`git status` 无输出）
 
