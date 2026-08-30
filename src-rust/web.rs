@@ -1354,7 +1354,7 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
                 let path = req.uri().path().to_string();
-                if path.ends_with("/v1/credits") {
+                if path.ends_with("/v1/usage") || path.ends_with("/v1/credits") {
                     (status, Json(body)).into_response()
                 } else {
                     (StatusCode::NOT_FOUND, Json(json!({"error":"not found"}))).into_response()

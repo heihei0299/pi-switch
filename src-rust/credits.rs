@@ -1,6 +1,6 @@
 //! 供应商余量代理与归一化抽象
 //! - `CreditsFetcher` trait + 注册表，按供应商特征路由到具体实现
-//! - `OpencodeGoFetcher`：仅查询主上游 `/v1/credits`，超时 5s，归一化为前端固定结构
+//! - `OpencodeGoFetcher`：仅查询主上游 `/v1/usage`（归一化 baseUrl 剥离尾部 `/v1`），超时 5s，归一化为前端固定结构（含 Go 三窗口用量）
 //! - 预留 `CodexFetcher`：后续仅新增文件与注册一行，前端零改动
 
 use crate::config::{self, ProviderProfile, Upstream};
@@ -9,6 +9,24 @@ use serde_json::Value;
 use std::time::Duration;
 
 // ─── 归一化结构 ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageWindow {
+    pub percent: f64,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "resetsAt")]
+    pub resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rolling: Option<UsageWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<UsageWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monthly: Option<UsageWindow>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedCredits {
@@ -21,9 +39,10 @@ pub struct NormalizedCredits {
     pub reset_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expiry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<GoUsage>,
     pub raw: Value,
 }
-
 // ─── 错误 ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -97,6 +116,67 @@ fn get_string(raw: &Value, keys: &[&str]) -> Option<String> {
 // ─── 归一化：opencode-go ───────────────────────────────────────
 
 pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
+    // 优先处理 Go usage 形态：{ usage: { rolling, weekly, monthly } }
+    if let Some(usage_val) = raw.get("usage").and_then(|v| v.as_object()) {
+        let parse_window = |key: &str| -> Option<UsageWindow> {
+            let w = usage_val.get(key)?.as_object()?;
+            let percent = w.get("percent").and_then(|v| {
+                if let Some(n) = v.as_f64() {
+                    Some(n)
+                } else if let Some(n) = v.as_i64() {
+                    Some(n as f64)
+                } else if let Some(s) = v.as_str() {
+                    s.parse::<f64>().ok()
+                } else {
+                    None
+                }
+            })?;
+            if !percent.is_finite() || percent < 0.0 || percent > 100.0 {
+                return None;
+            }
+            let status = w
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "ok".to_string());
+            let resets_at = w
+                .get("resetsAt")
+                .or_else(|| w.get("resets_at"))
+                .or_else(|| w.get("resetAt"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some(UsageWindow {
+                percent: percent.clamp(0.0, 100.0),
+                status,
+                resets_at,
+            })
+        };
+        let rolling = parse_window("rolling");
+        let weekly = parse_window("weekly");
+        let monthly = parse_window("monthly");
+        if rolling.is_some() || weekly.is_some() || monthly.is_some() {
+            let primary = rolling.as_ref().or(weekly.as_ref()).or(monthly.as_ref());
+            let percent = primary.map(|w| w.percent).unwrap_or(0.0);
+            let reset_at = primary.and_then(|w| w.resets_at.clone());
+            let remaining = (100.0 - percent).max(0.0);
+            return NormalizedCredits {
+                balance: remaining,
+                used: percent,
+                total: 100.0,
+                remaining,
+                percent,
+                reset_at: reset_at.clone(),
+                expiry: reset_at,
+                usage: Some(GoUsage {
+                    rolling,
+                    weekly,
+                    monthly,
+                }),
+                raw: raw.clone(),
+            };
+        }
+    }
+
     let balance_opt = get_f64(&raw, &["balance", "remaining", "credits", "available", "creditBalance", "credit_balance"]);
     let total_opt = get_f64(&raw, &["total", "limit", "quota", "total_credits", "maxCredits", "totalCredits", "quotaTotal", "credit_total"]);
     let used_opt = get_f64(&raw, &["used", "used_credits", "consumed", "usedCredits", "usage", "consumedCredits"]);
@@ -166,8 +246,24 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
         percent,
         reset_at: reset_str.clone(),
         expiry: reset_str,
+        usage: None,
         raw: raw.clone(),
     }
+}
+
+// ─── URL 归一化（Go 专有：剥离尾部 /v1，统一拼 /v1/usage） ─────────────
+
+pub fn normalize_base_url(base: &str) -> String {
+    let trimmed = base.trim().trim_end_matches('/');
+    if trimmed.len() >= 3 && trimmed[trimmed.len() - 3..].eq_ignore_ascii_case("/v1") {
+        trimmed[..trimmed.len() - 3].trim_end_matches('/').to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn build_credits_url(base: &str) -> String {
+    format!("{}/v1/usage", normalize_base_url(base))
 }
 
 // ─── Fetcher 抽象 ───────────────────────────────────────────────
@@ -204,7 +300,7 @@ impl CreditsFetcher for OpencodeGoFetcher {
         let base = upstream.base_url.clone();
         let key = upstream.api_key.clone();
         Box::pin(async move {
-            let url = format!("{}/v1/credits", base.trim_end_matches('/'));
+            let url = build_credits_url(&base);
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -382,5 +478,59 @@ mod tests {
         assert!(reg.iter().any(|f| f.name() == "opencode-go"));
         // 未来 Codex 接入时，registry 长度将为 2 且包含 codex，但当前仅 1
         assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn normalize_base_url_strips_trailing_v1() {
+        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/v1"), "https://opencode.ai/zen/go");
+        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/v1/"), "https://opencode.ai/zen/go");
+        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/V1"), "https://opencode.ai/zen/go");
+        assert_eq!(normalize_base_url("https://opencode.ai/zen/go"), "https://opencode.ai/zen/go");
+        assert_eq!(normalize_base_url("https://api.opencode.ai/v1"), "https://api.opencode.ai");
+        assert_eq!(normalize_base_url("https://opencode.ai/zen/v1"), "https://opencode.ai/zen");
+    }
+
+    #[test]
+    fn build_credits_url_normalizes_and_uses_usage_path() {
+        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1"), "https://opencode.ai/zen/go/v1/usage");
+        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1/"), "https://opencode.ai/zen/go/v1/usage");
+        assert_eq!(build_credits_url("https://opencode.ai/zen/go"), "https://opencode.ai/zen/go/v1/usage");
+        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1/v1/credits"), "https://opencode.ai/zen/go/v1/v1/credits/v1/usage");
+    }
+
+    #[test]
+    fn normalize_go_usage_payload() {
+        let raw = json!({
+            "usage": {
+                "rolling": {"status": "ok", "percent": 6, "resetsAt": "2026-08-30T23:53:51.013Z"},
+                "weekly": {"status": "ok", "percent": 52, "resetsAt": "2026-08-31T00:00:00.013Z"},
+                "monthly": {"status": "ok", "percent": 38, "resetsAt": "2026-09-19T08:19:27.013Z"}
+            }
+        });
+        let n = normalize_opencode_go(raw.clone());
+        let usage = n.usage.expect("usage should be parsed");
+        assert_eq!(usage.rolling.as_ref().unwrap().percent, 6.0);
+        assert_eq!(usage.weekly.as_ref().unwrap().percent, 52.0);
+        assert_eq!(usage.monthly.as_ref().unwrap().percent, 38.0);
+        assert_eq!(usage.rolling.as_ref().unwrap().status, "ok");
+        assert_eq!(usage.rolling.as_ref().unwrap().resets_at.as_deref(), Some("2026-08-30T23:53:51.013Z"));
+        assert_eq!(n.raw, raw);
+        // 兼容字段：percent 取 rolling
+        assert!((n.percent - 6.0).abs() < 1e-6);
+        assert_eq!(n.reset_at.as_deref(), Some("2026-08-30T23:53:51.013Z"));
+    }
+
+    #[test]
+    fn normalize_go_usage_rate_limited_status() {
+        let raw = json!({
+            "usage": {
+                "rolling": {"status": "rate-limited", "percent": 100, "resetsAt": "2026-08-30T23:53:51.013Z"},
+                "weekly": {"status": "ok", "percent": 52, "resetsAt": "2026-08-31T00:00:00.013Z"},
+                "monthly": {"status": "ok", "percent": 38, "resetsAt": "2026-09-19T08:19:27.013Z"}
+            }
+        });
+        let n = normalize_opencode_go(raw);
+        assert_eq!(n.usage.as_ref().unwrap().rolling.as_ref().unwrap().status, "rate-limited");
+        assert_eq!(n.usage.as_ref().unwrap().rolling.as_ref().unwrap().percent, 100.0);
     }
 }

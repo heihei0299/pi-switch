@@ -32,13 +32,40 @@ export function SupplierCreditsPanel({ name, profile }: { name: string; profile:
 
   if (!supported) return null;
 
+  const hasUsage = Boolean(data?.usage && (data.usage.rolling || data.usage.weekly || data.usage.monthly));
   const expiryText = data?.expiry ?? data?.resetAt ?? null;
+
+  const renderWindow = (label: string, win?: { percent: number; status: string; resetsAt?: string | null } | null) => {
+    if (!win) return null;
+    const pct = Math.max(0, Math.min(100, win.percent));
+    const isLimited = win.status === "rate-limited";
+    const barColor = isLimited ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-emerald-500";
+    return (
+      <div key={label} className="space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-zinc-400">{label}</span>
+          <span className="flex items-center gap-1 text-zinc-300">
+            <span className="font-medium">{win.percent.toFixed(1)}%</span>
+            <span className={isLimited ? "text-red-400" : "text-zinc-500"}>· {win.status}</span>
+          </span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+          <div
+            data-testid="credits-progress-bar"
+            className={`h-1.5 rounded-full transition-all ${barColor}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {win.resetsAt ? <div className="text-right text-[11px] text-zinc-500">重置 {win.resetsAt}</div> : null}
+      </div>
+    );
+  };
 
   return (
     <div className="mt-2 rounded-lg border border-white/10 bg-zinc-900/40 p-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-300">
-          余量 <span className="font-normal text-zinc-500">· 主上游</span>
+          {hasUsage ? "用量" : "余量"} <span className="font-normal text-zinc-500">· 主上游</span>
         </span>
         <button
           onClick={() => void fetchCredits()}
@@ -80,34 +107,42 @@ export function SupplierCreditsPanel({ name, profile }: { name: string; profile:
       ) : null}
 
       {data && !error ? (
-        <>
-          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <div className="flex items-baseline gap-1">
-              <span className="text-zinc-500">余额</span>
-              <span className="font-medium text-zinc-100">{data.balance}</span>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-zinc-500">总额</span>
-              <span className="font-medium text-zinc-100">{data.total}</span>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-zinc-500">已用</span>
-              <span className="text-zinc-300">{data.used}</span>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-zinc-500">过期</span>
-              <span className="text-zinc-300 truncate">{expiryText ?? "-"}</span>
-            </div>
+        hasUsage ? (
+          <div className="mt-2 space-y-2 text-xs">
+            {renderWindow("5小时", data.usage?.rolling)}
+            {renderWindow("每周", data.usage?.weekly)}
+            {renderWindow("每月", data.usage?.monthly)}
           </div>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
-            <div
-              data-testid="credits-progress-bar"
-              className="h-1.5 rounded-full bg-amber-500 transition-all"
-              style={{ width: `${Math.max(0, Math.min(100, data.percent))}%` }}
-            />
-          </div>
-          <div className="mt-1 text-right text-[11px] text-zinc-500">{data.percent.toFixed(1)}%</div>
-        </>
+        ) : (
+          <>
+            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <div className="flex items-baseline gap-1">
+                <span className="text-zinc-500">余额</span>
+                <span className="font-medium text-zinc-100">{data.balance}</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-zinc-500">总额</span>
+                <span className="font-medium text-zinc-100">{data.total}</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-zinc-500">已用</span>
+                <span className="text-zinc-300">{data.used}</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-zinc-500">过期</span>
+                <span className="text-zinc-300 truncate">{expiryText ?? "-"}</span>
+              </div>
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+              <div
+                data-testid="credits-progress-bar"
+                className="h-1.5 rounded-full bg-amber-500 transition-all"
+                style={{ width: `${Math.max(0, Math.min(100, data.percent))}%` }}
+              />
+            </div>
+            <div className="mt-1 text-right text-[11px] text-zinc-500">{data.percent.toFixed(1)}%</div>
+          </>
+        )
       ) : null}
     </div>
   );

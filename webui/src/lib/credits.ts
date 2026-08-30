@@ -7,6 +7,18 @@ export function isCreditsSupported(profile: ProviderProfile): boolean {
   return primaryBaseUrl.toLowerCase().includes("opencode.ai");
 }
 
+export interface UsageWindow {
+  percent: number;
+  status: string;
+  resetsAt?: string | null;
+}
+
+export interface GoUsage {
+  rolling?: UsageWindow | null;
+  weekly?: UsageWindow | null;
+  monthly?: UsageWindow | null;
+}
+
 export interface NormalizedCredits {
   balance: number;
   used: number;
@@ -15,5 +27,6 @@ export interface NormalizedCredits {
   percent: number;
   resetAt?: string | null;
   expiry?: string | null;
+  usage?: GoUsage | null;
   raw?: unknown;
 }
