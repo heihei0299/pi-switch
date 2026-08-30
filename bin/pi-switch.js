@@ -23,13 +23,23 @@ import {
 import * as readline from "readline";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 
 // Project root: parent of bin/ — used to locate bin/pi-switch.js when spawning daemon
 const PROJECT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PI_SWITCH_PROJECT_DIR = PROJECT_DIR;
 
+// 版本号跟随 package.json，避免硬编码漂移（fix: v20260828 硬编码导致 rebuild 后版本不变）
+let PKG_VERSION = "0.0.0";
+try {
+  const pkg = JSON.parse(readFileSync(resolve(PROJECT_DIR, "package.json"), "utf-8"));
+  if (pkg?.version) PKG_VERSION = pkg.version;
+} catch {
+  // ignore, fallback to 0.0.0
+}
+
 function usage() {
-  console.log(`pi-switch v20260828 — lightweight profile switcher for pi agent
+  console.log(`pi-switch v${PKG_VERSION} — lightweight profile switcher for pi agent
 
 Usage:
   pi-switch provider list
