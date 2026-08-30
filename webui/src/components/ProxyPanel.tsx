@@ -4,7 +4,6 @@ import { api } from "../api";
 import { Badge, Button, Card, Field, Input, SectionTitle } from "./ui";
 import { useAction } from "./ui";
 import { useI18n } from "../i18n";
-import { GatewayPreviewModal } from "./GatewayPreviewModal";
 
 export function ProxyPanel({
   state,
@@ -18,7 +17,6 @@ export function ProxyPanel({
   const [status, setStatus] = useState<DaemonResult | null>(null);
   const [host, setHost] = useState(state.settings.proxy.host);
   const [port, setPort] = useState(String(state.settings.proxy.port));
-  const [gatewayPreview, setGatewayPreview] = useState<{ current: unknown; proposed: unknown; conflicts: string[] } | null>(null);
 
   const loadStatus = async () => {
     try {
@@ -80,33 +78,10 @@ export function ProxyPanel({
           >
             {t("Stop")}
           </Button>
-          <Button
-            onClick={async () => {
-              const preview = await api.previewGateway();
-              setGatewayPreview(preview as any);
-            }}
-          >
-            {t("Preview gateway")}
-          </Button>
         </div>
       </Card>
 
       <FailoverEditor state={state} refresh={refresh} />
-      {gatewayPreview && (
-        <GatewayPreviewModal
-          current={gatewayPreview.current as any}
-          proposed={gatewayPreview.proposed as any}
-          conflicts={gatewayPreview.conflicts}
-          onClose={() => setGatewayPreview(null)}
-          onConfirm={async (edited) => {
-            if (JSON.stringify(edited) !== JSON.stringify((gatewayPreview as any).proposed)) {
-              await api.applyGateway(edited);
-            }
-            setGatewayPreview(null);
-            await refresh();
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -90,7 +90,7 @@ describe("SettingsPanel save decoupled from gateway (gateway-sep)", () => {
     await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());
   });
 
-  it("does not show GatewayPreviewModal after save", async () => {
+  it("does not show gateway preview modal after save", async () => {
     vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
     vi.spyOn(api, "previewGateway").mockResolvedValue({ current: {}, proposed: {}, conflicts: [] } as any);
     vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
