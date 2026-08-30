@@ -271,6 +271,7 @@ pi-switch/
 │   ├── package_ops.rs       # Package management
 │   ├── service.rs           # Shared service layer
 │   ├── web.rs               # WebUI HTTP server (profiles/gateway split routers)
+│   ├── credits.rs           # 供应商余量代理与归一化（CreditsFetcher/OpencodeGoFetcher，5s 超时，主上游，不写盘）
 │   ├── stats.rs             # Request log aggregation + token usage stats
 │   ├── usage.rs             # Token usage extraction & SSE stream parsing
 │   ├── sync.rs              # Encrypted export/import

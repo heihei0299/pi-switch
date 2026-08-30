@@ -262,6 +262,7 @@ pi-switch/
 │   ├── package_ops.rs       # 包管理
 │   ├── service.rs           # 共享服务层
 │   ├── web.rs               # WebUI HTTP 服务
+│   ├── credits.rs           # 供应商余量代理与归一化（CreditsFetcher/OpencodeGoFetcher，5s 超时，主上游，不写盘）
 │   ├── stats.rs             # 请求日志聚合 + token 统计
 │   ├── usage.rs             # Token 使用量提取 & SSE 流解析
 │   ├── sync.rs              # 加密导出/导入
