@@ -52,6 +52,9 @@ fn write_models_atomic(models: &serde_json::Value) -> Result<()> {
     if let Some(parent) = models_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
+    if let Some(parent) = tmp.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
     std::fs::write(&tmp, json + "\n").map_err(|e| AppError::io(&tmp, e))?;
     std::fs::rename(&tmp, &models_path).map_err(|e| AppError::io(&models_path, e))?;
     // 通知独立进程（文件通知，错误隔离）
