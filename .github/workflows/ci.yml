@@ -76,7 +76,7 @@ jobs:
           -A clippy::unnecessary_sort_by
 
       - name: Test Rust
-        run: cargo test --release --lib
+        run: cargo test --release --lib -- --test-threads=1
 
   build:
     strategy:
@@ -159,7 +159,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build, verify]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
