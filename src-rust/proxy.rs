@@ -1923,7 +1923,7 @@ fn buffered_response(
 }
 
 // ─── Max output clamping (prevents 400 when input+max exceeds context window) ─────
-const MAX_OUTPUT_SAFETY_TOKENS: u64 = 4096;
+const MAX_OUTPUT_SAFETY_TOKENS: u64 = 8192;
 const MAX_OUTPUT_MIN_TOKENS: u64 = 16;
 
 fn estimate_chars_for_value(v: &Value) -> usize {
@@ -1941,7 +1941,7 @@ fn estimate_input_tokens_for_responses(body: &Value) -> u64 {
     if let Some(instr) = body.get("instructions").and_then(|v| v.as_str()) {
         chars += instr.len();
     }
-    ((chars as f64) / 4.0).ceil() as u64
+    ((chars as f64) / 3.0).ceil() as u64
 }
 
 fn estimate_input_tokens_for_chat(body: &Value) -> u64 {
@@ -1952,7 +1952,7 @@ fn estimate_input_tokens_for_chat(body: &Value) -> u64 {
     if let Some(tools) = body.get("tools") {
         chars += estimate_chars_for_value(tools);
     }
-    ((chars as f64) / 4.0).ceil() as u64
+    ((chars as f64) / 3.0).ceil() as u64
 }
 
 fn clamp_responses_max_output_tokens(
