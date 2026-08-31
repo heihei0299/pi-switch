@@ -143,7 +143,11 @@ fn merge_gateway_extra(current: &serde_json::Value, proposed: &mut serde_json::V
         ) {
             let cur_by_id: std::collections::HashMap<String, &serde_json::Value> = cur_models
                 .iter()
-                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|id| (id.to_string(), m)))
+                .filter_map(|m| {
+                    m.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(|id| (id.to_string(), m))
+                })
                 .collect();
             for prop_model in prop_models.iter_mut() {
                 if let Some(id) = prop_model.get("id").and_then(|id| id.as_str()) {
@@ -170,7 +174,10 @@ fn normalize_base_url_for_compare(url: &str) -> String {
         .replace("://[::]:", "://127.0.0.1:")
 }
 
-fn compute_pending_count(current: Option<&serde_json::Value>, proposed: &serde_json::Value) -> usize {
+fn compute_pending_count(
+    current: Option<&serde_json::Value>,
+    proposed: &serde_json::Value,
+) -> usize {
     let Some(cur) = current else {
         return proposed.as_object().map(|o| o.len()).unwrap_or(0);
     };
@@ -180,13 +187,25 @@ fn compute_pending_count(current: Option<&serde_json::Value>, proposed: &serde_j
     let Some(prop_obj) = proposed.as_object() else {
         return cur_obj.len();
     };
-    let added = prop_obj.keys().filter(|k| !cur_obj.contains_key(*k)).count();
-    let removed = cur_obj.keys().filter(|k| !prop_obj.contains_key(*k)).count();
-    let changed = cur_obj.keys().filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k)).count();
+    let added = prop_obj
+        .keys()
+        .filter(|k| !cur_obj.contains_key(*k))
+        .count();
+    let removed = cur_obj
+        .keys()
+        .filter(|k| !prop_obj.contains_key(*k))
+        .count();
+    let changed = cur_obj
+        .keys()
+        .filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k))
+        .count();
     added + removed + changed
 }
 
-fn compute_gateway_conflicts(current: &serde_json::Value, proposed: &serde_json::Value) -> Vec<String> {
+fn compute_gateway_conflicts(
+    current: &serde_json::Value,
+    proposed: &serde_json::Value,
+) -> Vec<String> {
     let mut conflicts = Vec::new();
     let generated_keys = ["api", "baseUrl", "apiKey", "models", "proxy"];
     if let (Some(cur_obj), Some(prop_obj)) = (current.as_object(), proposed.as_object()) {
@@ -346,7 +365,10 @@ pub fn health_check() -> Result<GatewayHealth> {
     let config = config::load_config().unwrap_or_default();
     let models_path = gateway_models_path();
     let has_models_file = models_path.exists();
-    let last_notify = std::fs::read_to_string(gateway_notify_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let last_notify = std::fs::read_to_string(gateway_notify_path())
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     // 统计生效上游总数（用于后续多上游独立调度健康度）
     let mut upstreams_total = 0usize;
     for (_name, pv) in &config.profiles {
@@ -426,7 +448,8 @@ mod tests {
     #[test]
     fn gateway_preview_pending_count_reflects_diff() {
         // pending_count 应该按新增/移除/变更计算（顶层 keys）
-        let cur = json!({"api":"openai-completions","baseUrl":"http://a/v1","models":[],"proxy":false});
+        let cur =
+            json!({"api":"openai-completions","baseUrl":"http://a/v1","models":[],"proxy":false});
         let prop = json!({"api":"openai-completions","baseUrl":"http://b/v1","models":[],"proxy":false,"extra":1});
         // added=1 (extra), changed=1 (baseUrl) => pending 2
         assert_eq!(compute_pending_count(Some(&cur), &prop), 2);
@@ -441,7 +464,10 @@ mod tests {
         let preview = preview_gateway().expect("preview should succeed");
         // pending_count should equal diff of current vs proposed
         let expected = compute_pending_count(preview.current.as_ref(), &preview.proposed);
-        assert_eq!(preview.pending_count, expected, "pending_count must reflect added/removed/changed");
+        assert_eq!(
+            preview.pending_count, expected,
+            "pending_count must reflect added/removed/changed"
+        );
     }
 
     #[test]
@@ -466,16 +492,25 @@ mod tests {
         assert!(h.running);
         let after = fs::read_to_string(&path).unwrap_or_default();
         // start_placeholder should not modify models.json content (only touch notify)
-        assert_eq!(before, after, "start_placeholder must not auto-write gateway");
+        assert_eq!(
+            before, after,
+            "start_placeholder must not auto-write gateway"
+        );
     }
 
     #[test]
     fn gateway_health_and_preview_available_when_models_missing() {
         // Even if models file is corrupted or missing, health and preview should still be Ok
         let h = health_check();
-        assert!(h.is_ok(), "health should be ok even when gateway file missing/corrupted");
+        assert!(
+            h.is_ok(),
+            "health should be ok even when gateway file missing/corrupted"
+        );
         let p = preview_gateway();
-        assert!(p.is_ok(), "preview should be ok even when gateway file missing");
+        assert!(
+            p.is_ok(),
+            "preview should be ok even when gateway file missing"
+        );
     }
 
     #[test]
@@ -492,8 +527,18 @@ mod tests {
         assert_eq!(resolved[0].base_url, "https://api.example.com/v1");
         // 配置多上游后，has_upstreams true 且 resolved 直接返回 upstreams
         profile.upstreams = vec![
-            crate::config::Upstream { base_url: "http://a/v1".into(), api_key: "k1".into(), weight: Some(2), name: Some("a".into()), ..Default::default() },
-            crate::config::Upstream { base_url: "http://b/v1".into(), api_key: "k2".into(), ..Default::default() },
+            crate::config::Upstream {
+                base_url: "http://a/v1".into(),
+                api_key: "k1".into(),
+                weight: Some(2),
+                name: Some("a".into()),
+                ..Default::default()
+            },
+            crate::config::Upstream {
+                base_url: "http://b/v1".into(),
+                api_key: "k2".into(),
+                ..Default::default()
+            },
         ];
         assert!(profile.has_upstreams());
         let resolved2 = profile.resolved_upstreams();
@@ -510,7 +555,10 @@ mod tests {
         let cur = json!({"api":"openai-completions","baseUrl":"http://old/v1","models":[],"proxy":false,"extraKept":1});
         let mut prop = json!({"api":"openai-responses","baseUrl":"http://127.0.0.1:43112/v1","models":[],"proxy":false});
         merge_gateway_extra(&cur, &mut prop);
-        assert_eq!(prop["api"], "openai-responses", "proposed api must not be overwritten by current");
+        assert_eq!(
+            prop["api"], "openai-responses",
+            "proposed api must not be overwritten by current"
+        );
         assert_eq!(prop["baseUrl"], "http://127.0.0.1:43112/v1");
         assert_eq!(prop["extraKept"], 1);
         assert_eq!(prop["proxy"], false);
@@ -525,11 +573,21 @@ mod tests {
         let preview = preview_gateway().expect("preview should succeed");
         let edited = preview.proposed.clone();
         let res = apply_gateway(edited.clone());
-        assert!(res.is_ok(), "apply with valid proposed should succeed: {:?}", res);
+        assert!(
+            res.is_ok(),
+            "apply with valid proposed should succeed: {:?}",
+            res
+        );
         let after_content = fs::read_to_string(&path).unwrap_or_default();
-        assert!(!after_content.is_empty(), "models.json should not be empty after apply");
+        assert!(
+            !after_content.is_empty(),
+            "models.json should not be empty after apply"
+        );
         let after_notify = fs::read_to_string(&notify_path).unwrap_or_default();
-        assert!(!after_notify.is_empty(), "notify file should exist after apply");
+        assert!(
+            !after_notify.is_empty(),
+            "notify file should exist after apply"
+        );
         let preview2 = preview_gateway().expect("preview after apply should succeed");
         assert_eq!(preview2.pending_count, 0, "after apply pending should be 0");
     }

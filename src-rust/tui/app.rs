@@ -79,7 +79,10 @@ impl Overlay {
 }
 
 pub enum FetchModelsMessage {
-    Success { models: Vec<String>, enrich: crate::ops::EnrichStats },
+    Success {
+        models: Vec<String>,
+        enrich: crate::ops::EnrichStats,
+    },
     Error(String),
 }
 
@@ -279,7 +282,10 @@ impl App {
             if let Ok(msg) = rx.try_recv() {
                 self.model_selection_loading = false;
                 match msg {
-                    FetchModelsMessage::Success { models: fetched_models, enrich } => {
+                    FetchModelsMessage::Success {
+                        models: fetched_models,
+                        enrich,
+                    } => {
                         // Check if we're in form mode (Route::FetchModels with "_temp_form")
                         let is_form_mode =
                             matches!(&self.route, Route::FetchModels(name) if name == "_temp_form");
@@ -1712,57 +1718,59 @@ impl App {
             let candidate_urls =
                 ops::build_model_fetch_urls(&temp_profile.base_url, &temp_profile.api);
 
-            let result: Result<(Vec<String>, crate::ops::EnrichStats), crate::error::AppError> = rt.block_on(async {
-                let mut fetched: Vec<String> = Vec::new();
-                for url in candidate_urls {
-                    let mut req = client.get(&url);
-                    req = match temp_profile.api.as_str() {
-                        "openai-completions" => {
-                            req.header("Authorization", format!("Bearer {}", api_key))
-                        }
-                        "anthropic-messages" => req
-                            .header("x-api-key", &api_key)
-                            .header("anthropic-version", "2023-06-01"),
-                        _ => req.header("Authorization", format!("Bearer {}", api_key)),
-                    };
+            let result: Result<(Vec<String>, crate::ops::EnrichStats), crate::error::AppError> = rt
+                .block_on(async {
+                    let mut fetched: Vec<String> = Vec::new();
+                    for url in candidate_urls {
+                        let mut req = client.get(&url);
+                        req = match temp_profile.api.as_str() {
+                            "openai-completions" => {
+                                req.header("Authorization", format!("Bearer {}", api_key))
+                            }
+                            "anthropic-messages" => req
+                                .header("x-api-key", &api_key)
+                                .header("anthropic-version", "2023-06-01"),
+                            _ => req.header("Authorization", format!("Bearer {}", api_key)),
+                        };
 
-                    if let Ok(resp) = req.send().await {
-                        if resp.status().is_success() {
-                            if let Ok(payload) = resp.json::<serde_json::Value>().await {
-                                let mut models = ops::parse_model_ids(&payload);
-                                // Merge with manual models (keep manual ones at front)
-                                for manual in &manual_models_clone {
-                                    if !models.contains(manual) {
-                                        models.insert(0, manual.clone());
+                        if let Ok(resp) = req.send().await {
+                            if resp.status().is_success() {
+                                if let Ok(payload) = resp.json::<serde_json::Value>().await {
+                                    let mut models = ops::parse_model_ids(&payload);
+                                    // Merge with manual models (keep manual ones at front)
+                                    for manual in &manual_models_clone {
+                                        if !models.contains(manual) {
+                                            models.insert(0, manual.clone());
+                                        }
                                     }
-                                }
-                                if !models.is_empty() {
-                                    fetched = models;
-                                    break;
+                                    if !models.is_empty() {
+                                        fetched = models;
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                if fetched.is_empty() {
-                    return Err(crate::error::AppError::Message("No models found".into()));
-                }
-                // 模型目录 enrich 统计（24h 缓存命中、无重复网络；过期回退并报告 warning）
-                let (catalog_opt, warning) = match crate::catalog::get_or_refresh_catalog_with_warning().await {
-                    Ok((v, w)) => (v, w),
-                    Err(e) => {
-                        let w = format!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
-                        (None, Some(w))
+                    if fetched.is_empty() {
+                        return Err(crate::error::AppError::Message("No models found".into()));
                     }
-                };
-                let stats = crate::ops::enrich_stats_for_ids(
-                    &temp_profile_for_stats,
-                    &fetched,
-                    catalog_opt.as_ref(),
-                    warning,
-                );
-                Ok((fetched, stats))
-            });
+                    // 模型目录 enrich 统计（24h 缓存命中、无重复网络；过期回退并报告 warning）
+                    let (catalog_opt, warning) =
+                        match crate::catalog::get_or_refresh_catalog_with_warning().await {
+                            Ok((v, w)) => (v, w),
+                            Err(e) => {
+                                let w = format!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
+                                (None, Some(w))
+                            }
+                        };
+                    let stats = crate::ops::enrich_stats_for_ids(
+                        &temp_profile_for_stats,
+                        &fetched,
+                        catalog_opt.as_ref(),
+                        warning,
+                    );
+                    Ok((fetched, stats))
+                });
 
             match result {
                 Ok((models, enrich)) => {

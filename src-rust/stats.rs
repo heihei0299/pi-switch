@@ -1120,23 +1120,17 @@ mod tests {
             None,
         );
         let hyb = &stats.by_provider["hyb"];
-        assert_eq!(
-            hyb.cost,
-            Some(0.75),
-            "provider sums its known usage rows"
-        );
+        assert_eq!(hyb.cost, Some(0.75), "provider sums its known usage rows");
         assert_eq!(hyb.total, 4, "failed row still counts toward requests");
         assert_eq!(
-            hyb.cache_rate,
-            "66.7%",
+            hyb.cache_rate, "66.7%",
             "provider cache rate = cached / input (400/600)"
         );
         let other = &stats.by_provider["other"];
         assert_eq!(other.cost, None, "all-unknown provider shows no cost");
         assert_eq!(other.cache_rate, "0.0%", "input without cache renders 0.0%");
         assert_eq!(
-            stats.by_provider["flaky"].cache_rate,
-            "-",
+            stats.by_provider["flaky"].cache_rate, "-",
             "no countable usage renders a dash"
         );
     }
@@ -1165,13 +1159,7 @@ mod tests {
         );
         let failed = entry(false, "hyb", "deepseek-r", 40, "2026-08-02T10:00:03Z");
 
-        let stats = aggregate(
-            &[m1a, m1b, m2, failed],
-            &HashMap::new(),
-            60_000,
-            0,
-            None,
-        );
+        let stats = aggregate(&[m1a, m1b, m2, failed], &HashMap::new(), 60_000, 0, None);
         let ms = &stats.by_model["deepseek-r"];
         assert_eq!(ms.total, 3, "failed row counts toward requests");
         assert_eq!(ms.ok, 2);

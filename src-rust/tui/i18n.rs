@@ -812,15 +812,27 @@ pub fn toast_models_fetched_with_enrich(
     };
     let enrich_part = if is_zh() {
         if failed > 0 {
-            format!(" · 模型元数据 enrich 失败 {} 条，跳过 {} 条，已 enrich {} 条", failed, skipped, enriched)
+            format!(
+                " · 模型元数据 enrich 失败 {} 条，跳过 {} 条，已 enrich {} 条",
+                failed, skipped, enriched
+            )
         } else {
-            format!(" · 已 enrich {} 条模型元数据，跳过 {} 条（模型目录未覆盖）", enriched, skipped)
+            format!(
+                " · 已 enrich {} 条模型元数据，跳过 {} 条（模型目录未覆盖）",
+                enriched, skipped
+            )
         }
     } else {
         if failed > 0 {
-            format!(" · model metadata enrich failed {} , skipped {} , enriched {}", failed, skipped, enriched)
+            format!(
+                " · model metadata enrich failed {} , skipped {} , enriched {}",
+                failed, skipped, enriched
+            )
         } else {
-            format!(" · enriched {} model metadata, skipped {} (not in catalog)", enriched, skipped)
+            format!(
+                " · enriched {} model metadata, skipped {} (not in catalog)",
+                enriched, skipped
+            )
         }
     };
     let mut msg = format!("{}{}", base, enrich_part);
@@ -846,7 +858,10 @@ pub fn toast_models_updated_with_enrich(
         if failed > 0 {
             format!(" · 模型元数据 enrich 失败 {} 条", failed)
         } else {
-            format!(" · 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）", enriched, skipped)
+            format!(
+                " · 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）",
+                enriched, skipped
+            )
         }
     } else {
         if failed > 0 {
@@ -993,7 +1008,10 @@ pub fn field_api() -> &'static str {
 }
 #[allow(dead_code)]
 pub fn field_api_help() -> &'static str {
-    t!("Select the API interface format for the AI service.", "选择 AI 服务的 API 接口格式")
+    t!(
+        "Select the API interface format for the AI service.",
+        "选择 AI 服务的 API 接口格式"
+    )
 }
 pub fn field_base_url() -> &'static str {
     t!("baseUrl", "API 地址")

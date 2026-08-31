@@ -93,7 +93,8 @@ async fn fetch_catalog_from_network() -> Result<Value> {
 /// 对外主入口：TTL 内直接读缓存，过期或无缓存时尝试网络，失败回退到过期缓存
 pub async fn get_or_refresh_catalog() -> Result<Option<Value>> {
     let path = catalog_cache_path();
-    let (value, _) = get_or_refresh_catalog_inner_with_warning(&path, fetch_catalog_from_network).await?;
+    let (value, _) =
+        get_or_refresh_catalog_inner_with_warning(&path, fetch_catalog_from_network).await?;
     Ok(value)
 }
 
@@ -114,7 +115,10 @@ where
 }
 
 /// 可注入 fetcher 的内部实现（带 warning，测试与可观测性用）
-pub async fn get_or_refresh_catalog_inner_with_warning<F, Fut>(path: &Path, fetcher: F) -> Result<(Option<Value>, Option<String>)>
+pub async fn get_or_refresh_catalog_inner_with_warning<F, Fut>(
+    path: &Path,
+    fetcher: F,
+) -> Result<(Option<Value>, Option<String>)>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Value>>,
@@ -156,7 +160,11 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     fn temp_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pi-switch-catalog-test-{}-{}", name, std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pi-switch-catalog-test-{}-{}",
+            name,
+            std::process::id()
+        ));
         let _ = fs::create_dir_all(&dir);
         dir.join("models-dev.json")
     }
@@ -385,7 +393,10 @@ mod tests {
         .await
         .unwrap();
         assert!(value.is_some());
-        assert!(warning.is_none(), "24h 内命中缓存不应有 warning，无重复网络请求");
+        assert!(
+            warning.is_none(),
+            "24h 内命中缓存不应有 warning，无重复网络请求"
+        );
         assert_eq!(value.unwrap()["openai"]["id"], "openai");
         let _ = fs::remove_file(&path);
     }
@@ -439,7 +450,10 @@ mod tests {
         .await
         .unwrap();
         assert!(value.is_some());
-        assert!(warning.is_none(), "有 24h 内缓存时离线仍能完成 enrich，不应 warning");
+        assert!(
+            warning.is_none(),
+            "有 24h 内缓存时离线仍能完成 enrich，不应 warning"
+        );
         let _ = fs::remove_file(&path);
     }
 

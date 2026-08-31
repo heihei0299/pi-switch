@@ -131,7 +131,7 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
                     None
                 }
             })?;
-            if !percent.is_finite() || percent < 0.0 || percent > 100.0 {
+            if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
                 return None;
             }
             let status = w
@@ -177,12 +177,70 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
         }
     }
 
-    let balance_opt = get_f64(&raw, &["balance", "remaining", "credits", "available", "creditBalance", "credit_balance"]);
-    let total_opt = get_f64(&raw, &["total", "limit", "quota", "total_credits", "maxCredits", "totalCredits", "quotaTotal", "credit_total"]);
-    let used_opt = get_f64(&raw, &["used", "used_credits", "consumed", "usedCredits", "usage", "consumedCredits"]);
-    let remaining_opt = get_f64(&raw, &["remaining", "balance", "available", "creditBalance"]);
-    let percent_opt = get_f64(&raw, &["percent", "usage_percent", "used_percent", "percentUsed", "usagePercent"]);
-    let reset_str = get_string(&raw, &["reset_at", "resetAt", "expiry", "expires_at", "expireAt", "reset", "expiresAt", "reset_at_str", "expiryDate", "expiry_date"]);
+    let balance_opt = get_f64(
+        &raw,
+        &[
+            "balance",
+            "remaining",
+            "credits",
+            "available",
+            "creditBalance",
+            "credit_balance",
+        ],
+    );
+    let total_opt = get_f64(
+        &raw,
+        &[
+            "total",
+            "limit",
+            "quota",
+            "total_credits",
+            "maxCredits",
+            "totalCredits",
+            "quotaTotal",
+            "credit_total",
+        ],
+    );
+    let used_opt = get_f64(
+        &raw,
+        &[
+            "used",
+            "used_credits",
+            "consumed",
+            "usedCredits",
+            "usage",
+            "consumedCredits",
+        ],
+    );
+    let remaining_opt = get_f64(
+        &raw,
+        &["remaining", "balance", "available", "creditBalance"],
+    );
+    let percent_opt = get_f64(
+        &raw,
+        &[
+            "percent",
+            "usage_percent",
+            "used_percent",
+            "percentUsed",
+            "usagePercent",
+        ],
+    );
+    let reset_str = get_string(
+        &raw,
+        &[
+            "reset_at",
+            "resetAt",
+            "expiry",
+            "expires_at",
+            "expireAt",
+            "reset",
+            "expiresAt",
+            "reset_at_str",
+            "expiryDate",
+            "expiry_date",
+        ],
+    );
 
     // 计算 used
     let mut total = total_opt.unwrap_or(0.0);
@@ -205,10 +263,8 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
         r
     } else if total > 0.0 {
         (total - used).max(0.0)
-    } else if let Some(b) = balance_opt {
-        b
     } else {
-        0.0
+        balance_opt.unwrap_or(0.0)
     };
 
     // balance 优先 remaining/balance
@@ -235,7 +291,11 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
     let balance = if balance.is_finite() { balance } else { 0.0 };
     let used = if used.is_finite() { used } else { 0.0 };
     let total = if total.is_finite() { total } else { 0.0 };
-    let remaining = if remaining.is_finite() { remaining } else { 0.0 };
+    let remaining = if remaining.is_finite() {
+        remaining
+    } else {
+        0.0
+    };
     let percent = if percent.is_finite() { percent } else { 0.0 };
 
     NormalizedCredits {
@@ -256,7 +316,9 @@ pub fn normalize_opencode_go(raw: Value) -> NormalizedCredits {
 pub fn normalize_base_url(base: &str) -> String {
     let trimmed = base.trim().trim_end_matches('/');
     if trimmed.len() >= 3 && trimmed[trimmed.len() - 3..].eq_ignore_ascii_case("/v1") {
-        trimmed[..trimmed.len() - 3].trim_end_matches('/').to_string()
+        trimmed[..trimmed.len() - 3]
+            .trim_end_matches('/')
+            .to_string()
     } else {
         trimmed.to_string()
     }
@@ -276,7 +338,9 @@ pub trait CreditsFetcher: Send + Sync {
     fn fetch<'a>(
         &'a self,
         upstream: &'a Upstream,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<NormalizedCredits, CreditsError>> + Send + 'a>>;
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<NormalizedCredits, CreditsError>> + Send + 'a>,
+    >;
 }
 
 // ─── OpencodeGoFetcher ──────────────────────────────────────────
@@ -296,7 +360,9 @@ impl CreditsFetcher for OpencodeGoFetcher {
     fn fetch<'a>(
         &'a self,
         upstream: &'a Upstream,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<NormalizedCredits, CreditsError>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<NormalizedCredits, CreditsError>> + Send + 'a>,
+    > {
         let base = upstream.base_url.clone();
         let key = upstream.api_key.clone();
         Box::pin(async move {
@@ -319,13 +385,20 @@ impl CreditsFetcher for OpencodeGoFetcher {
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
                 // 截断过长 body
-                let msg = if body.len() > 500 { body[..500].to_string() } else { body };
+                let msg = if body.len() > 500 {
+                    body[..500].to_string()
+                } else {
+                    body
+                };
                 return Err(CreditsError::Upstream {
                     status: status.as_u16(),
                     message: msg,
                 });
             }
-            let raw: Value = resp.json().await.map_err(|e| CreditsError::Parse(e.to_string()))?;
+            let raw: Value = resp
+                .json()
+                .await
+                .map_err(|e| CreditsError::Parse(e.to_string()))?;
             Ok(normalize_opencode_go(raw))
         })
     }
@@ -339,12 +412,7 @@ pub fn registry() -> Vec<Box<dyn CreditsFetcher>> {
 }
 
 pub fn find_fetcher(profile: &ProviderProfile) -> Option<Box<dyn CreditsFetcher>> {
-    for f in registry() {
-        if f.can_handle(profile) {
-            return Some(f);
-        }
-    }
-    None
+    registry().into_iter().find(|f| f.can_handle(profile))
 }
 
 // ─── 对外：按供应商名查询（仅查主上游，不扇出，不写盘） ────────
@@ -355,11 +423,12 @@ pub async fn fetch_credits_for_profile(name: &str) -> Result<NormalizedCredits, 
         .profiles
         .get(name)
         .ok_or_else(|| CreditsError::NotFound(format!("unknown profile '{}'", name)))?;
-    let profile: ProviderProfile =
-        serde_json::from_value(profile_value.clone()).map_err(|e| CreditsError::Parse(e.to_string()))?;
+    let profile: ProviderProfile = serde_json::from_value(profile_value.clone())
+        .map_err(|e| CreditsError::Parse(e.to_string()))?;
 
-    let fetcher = find_fetcher(&profile)
-        .ok_or_else(|| CreditsError::Unsupported(format!("credits not supported for profile '{}'", name)))?;
+    let fetcher = find_fetcher(&profile).ok_or_else(|| {
+        CreditsError::Unsupported(format!("credits not supported for profile '{}'", name))
+    })?;
 
     // 仅查询主上游
     let upstreams = profile.resolved_upstreams();
@@ -373,11 +442,17 @@ pub async fn fetch_credits_for_profile(name: &str) -> Result<NormalizedCredits, 
             ..Default::default()
         }
     } else {
-        return Err(CreditsError::Unsupported(format!("no upstream for profile '{}'", name)));
+        return Err(CreditsError::Unsupported(format!(
+            "no upstream for profile '{}'",
+            name
+        )));
     };
 
     if upstream.base_url.trim().is_empty() {
-        return Err(CreditsError::Unsupported(format!("no upstream baseUrl for profile '{}'", name)));
+        return Err(CreditsError::Unsupported(format!(
+            "no upstream baseUrl for profile '{}'",
+            name
+        )));
     }
 
     fetcher.fetch(&upstream).await
@@ -445,15 +520,25 @@ mod tests {
     #[test]
     fn opencode_fetcher_can_handle_detection() {
         let fetcher = OpencodeGoFetcher;
-        let mut p = ProviderProfile::default();
-        p.base_url = "https://api.opencode.ai/v1".into();
+        let mut p = ProviderProfile {
+            base_url: "https://api.opencode.ai/v1".into(),
+            ..Default::default()
+        };
         assert!(fetcher.can_handle(&p));
         p.base_url = "https://example.com/v1".into();
         assert!(!fetcher.can_handle(&p));
         // 多上游主上游命中
         p.upstreams = vec![
-            Upstream { base_url: "https://api.opencode.ai/v1".into(), api_key: "k".into(), ..Default::default() },
-            Upstream { base_url: "https://other.com/v1".into(), api_key: "k2".into(), ..Default::default() },
+            Upstream {
+                base_url: "https://api.opencode.ai/v1".into(),
+                api_key: "k".into(),
+                ..Default::default()
+            },
+            Upstream {
+                base_url: "https://other.com/v1".into(),
+                api_key: "k2".into(),
+                ..Default::default()
+            },
         ];
         assert!(fetcher.can_handle(&p));
         // 多上游主上游不命中
@@ -463,8 +548,10 @@ mod tests {
 
     #[test]
     fn registry_contains_opencode_and_find_works() {
-        let mut p = ProviderProfile::default();
-        p.base_url = "https://api.opencode.ai/v1".into();
+        let mut p = ProviderProfile {
+            base_url: "https://api.opencode.ai/v1".into(),
+            ..Default::default()
+        };
         assert!(find_fetcher(&p).is_some());
         assert_eq!(find_fetcher(&p).unwrap().name(), "opencode-go");
         p.base_url = "https://example.com/v1".into();
@@ -482,20 +569,50 @@ mod tests {
 
     #[test]
     fn normalize_base_url_strips_trailing_v1() {
-        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/v1"), "https://opencode.ai/zen/go");
-        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/v1/"), "https://opencode.ai/zen/go");
-        assert_eq!(normalize_base_url("https://opencode.ai/zen/go/V1"), "https://opencode.ai/zen/go");
-        assert_eq!(normalize_base_url("https://opencode.ai/zen/go"), "https://opencode.ai/zen/go");
-        assert_eq!(normalize_base_url("https://api.opencode.ai/v1"), "https://api.opencode.ai");
-        assert_eq!(normalize_base_url("https://opencode.ai/zen/v1"), "https://opencode.ai/zen");
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/zen/go/v1"),
+            "https://opencode.ai/zen/go"
+        );
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/zen/go/v1/"),
+            "https://opencode.ai/zen/go"
+        );
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/zen/go/V1"),
+            "https://opencode.ai/zen/go"
+        );
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/zen/go"),
+            "https://opencode.ai/zen/go"
+        );
+        assert_eq!(
+            normalize_base_url("https://api.opencode.ai/v1"),
+            "https://api.opencode.ai"
+        );
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/zen/v1"),
+            "https://opencode.ai/zen"
+        );
     }
 
     #[test]
     fn build_credits_url_normalizes_and_uses_usage_path() {
-        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1"), "https://opencode.ai/zen/go/v1/usage");
-        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1/"), "https://opencode.ai/zen/go/v1/usage");
-        assert_eq!(build_credits_url("https://opencode.ai/zen/go"), "https://opencode.ai/zen/go/v1/usage");
-        assert_eq!(build_credits_url("https://opencode.ai/zen/go/v1/v1/credits"), "https://opencode.ai/zen/go/v1/v1/credits/v1/usage");
+        assert_eq!(
+            build_credits_url("https://opencode.ai/zen/go/v1"),
+            "https://opencode.ai/zen/go/v1/usage"
+        );
+        assert_eq!(
+            build_credits_url("https://opencode.ai/zen/go/v1/"),
+            "https://opencode.ai/zen/go/v1/usage"
+        );
+        assert_eq!(
+            build_credits_url("https://opencode.ai/zen/go"),
+            "https://opencode.ai/zen/go/v1/usage"
+        );
+        assert_eq!(
+            build_credits_url("https://opencode.ai/zen/go/v1/v1/credits"),
+            "https://opencode.ai/zen/go/v1/v1/credits/v1/usage"
+        );
     }
 
     #[test]
@@ -513,7 +630,10 @@ mod tests {
         assert_eq!(usage.weekly.as_ref().unwrap().percent, 52.0);
         assert_eq!(usage.monthly.as_ref().unwrap().percent, 38.0);
         assert_eq!(usage.rolling.as_ref().unwrap().status, "ok");
-        assert_eq!(usage.rolling.as_ref().unwrap().resets_at.as_deref(), Some("2026-08-30T23:53:51.013Z"));
+        assert_eq!(
+            usage.rolling.as_ref().unwrap().resets_at.as_deref(),
+            Some("2026-08-30T23:53:51.013Z")
+        );
         assert_eq!(n.raw, raw);
         // 兼容字段：percent 取 rolling
         assert!((n.percent - 6.0).abs() < 1e-6);
@@ -530,7 +650,13 @@ mod tests {
             }
         });
         let n = normalize_opencode_go(raw);
-        assert_eq!(n.usage.as_ref().unwrap().rolling.as_ref().unwrap().status, "rate-limited");
-        assert_eq!(n.usage.as_ref().unwrap().rolling.as_ref().unwrap().percent, 100.0);
+        assert_eq!(
+            n.usage.as_ref().unwrap().rolling.as_ref().unwrap().status,
+            "rate-limited"
+        );
+        assert_eq!(
+            n.usage.as_ref().unwrap().rolling.as_ref().unwrap().percent,
+            100.0
+        );
     }
 }

@@ -1,6 +1,6 @@
-mod ccswitch;
 #[allow(dead_code)]
 mod catalog;
+mod ccswitch;
 mod config;
 mod credits;
 mod daemon;

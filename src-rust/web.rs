@@ -235,12 +235,16 @@ async fn put_gateway(Json(gateway): Json<Value>) -> ApiJson {
 
 async fn get_gateway_health() -> ApiJson {
     let health = crate::gateway::health_check()?;
-    Ok(Json(serde_json::to_value(health).unwrap_or_else(|_| json!({}))))
+    Ok(Json(
+        serde_json::to_value(health).unwrap_or_else(|_| json!({})),
+    ))
 }
 
 async fn post_gateway_start() -> ApiJson {
     let health = crate::gateway::start_placeholder()?;
-    Ok(Json(serde_json::to_value(health).unwrap_or_else(|_| json!({}))))
+    Ok(Json(
+        serde_json::to_value(health).unwrap_or_else(|_| json!({})),
+    ))
 }
 
 async fn get_doctor() -> Json<Value> {
@@ -622,7 +626,9 @@ async fn post_config_restore(Json(body): Json<RestoreBody>) -> ApiJson {
 
 async fn get_credits(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     match crate::credits::fetch_credits_for_profile(&name).await {
-        Ok(data) => Ok(Json(serde_json::to_value(data).unwrap_or_else(|_| json!({})))),
+        Ok(data) => Ok(Json(
+            serde_json::to_value(data).unwrap_or_else(|_| json!({})),
+        )),
         Err(e) => Err(map_credits_error(e)),
     }
 }
@@ -632,11 +638,32 @@ fn map_credits_error(e: crate::credits::CreditsError) -> ApiError {
     match e {
         CE::NotFound(msg) => ApiError(StatusCode::NOT_FOUND, msg),
         CE::Unsupported(msg) => ApiError(StatusCode::NOT_FOUND, msg),
-        CE::Timeout(msg) => ApiError(StatusCode::GATEWAY_TIMEOUT, format!("upstream timeout: {}", msg)),
-        CE::Upstream { status: 401, message } => ApiError(StatusCode::UNAUTHORIZED, format!("upstream 401: {}", message)),
-        CE::Upstream { status: 429, message } => ApiError(StatusCode::TOO_MANY_REQUESTS, format!("upstream 429: {}", message)),
-        CE::Upstream { status, message } if status >= 500 => ApiError(StatusCode::BAD_GATEWAY, format!("upstream {}: {}", status, message)),
-        CE::Upstream { status, message } => ApiError(StatusCode::BAD_REQUEST, format!("upstream {}: {}", status, message)),
+        CE::Timeout(msg) => ApiError(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!("upstream timeout: {}", msg),
+        ),
+        CE::Upstream {
+            status: 401,
+            message,
+        } => ApiError(
+            StatusCode::UNAUTHORIZED,
+            format!("upstream 401: {}", message),
+        ),
+        CE::Upstream {
+            status: 429,
+            message,
+        } => ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("upstream 429: {}", message),
+        ),
+        CE::Upstream { status, message } if status >= 500 => ApiError(
+            StatusCode::BAD_GATEWAY,
+            format!("upstream {}: {}", status, message),
+        ),
+        CE::Upstream { status, message } => ApiError(
+            StatusCode::BAD_REQUEST,
+            format!("upstream {}: {}", status, message),
+        ),
         CE::Network(msg) => ApiError(StatusCode::BAD_GATEWAY, format!("network error: {}", msg)),
         CE::Parse(msg) => ApiError(StatusCode::BAD_GATEWAY, format!("parse error: {}", msg)),
     }
@@ -879,9 +906,15 @@ mod tests {
     #[tokio::test]
     async fn gateway_get_returns_200_with_gateway_shape() {
         let res = get("/api/models/gateway").await;
-        assert_eq!(res.status(), StatusCode::OK, "GET /api/models/gateway should be 200");
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "GET /api/models/gateway should be 200"
+        );
         let body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
         )
         .unwrap();
         // must contain api/baseUrl/models or be null when no models file
@@ -893,13 +926,18 @@ mod tests {
         let res = get("/api/models/gateway/preview").await;
         assert_eq!(res.status(), StatusCode::OK, "preview should be 200");
         let body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert!(body.get("current").is_some(), "preview needs current");
         assert!(body.get("proposed").is_some(), "preview needs proposed");
         assert!(body.get("conflicts").is_some(), "preview needs conflicts");
-        assert!(body["proposed"].get("models").is_some(), "proposed must have models");
+        assert!(
+            body["proposed"].get("models").is_some(),
+            "proposed must have models"
+        );
     }
 
     #[tokio::test]
@@ -909,10 +947,16 @@ mod tests {
             .uri("/api/models/gateway")
             .method(axum::http::Method::PUT)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"api": "invalid-api", "baseUrl": "not-a-url", "models":[]}"#))
+            .body(Body::from(
+                r#"{"api": "invalid-api", "baseUrl": "not-a-url", "models":[]}"#,
+            ))
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid gateway should be 400");
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "invalid gateway should be 400"
+        );
     }
 
     #[tokio::test]
@@ -923,16 +967,31 @@ mod tests {
         let before = fs::read_to_string(&path).unwrap_or_default();
         let _ = get("/api/models/gateway/preview").await;
         let after = fs::read_to_string(&path).unwrap_or_default();
-        assert_eq!(before, after, "preview must be dry-run, not modify models.json");
+        assert_eq!(
+            before, after,
+            "preview must be dry-run, not modify models.json"
+        );
     }
 
     #[tokio::test]
     async fn gateway_health_returns_200_with_logical_isolation() {
         let res = get("/api/gateway/health").await;
-        assert_eq!(res.status(), StatusCode::OK, "/api/gateway/health should be 200");
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "/api/gateway/health should be 200"
+        );
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(body.get("mode").and_then(|v| v.as_str()), Some("logical-isolation"));
+        assert_eq!(
+            body.get("mode").and_then(|v| v.as_str()),
+            Some("logical-isolation")
+        );
         assert!(body.get("gateway_id").is_some());
     }
 
@@ -941,7 +1000,20 @@ mod tests {
         // Error in gateway should not affect profiles
         let app = router();
         // invalid gateway PUT -> 400
-        let bad_gateway = app.clone().oneshot(axum::http::Request::builder().uri("/api/models/gateway").method(axum::http::Method::PUT).header(axum::http::header::CONTENT_TYPE, "application/json").body(Body::from(r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#)).unwrap()).await.unwrap();
+        let bad_gateway = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/models/gateway")
+                    .method(axum::http::Method::PUT)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(bad_gateway.status(), StatusCode::BAD_REQUEST);
         // profiles still reachable
         let profiles_state = get("/api/state").await;
@@ -982,13 +1054,28 @@ mod tests {
         if res.status() == StatusCode::OK {
             let state = get("/api/state").await;
             assert_eq!(state.status(), StatusCode::OK);
-            let body: Value = serde_json::from_slice(&axum::body::to_bytes(state.into_body(), usize::MAX).await.unwrap()).unwrap();
+            let body: Value = serde_json::from_slice(
+                &axum::body::to_bytes(state.into_body(), usize::MAX)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             let profiles = body.get("profiles").unwrap().as_object().unwrap();
             if let Some(p) = profiles.get("test-upstream-profile") {
                 assert!(p.get("upstreams").is_some(), "upstreams should persist");
             }
             // cleanup
-            let _ = app.clone().oneshot(axum::http::Request::builder().uri("/api/profiles/test-upstream-profile").method(axum::http::Method::DELETE).body(Body::empty()).unwrap()).await.unwrap();
+            let _ = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri("/api/profiles/test-upstream-profile")
+                        .method(axum::http::Method::DELETE)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
         }
     }
 
@@ -1005,12 +1092,21 @@ mod tests {
     async fn tdd_spoof_does_not_trigger_gateway_write() {
         // Ticket 01 S1: 供应商个性变更不自动写网关 — Red phase expects failure before fix
         let _health_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let gateway_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
-        let gateway_before_inner = gateway_before.get("gateway").cloned().unwrap_or(Value::Null);
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let gateway_before_inner = gateway_before
+            .get("gateway")
+            .cloned()
+            .unwrap_or(Value::Null);
 
         let profile_name = "tdd-spoof-profile";
         let create_payload = serde_json::json!({
@@ -1037,8 +1133,11 @@ mod tests {
             .unwrap();
 
         let health_before2: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
 
         let spoof_payload = serde_json::json!({"spoof": "test-preset"});
         let app = router();
@@ -1053,14 +1152,24 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), axum::http::StatusCode::OK, "spoof should be 200");
+        assert_eq!(
+            res.status(),
+            axum::http::StatusCode::OK,
+            "spoof should be 200"
+        );
 
         let health_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let gateway_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let gateway_after_inner = gateway_after.get("gateway").cloned().unwrap_or(Value::Null);
 
         assert_eq!(
@@ -1090,36 +1199,75 @@ mod tests {
     async fn gateway_preview_returns_pending_count() {
         let res = get("/api/models/gateway/preview").await;
         assert_eq!(res.status(), StatusCode::OK);
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
-        assert!(body.get("pending_count").is_some(), "preview must include pending_count");
-        let pending = body.get("pending_count").and_then(|v| v.as_u64()).expect("pending_count must be number");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            body.get("pending_count").is_some(),
+            "preview must include pending_count"
+        );
+        let pending = body
+            .get("pending_count")
+            .and_then(|v| v.as_u64())
+            .expect("pending_count must be number");
         // pending_count should be computed as added+removed+changed between current and proposed
         let current = body.get("current");
         let proposed = body.get("proposed").expect("proposed required");
         // compute expected via same logic as gateway.rs (use json comparison)
-        let expected = if current.is_none() || current.unwrap().is_null() {
-            proposed.as_object().map(|o| o.len() as u64).unwrap_or(0)
-        } else {
-            let cur_obj = current.unwrap().as_object().cloned().unwrap_or_default();
-            let prop_obj = proposed.as_object().cloned().unwrap_or_default();
-            let added = prop_obj.keys().filter(|k| !cur_obj.contains_key(*k)).count() as u64;
-            let removed = cur_obj.keys().filter(|k| !prop_obj.contains_key(*k)).count() as u64;
-            let changed = cur_obj.keys().filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k)).count() as u64;
-            added + removed + changed
+        let expected = match current {
+            None => proposed.as_object().map(|o| o.len() as u64).unwrap_or(0),
+            Some(v) if v.is_null() => proposed.as_object().map(|o| o.len() as u64).unwrap_or(0),
+            Some(v) => {
+                let cur_obj = v.as_object().cloned().unwrap_or_default();
+                let prop_obj = proposed.as_object().cloned().unwrap_or_default();
+                let added = prop_obj
+                    .keys()
+                    .filter(|k| !cur_obj.contains_key(*k))
+                    .count() as u64;
+                let removed = cur_obj
+                    .keys()
+                    .filter(|k| !prop_obj.contains_key(*k))
+                    .count() as u64;
+                let changed = cur_obj
+                    .keys()
+                    .filter(|k| prop_obj.contains_key(*k) && cur_obj.get(*k) != prop_obj.get(*k))
+                    .count() as u64;
+                added + removed + changed
+            }
         };
-        assert_eq!(pending, expected, "pending_count should be added+removed+changed");
+        assert_eq!(
+            pending, expected,
+            "pending_count should be added+removed+changed"
+        );
     }
 
     #[tokio::test]
     async fn gateway_health_returns_full_shape_and_isolation() {
         let res = get("/api/gateway/health").await;
         assert_eq!(res.status(), StatusCode::OK);
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(body.get("mode").and_then(|v| v.as_str()), Some("logical-isolation"));
+        assert_eq!(
+            body.get("mode").and_then(|v| v.as_str()),
+            Some("logical-isolation")
+        );
         assert!(body.get("gateway_id").is_some(), "gateway_id required");
-        assert!(body.get("has_models_file").is_some(), "has_models_file required");
-        assert!(body.get("upstreams_total").is_some(), "upstreams_total required");
+        assert!(
+            body.get("has_models_file").is_some(),
+            "has_models_file required"
+        );
+        assert!(
+            body.get("upstreams_total").is_some(),
+            "upstreams_total required"
+        );
         assert!(body.get("message").is_some(), "message required");
         // last_notify may be null or string
         assert!(body.as_object().unwrap().contains_key("last_notify"));
@@ -1129,12 +1277,24 @@ mod tests {
     async fn gateway_preview_and_health_remain_available_when_gateway_missing() {
         // Even if gateway file is missing/corrupted, preview and health should still be 200
         let health = get("/api/gateway/health").await;
-        assert_eq!(health.status(), StatusCode::OK, "health should be ok even when gateway missing");
+        assert_eq!(
+            health.status(),
+            StatusCode::OK,
+            "health should be ok even when gateway missing"
+        );
         let preview = get("/api/models/gateway/preview").await;
-        assert_eq!(preview.status(), StatusCode::OK, "preview should be ok even when gateway missing");
+        assert_eq!(
+            preview.status(),
+            StatusCode::OK,
+            "preview should be ok even when gateway missing"
+        );
         // supplier CRUD should still work (health failure isolation)
         let state = get("/api/state").await;
-        assert_eq!(state.status(), StatusCode::OK, "supplier state should remain available when gateway missing");
+        assert_eq!(
+            state.status(),
+            StatusCode::OK,
+            "supplier state should remain available when gateway missing"
+        );
     }
 
     #[tokio::test]
@@ -1150,31 +1310,58 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK, "gateway start should succeed even if gateway file missing");
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "gateway start should succeed even if gateway file missing"
+        );
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body.get("running").and_then(|v| v.as_bool()), Some(true));
         let after = fs::read_to_string(&path).unwrap_or_default();
         // start should not auto-write models.json beyond notify; if models file existed, content should stay same
         // If file didn't exist, it may still not be created by start (only notify file)
         if !before.is_empty() {
-            assert_eq!(before, after, "start_placeholder must not auto-write gateway");
+            assert_eq!(
+                before, after,
+                "start_placeholder must not auto-write gateway"
+            );
         }
     }
 
     #[tokio::test]
     async fn tdd_settings_does_not_trigger_gateway_write() {
         let state_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/state").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
-        let settings_before = state_before.get("settings").cloned().expect("state must have settings");
+            &axum::body::to_bytes(get("/api/state").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let settings_before = state_before
+            .get("settings")
+            .cloned()
+            .expect("state must have settings");
         let gateway_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let health_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
 
-        let current_api = settings_before.get("gatewayApi").and_then(|v| v.as_str()).unwrap_or("openai-completions");
+        let current_api = settings_before
+            .get("gatewayApi")
+            .and_then(|v| v.as_str())
+            .unwrap_or("openai-completions");
         let flipped = if current_api == "openai-completions" {
             "openai-responses"
         } else {
@@ -1195,17 +1382,33 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), axum::http::StatusCode::OK, "settings PUT should be 200");
+        assert_eq!(
+            res.status(),
+            axum::http::StatusCode::OK,
+            "settings PUT should be 200"
+        );
 
         let gateway_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/models/gateway").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let preview_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(
+                get("/api/models/gateway/preview").await.into_body(),
+                usize::MAX,
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
         let health_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX).await.unwrap(),
-        ).unwrap();
+            &axum::body::to_bytes(get("/api/gateway/health").await.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(
             gateway_before.get("gateway"),
@@ -1213,8 +1416,15 @@ mod tests {
             "settings change must not auto-write gateway current"
         );
         // preview should show pending: current != proposed and proposed api is flipped
-        let proposed_api = preview_after.get("proposed").and_then(|p| p.get("api")).and_then(|v| v.as_str());
-        assert_eq!(proposed_api, Some(flipped), "preview proposed api should reflect new settings");
+        let proposed_api = preview_after
+            .get("proposed")
+            .and_then(|p| p.get("api"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            proposed_api,
+            Some(flipped),
+            "preview proposed api should reflect new settings"
+        );
         assert_ne!(
             preview_after.get("current"),
             preview_after.get("proposed"),
@@ -1251,25 +1461,50 @@ mod tests {
             .uri("/api/models/gateway")
             .method(axum::http::Method::PUT)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"api":"bad-api","baseUrl":"ftp://bad","models":[]}"#))
+            .body(Body::from(
+                r#"{"api":"bad-api","baseUrl":"ftp://bad","models":[]}"#,
+            ))
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid gateway must be 400");
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "invalid gateway must be 400"
+        );
         let after = fs::read_to_string(&models_path).unwrap_or_default();
-        assert_eq!(before, after, "validation failure must not touch models.json");
+        assert_eq!(
+            before, after,
+            "validation failure must not touch models.json"
+        );
         let state = get("/api/state").await;
-        assert_eq!(state.status(), StatusCode::OK, "supplier state must remain 200 after gateway validation failure");
+        assert_eq!(
+            state.status(),
+            StatusCode::OK,
+            "supplier state must remain 200 after gateway validation failure"
+        );
         let preview = get("/api/models/gateway/preview").await;
-        assert_eq!(preview.status(), StatusCode::OK, "preview must remain 200 after validation failure");
+        assert_eq!(
+            preview.status(),
+            StatusCode::OK,
+            "preview must remain 200 after validation failure"
+        );
     }
 
     #[tokio::test]
     async fn gateway_apply_success_is_atomic_and_clears_pending() {
         let preview_before: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
+            &axum::body::to_bytes(
+                get("/api/models/gateway/preview").await.into_body(),
+                usize::MAX,
+            )
+            .await
+            .unwrap(),
         )
         .unwrap();
-        let proposed = preview_before.get("proposed").cloned().expect("proposed required");
+        let proposed = preview_before
+            .get("proposed")
+            .cloned()
+            .expect("proposed required");
         let app = router();
         let req = axum::http::Request::builder()
             .uri("/api/models/gateway")
@@ -1280,13 +1515,28 @@ mod tests {
         let res = app.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK, "valid apply must be 200");
         let preview_after: Value = serde_json::from_slice(
-            &axum::body::to_bytes(get("/api/models/gateway/preview").await.into_body(), usize::MAX).await.unwrap(),
+            &axum::body::to_bytes(
+                get("/api/models/gateway/preview").await.into_body(),
+                usize::MAX,
+            )
+            .await
+            .unwrap(),
         )
         .unwrap();
-        let pending = preview_after.get("pending_count").and_then(|v| v.as_u64()).unwrap_or(999);
-        assert_eq!(pending, 0, "after successful publish pending_count must be 0, got preview {:?}", preview_after);
+        let pending = preview_after
+            .get("pending_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(999);
+        assert_eq!(
+            pending, 0,
+            "after successful publish pending_count must be 0, got preview {:?}",
+            preview_after
+        );
         let current = preview_after.get("current");
-        assert!(current.is_some() && !current.unwrap().is_null(), "current should be Some after publish");
+        assert!(
+            current.is_some() && !current.unwrap().is_null(),
+            "current should be Some after publish"
+        );
     }
 
     #[tokio::test]
@@ -1303,22 +1553,44 @@ mod tests {
             .body(Body::from(serde_json::to_string(&bad_profile).unwrap()))
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "invalid profile should be 400");
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "invalid profile should be 400"
+        );
         let health = get("/api/gateway/health").await;
-        assert_eq!(health.status(), StatusCode::OK, "gateway health must remain 200 after profile error");
+        assert_eq!(
+            health.status(),
+            StatusCode::OK,
+            "gateway health must remain 200 after profile error"
+        );
         let preview = get("/api/models/gateway/preview").await;
-        assert_eq!(preview.status(), StatusCode::OK, "gateway preview must remain 200 after profile error");
+        assert_eq!(
+            preview.status(),
+            StatusCode::OK,
+            "gateway preview must remain 200 after profile error"
+        );
         let app2 = router();
         let bad_gw = axum::http::Request::builder()
             .uri("/api/models/gateway")
             .method(axum::http::Method::PUT)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#))
+            .body(Body::from(
+                r#"{"api":"bad","baseUrl":"http://x/v1","models":[]}"#,
+            ))
             .unwrap();
         let res2 = app2.clone().oneshot(bad_gw).await.unwrap();
-        assert_eq!(res2.status(), StatusCode::BAD_REQUEST, "invalid gateway should be 400");
+        assert_eq!(
+            res2.status(),
+            StatusCode::BAD_REQUEST,
+            "invalid gateway should be 400"
+        );
         let state = get("/api/state").await;
-        assert_eq!(state.status(), StatusCode::OK, "supplier state must remain 200 after gateway error");
+        assert_eq!(
+            state.status(),
+            StatusCode::OK,
+            "supplier state must remain 200 after gateway error"
+        );
         let good_profile = serde_json::json!({
             "name": "tdd-isolation-good",
             "profile": { "api": "openai-completions", "baseUrl": "http://example.com/v1", "apiKey": "k", "models": [{"id":"m1"}], "proxy": false }
@@ -1330,12 +1602,28 @@ mod tests {
             .body(Body::from(serde_json::to_string(&good_profile).unwrap()))
             .unwrap();
         let res_good = router().oneshot(req_good).await.unwrap();
-        assert!(res_good.status() == StatusCode::OK || res_good.status() == StatusCode::BAD_REQUEST, "profile CRUD must not be 500 after gateway error, got {:?}", res_good.status());
+        assert!(
+            res_good.status() == StatusCode::OK || res_good.status() == StatusCode::BAD_REQUEST,
+            "profile CRUD must not be 500 after gateway error, got {:?}",
+            res_good.status()
+        );
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri("/api/profiles/tdd-isolation-good").method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles/tdd-isolation-good")
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri("/api/profiles/tdd-isolation-bad").method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/profiles/tdd-isolation-bad")
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
@@ -1392,7 +1680,9 @@ mod tests {
             .unwrap();
         assert!(
             res.status() == StatusCode::OK || res.status() == StatusCode::BAD_REQUEST,
-            "create profile {} should be OK or BAD_REQUEST, got {:?}", name, res.status()
+            "create profile {} should be OK or BAD_REQUEST, got {:?}",
+            name,
+            res.status()
         );
     }
 
@@ -1420,18 +1710,36 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK, "opencode-go credits should be 200");
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "opencode-go credits should be 200"
+        );
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body.get("balance").and_then(|v| v.as_f64()), Some(42.5));
         assert_eq!(body.get("total").and_then(|v| v.as_f64()), Some(100.0));
         assert_eq!(body.get("used").and_then(|v| v.as_f64()), Some(30.0));
         assert_eq!(body.get("remaining").and_then(|v| v.as_f64()), Some(70.0));
         assert!((body.get("percent").and_then(|v| v.as_f64()).unwrap() - 30.0).abs() < 1e-6);
-        assert_eq!(body.get("resetAt").and_then(|v| v.as_str()), Some("2026-09-01T00:00:00Z"));
+        assert_eq!(
+            body.get("resetAt").and_then(|v| v.as_str()),
+            Some("2026-09-01T00:00:00Z")
+        );
         // raw 保留原体
         assert_eq!(body.get("raw"), Some(&raw));
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
@@ -1460,16 +1768,34 @@ mod tests {
             .await
             .unwrap();
         let res = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::NOT_FOUND, "non-opencode should be 404");
+        assert_eq!(
+            res.status(),
+            StatusCode::NOT_FOUND,
+            "non-opencode should be 404"
+        );
         // 隔离：state 与网关仍 200
         assert_eq!(get("/api/state").await.status(), StatusCode::OK);
-        assert_eq!(get("/api/models/gateway/preview").await.status(), StatusCode::OK);
+        assert_eq!(
+            get("/api/models/gateway/preview").await.status(),
+            StatusCode::OK
+        );
         assert_eq!(get("/api/gateway/health").await.status(), StatusCode::OK);
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
@@ -1486,17 +1812,35 @@ mod tests {
         let cfg_before = fs::read_to_string(&cfg_path).unwrap_or_default();
         let models_before = fs::read_to_string(&models_path).unwrap_or_default();
         let res = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "401 should map to 401");
+        assert_eq!(
+            res.status(),
+            StatusCode::UNAUTHORIZED,
+            "401 should map to 401"
+        );
         let cfg_after = fs::read_to_string(&cfg_path).unwrap_or_default();
         let models_after = fs::read_to_string(&models_path).unwrap_or_default();
-        assert_eq!(cfg_before, cfg_after, "credits 401 must not write config.json");
-        assert_eq!(models_before, models_after, "credits 401 must not write models.json");
+        assert_eq!(
+            cfg_before, cfg_after,
+            "credits 401 must not write config.json"
+        );
+        assert_eq!(
+            models_before, models_after,
+            "credits 401 must not write models.json"
+        );
         // 隔离：CRUD 与网关仍可用
         assert_eq!(get("/api/state").await.status(), StatusCode::OK);
-        assert_eq!(get("/api/models/gateway/preview").await.status(), StatusCode::OK);
+        assert_eq!(
+            get("/api/models/gateway/preview").await.status(),
+            StatusCode::OK
+        );
         // 供应商 CRUD 仍可用（spoof 不受影响）
         let spoof_res = router()
             .oneshot(
@@ -1509,27 +1853,57 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(spoof_res.status(), StatusCode::OK, "supplier CRUD must remain available after 401");
+        assert_eq!(
+            spoof_res.status(),
+            StatusCode::OK,
+            "supplier CRUD must remain available after 401"
+        );
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
     #[tokio::test]
     async fn credits_upstream_5xx_returns_502_and_isolated() {
-        let base = start_mock_credits_server(StatusCode::INTERNAL_SERVER_ERROR, json!({"error":"internal"}), 0).await;
+        let base = start_mock_credits_server(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error":"internal"}),
+            0,
+        )
+        .await;
         let name = "tdd-credits-5xx";
         create_profile_with_baseurl(name, &base).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let res = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_GATEWAY, "5xx should map to 502");
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_GATEWAY,
+            "5xx should map to 502"
+        );
         assert_eq!(get("/api/state").await.status(), StatusCode::OK);
         assert_eq!(get("/api/gateway/health").await.status(), StatusCode::OK);
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
@@ -1541,13 +1915,28 @@ mod tests {
         create_profile_with_baseurl(name, &base).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let res = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::GATEWAY_TIMEOUT, "timeout should be 504");
+        assert_eq!(
+            res.status(),
+            StatusCode::GATEWAY_TIMEOUT,
+            "timeout should be 504"
+        );
         assert_eq!(get("/api/state").await.status(), StatusCode::OK);
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
 
@@ -1587,18 +1976,40 @@ mod tests {
             .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let res = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}/credits", name)).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}/credits", name))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK, "multi upstream should still be 200 via primary");
-        let body: Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "multi upstream should still be 200 via primary"
+        );
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         // 验证来自 primary（balance 11），而非 secondary 999
-        assert_eq!(body.get("balance").and_then(|v| v.as_f64()), Some(11.0), "must query primary only");
+        assert_eq!(
+            body.get("balance").and_then(|v| v.as_f64()),
+            Some(11.0),
+            "must query primary only"
+        );
         assert_ne!(body.get("balance").and_then(|v| v.as_f64()), Some(999.0));
         let _ = router()
-            .oneshot(axum::http::Request::builder().uri(format!("/api/profiles/{}", name)).method(axum::http::Method::DELETE).body(Body::empty()).unwrap())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/profiles/{}", name))
+                    .method(axum::http::Method::DELETE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await;
     }
-
-
 }

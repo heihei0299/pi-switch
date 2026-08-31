@@ -1955,7 +1955,11 @@ fn estimate_input_tokens_for_chat(body: &Value) -> u64 {
     ((chars as f64) / 4.0).ceil() as u64
 }
 
-fn clamp_responses_max_output_tokens(body: &mut Value, profile: &ProviderProfile, real_model: &str) {
+fn clamp_responses_max_output_tokens(
+    body: &mut Value,
+    profile: &ProviderProfile,
+    real_model: &str,
+) {
     let Some(max_val) = body.get("max_output_tokens").and_then(|v| v.as_u64()) else {
         return;
     };
@@ -2002,7 +2006,6 @@ fn clamp_chat_max_tokens(body: &mut Value, profile: &ProviderProfile, real_model
         }
     }
 }
-
 
 /// Log a failed attempt against one candidate (retryable, non-retryable, or
 /// transport error) — shared by the mixed failover loops.
@@ -2626,7 +2629,10 @@ async fn forward_with_failover(
         if is_anthropic {
             // Convert OpenAI -> Anthropic
             let anthro_body = openai_to_anthropic_body(body);
-            let url = format!("{}/messages", profile.primary_base_url().trim_end_matches('/'));
+            let url = format!(
+                "{}/messages",
+                profile.primary_base_url().trim_end_matches('/')
+            );
 
             let mut req = client
                 .post(&url)
@@ -2732,7 +2738,11 @@ async fn forward_with_failover(
             }
         } else {
             // OpenAI-compatible
-            let url = format!("{}/{}", profile.primary_base_url().trim_end_matches('/'), target_path);
+            let url = format!(
+                "{}/{}",
+                profile.primary_base_url().trim_end_matches('/'),
+                target_path
+            );
 
             let mut req = client
                 .post(&url)
@@ -2898,7 +2908,10 @@ async fn forward_anthropic_with_failover(
         let (client, user_agent, disguise) = build_disguised_client(effective_spoof);
 
         let api_key = crate::config::resolve_env(profile.primary_api_key());
-        let url = format!("{}/messages", profile.primary_base_url().trim_end_matches('/'));
+        let url = format!(
+            "{}/messages",
+            profile.primary_base_url().trim_end_matches('/')
+        );
 
         let mut req = client
             .post(&url)
@@ -5096,10 +5109,7 @@ mod tests {
         // decoding would yield invalid UTF-8 (0xEF alone), so the raw
         // value is kept instead of being mis-decoded.
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-conversation-name",
-            HeaderValue::from_static("100%EF"),
-        );
+        headers.insert("x-conversation-name", HeaderValue::from_static("100%EF"));
         assert_eq!(
             super::conversation_name_of(&headers),
             Some("100%EF".to_string())

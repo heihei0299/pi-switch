@@ -100,7 +100,10 @@ pub struct ProviderFormState {
 }
 
 fn api_index(api: &str) -> usize {
-    API_CHOICES.iter().position(|c| *c == api).unwrap_or(API_CHOICES.len())
+    API_CHOICES
+        .iter()
+        .position(|c| *c == api)
+        .unwrap_or(API_CHOICES.len())
 }
 
 fn models_text(models: &[ModelEntry]) -> String {

@@ -123,7 +123,9 @@ impl Upstream {
             && !self.base_url.starts_with("http://")
             && !self.base_url.starts_with("https://")
         {
-            return Err(format!("{path}.baseUrl must start with http:// or https://"));
+            return Err(format!(
+                "{path}.baseUrl must start with http:// or https://"
+            ));
         }
         if let Some(headers) = &self.headers {
             validate_string_map(&Value::Object(headers.clone()), &format!("{path}.headers"))?;
@@ -167,7 +169,11 @@ pub struct ProviderProfile {
     pub preset: Option<String>,
     /// 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）。
     /// 显式值优先；为空时按 preset 推断（如 openrouter→openrouter）；推断失败则跳过模型元数据 enrich，不阻断保存。
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "modelsDevProvider")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "modelsDevProvider"
+    )]
     pub models_dev_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<Map<String, Value>>,
@@ -943,7 +949,10 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
-pub(crate) fn models_dev_provider_warning(name: &str, profile: &ProviderProfile) -> Option<ValidationIssue> {
+pub(crate) fn models_dev_provider_warning(
+    name: &str,
+    profile: &ProviderProfile,
+) -> Option<ValidationIssue> {
     let raw = profile.models_dev_provider.as_ref()?.trim().to_string();
     if raw.is_empty() {
         return None;
@@ -1050,7 +1059,10 @@ pub fn validate_config() -> Result<Vec<ValidationIssue>> {
         issues.push(ValidationIssue {
             level: "error".into(),
             path: "settings.gatewayApi".into(),
-            message: format!("gatewayApi is not supported: {}", config.settings.gateway_api),
+            message: format!(
+                "gatewayApi is not supported: {}",
+                config.settings.gateway_api
+            ),
         });
     }
 
@@ -1079,7 +1091,9 @@ pub fn resolve_env(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_provider_wrapper, parse_provider_wrapper, PiSwitchConfig, ResponsesMode, Settings};
+    use super::{
+        format_provider_wrapper, parse_provider_wrapper, PiSwitchConfig, ResponsesMode, Settings,
+    };
 
     #[test]
     fn parses_full_pi_provider_wrapper_without_losing_fields() {
@@ -1254,7 +1268,8 @@ mod tests {
 
     #[test]
     fn settings_defaults_inject_opencode_attribution_to_true() {
-        let settings: Settings = serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
+        let settings: Settings =
+            serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
         assert!(settings.inject_opencode_attribution);
     }
 
@@ -1311,7 +1326,11 @@ mod tests {
         };
         profile.models_dev_provider = Some("unknown_provider_xyz".into());
         let result = crate::config::validate_provider_profile("custom", &profile);
-        assert!(result.is_ok(), "unknown modelsDevProvider should not error: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "unknown modelsDevProvider should not error: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1336,16 +1355,10 @@ mod tests {
             models_dev_provider: Some("openai".into()),
             ..Default::default()
         };
-        assert_eq!(
-            resolve_models_dev_provider(&p).as_deref(),
-            Some("openai")
-        );
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
         // explicit trimmed
         p.models_dev_provider = Some("  deepseek  ".into());
-        assert_eq!(
-            resolve_models_dev_provider(&p).as_deref(),
-            Some("deepseek")
-        );
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("deepseek"));
     }
 
     #[test]
@@ -1358,10 +1371,7 @@ mod tests {
             models_dev_provider: None,
             ..Default::default()
         };
-        assert_eq!(
-            resolve_models_dev_provider(&p).as_deref(),
-            Some("openai")
-        );
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
         // 对 siliconflow 同理
         let p2 = ProviderProfile {
             preset: Some("siliconflow".into()),
@@ -1403,10 +1413,7 @@ mod tests {
             ..Default::default()
         };
         // 空白显式应 fallback 到 preset
-        assert_eq!(
-            resolve_models_dev_provider(&p).as_deref(),
-            Some("openai")
-        );
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
         let p2 = ProviderProfile {
             preset: None,
             models_dev_provider: Some("   ".into()),
