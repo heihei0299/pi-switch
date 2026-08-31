@@ -225,7 +225,7 @@ pub struct Settings {
     pub inject_open_code_attribution: Option<bool>,
 }
 impl<'de> serde::Deserialize<'de> for Settings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {

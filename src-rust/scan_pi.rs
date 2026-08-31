@@ -339,9 +339,8 @@ pub fn parse_session_str(content: &str) -> Option<PiSession> {
 
     // collect raw entries lines, check count
     let rest: Vec<String> = lines.map(|l| l.to_string()).collect();
-    let total_entries = rest.len() + 1;
-    if total_entries > MAX_TREE_ENTRIES {
-        log::warn!("scan_pi: skip too many entries {} > {}", total_entries, MAX_TREE_ENTRIES);
+    if rest.len() > MAX_TREE_ENTRIES {
+        log::warn!("scan_pi: skip too many entries {} > {}", rest.len(), MAX_TREE_ENTRIES);
         return None;
     }
     if rest.is_empty() {
@@ -534,11 +533,13 @@ fn parse_v2(
     let title = extract_title(&active_entries, &cwd);
     let last_active_at = extract_last_active(&active_entries, &header_v);
     let model = extract_model(&active_entries);
+    let prompt_tokens_hint = extract_prompt_hint(&active_entries);
     Some(PiSession {
         id: header_id,
         title,
         last_active_at,
         model,
+        prompt_tokens_hint,
     })
 }
 
@@ -629,7 +630,7 @@ pub fn parse_session_file(path: &Path) -> Option<PiSession> {
     let content = std::fs::read_to_string(path).ok()?;
     // quick entry count check without full parse
     let line_count = content.lines().count();
-    if line_count > MAX_TREE_ENTRIES {
+    if line_count > MAX_TREE_ENTRIES + 1 {
         log::warn!("scan_pi: skip too many entries {} ({})", path.display(), line_count);
         return None;
     }
@@ -681,9 +682,10 @@ mod tests {
 
     fn msg(id: &str, parent: Option<&str>, ts: &str, role: &str, text: &str) -> String {
         let p = parent.map(|x| format!(r#""{}""#, x)).unwrap_or("null".to_string());
+        let text_json = serde_json::to_string(text).unwrap();
         format!(
-            r#"{{"type":"message","id":"{}","parentId":{},"timestamp":"{}","message":{{"role":"{}","content":[{{"type":"text","text":"{}"}}]}}}}"#,
-            id, p, ts, role, text.replace('"', "\\\"")
+            r#"{{"type":"message","id":"{}","parentId":{},"timestamp":"{}","message":{{"role":"{}","content":[{{"type":"text","text":{}}}]}}}}"#,
+            id, p, ts, role, text_json
         )
     }
 

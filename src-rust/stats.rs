@@ -3,7 +3,7 @@ use crate::scan_pi::PiSession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestLogEntry {
     pub ts: Option<String>,
     pub ok: Option<bool>,

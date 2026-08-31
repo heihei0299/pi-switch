@@ -839,11 +839,14 @@ mod tests {
         // Ensure clean start: remove any pre-existing config
         let cfg_path = tmp.join(".pi-switch").join("config.json");
         let _ = std::fs::remove_file(&cfg_path);
+        let _ = std::fs::create_dir_all(tmp.join(".pi").join("agent"));
+        let _ = std::fs::remove_file(&cfg_path);
 
         // PUT with proxy
         let put_payload = serde_json::json!({
             "providerPrefix": "pi-switch",
             "writeMode": "merge",
+            "gatewayApi": "openai-completions",
             "language": null,
             "proxy": {"host":"127.0.0.1","port":43112,"failover":[],"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},
             "web": {"host":"127.0.0.1","port":43110},
@@ -868,6 +871,7 @@ mod tests {
         let put_missing = serde_json::json!({
             "providerPrefix": "pi-switch",
             "writeMode": "merge",
+            "gatewayApi": "openai-completions",
             "proxy": {"host":"127.0.0.1","port":43112,"failover":[],"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},
             "web": {"host":"127.0.0.1","port":43110}
         });
