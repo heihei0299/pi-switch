@@ -1922,6 +1922,88 @@ fn buffered_response(
     })
 }
 
+// ─── Max output clamping (prevents 400 when input+max exceeds context window) ─────
+const MAX_OUTPUT_SAFETY_TOKENS: u64 = 4096;
+const MAX_OUTPUT_MIN_TOKENS: u64 = 16;
+
+fn estimate_chars_for_value(v: &Value) -> usize {
+    serde_json::to_string(v).map(|s| s.len()).unwrap_or(0)
+}
+
+fn estimate_input_tokens_for_responses(body: &Value) -> u64 {
+    let mut chars = 0usize;
+    if let Some(input) = body.get("input") {
+        chars += estimate_chars_for_value(input);
+    }
+    if let Some(tools) = body.get("tools") {
+        chars += estimate_chars_for_value(tools);
+    }
+    if let Some(instr) = body.get("instructions").and_then(|v| v.as_str()) {
+        chars += instr.len();
+    }
+    ((chars as f64) / 4.0).ceil() as u64
+}
+
+fn estimate_input_tokens_for_chat(body: &Value) -> u64 {
+    let mut chars = 0usize;
+    if let Some(msgs) = body.get("messages") {
+        chars += estimate_chars_for_value(msgs);
+    }
+    if let Some(tools) = body.get("tools") {
+        chars += estimate_chars_for_value(tools);
+    }
+    ((chars as f64) / 4.0).ceil() as u64
+}
+
+fn clamp_responses_max_output_tokens(body: &mut Value, profile: &ProviderProfile, real_model: &str) {
+    let Some(max_val) = body.get("max_output_tokens").and_then(|v| v.as_u64()) else {
+        return;
+    };
+    let Some(model_entry) = profile.models.iter().find(|m| m.id == real_model) else {
+        return;
+    };
+    let context_window = model_entry.context_window as u64;
+    if context_window == 0 {
+        return;
+    }
+    let est = estimate_input_tokens_for_responses(body);
+    let available = context_window
+        .saturating_sub(est)
+        .saturating_sub(MAX_OUTPUT_SAFETY_TOKENS);
+    let clamped_available = available.max(MAX_OUTPUT_MIN_TOKENS);
+    let model_max = model_entry.max_tokens as u64;
+    let effective = clamped_available.min(model_max);
+    if max_val > effective {
+        body["max_output_tokens"] = json!(effective);
+    }
+}
+
+fn clamp_chat_max_tokens(body: &mut Value, profile: &ProviderProfile, real_model: &str) {
+    for key in ["max_tokens", "max_completion_tokens"] {
+        let Some(max_val) = body.get(key).and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let Some(model_entry) = profile.models.iter().find(|m| m.id == real_model) else {
+            continue;
+        };
+        let context_window = model_entry.context_window as u64;
+        if context_window == 0 {
+            continue;
+        }
+        let est = estimate_input_tokens_for_chat(body);
+        let available = context_window
+            .saturating_sub(est)
+            .saturating_sub(MAX_OUTPUT_SAFETY_TOKENS);
+        let clamped_available = available.max(MAX_OUTPUT_MIN_TOKENS);
+        let model_max = model_entry.max_tokens as u64;
+        let effective = clamped_available.min(model_max);
+        if max_val > effective {
+            body[key] = json!(effective);
+        }
+    }
+}
+
+
 /// Log a failed attempt against one candidate (retryable, non-retryable, or
 /// transport error) — shared by the mixed failover loops.
 #[allow(clippy::too_many_arguments)]
@@ -2008,6 +2090,9 @@ async fn forward_responses_mixed(
         let Ok(profile) = serde_json::from_value::<ProviderProfile>(profile_value.clone()) else {
             continue;
         };
+        // Clamp max_output_tokens to prevent 400 when input+max exceeds context window (muse-spark fix)
+        let mut candidate_body = out_body.clone();
+        clamp_responses_max_output_tokens(&mut candidate_body, &profile, real_model);
         let is_native = is_native_responses_passthrough(&profile);
         let is_convert = is_chat_completions_convert(&profile);
         if !is_native && !is_convert {
@@ -2025,10 +2110,13 @@ async fn forward_responses_mixed(
         let request_headers =
             build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
         let send_body = if is_native {
-            body.clone()
+            candidate_body
         } else {
-            match responses_to_chat(body) {
-                Ok(converted) => converted,
+            match responses_to_chat(&candidate_body) {
+                Ok(mut converted) => {
+                    clamp_chat_max_tokens(&mut converted, &profile, real_model);
+                    converted
+                }
                 Err(error) => {
                     conversion_error = Some(error);
                     continue;
@@ -2263,6 +2351,9 @@ async fn forward_responses_mixed_stream(
         let Ok(profile) = serde_json::from_value::<ProviderProfile>(profile_value.clone()) else {
             continue;
         };
+        // Clamp max_output_tokens to prevent 400 when input+max exceeds context window (muse-spark fix)
+        let mut candidate_body = out_body.clone();
+        clamp_responses_max_output_tokens(&mut candidate_body, &profile, real_model);
         let is_native = is_native_responses_passthrough(&profile);
         let is_convert = is_chat_completions_convert(&profile);
         if !is_native && !is_convert {
@@ -2280,11 +2371,12 @@ async fn forward_responses_mixed_stream(
         let request_headers =
             build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
         let send_body = if is_native {
-            body.clone()
+            candidate_body
         } else {
-            match responses_to_chat(body) {
+            match responses_to_chat(&candidate_body) {
                 Ok(mut converted) => {
                     converted["stream"] = json!(true);
+                    clamp_chat_max_tokens(&mut converted, &profile, real_model);
                     converted
                 }
                 Err(error) => {
@@ -2456,7 +2548,7 @@ async fn forward_with_failover(
         }
         b
     };
-    let body = &out_body;
+    let _body = &out_body;
 
     for name in candidates {
         let profile_value = match config.profiles.get(name) {
@@ -2510,6 +2602,14 @@ async fn forward_with_failover(
             Ok(p) => p,
             Err(_) => continue,
         };
+        // Clamp max tokens to prevent 400 when input+max exceeds context window (muse-spark fix)
+        let mut candidate_body = out_body.clone();
+        if target_path.contains("chat/completions") {
+            clamp_chat_max_tokens(&mut candidate_body, &profile, real_model);
+        } else if target_path.contains("responses") {
+            clamp_responses_max_output_tokens(&mut candidate_body, &profile, real_model);
+        }
+        let body = &candidate_body;
 
         let is_anthropic = profile.api == "anthropic-messages";
         let is_responses = profile.api == "openai-responses";
@@ -2761,7 +2861,7 @@ async fn forward_anthropic_with_failover(
         }
         b
     };
-    let body = &out_body;
+    let _body = &out_body;
 
     for name in candidates {
         let (is_open, is_half_open) = is_circuit_open(&circuit_state, name, circuit_settings);
@@ -2785,6 +2885,10 @@ async fn forward_anthropic_with_failover(
             Ok(p) => p,
             Err(_) => continue,
         };
+        // Clamp max_tokens to prevent 400 when input+max exceeds context window
+        let mut candidate_body = out_body.clone();
+        clamp_chat_max_tokens(&mut candidate_body, &profile, real_model);
+        let body = &candidate_body;
         if profile.api != "anthropic-messages" {
             continue;
         }
