@@ -12,9 +12,9 @@ use chrono::Utc;
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 // ─── Disguise: preset → real client identity ───────────────
 //
@@ -1926,6 +1926,29 @@ fn buffered_response(
 const MAX_OUTPUT_SAFETY_TOKENS: u64 = 8192;
 const MAX_OUTPUT_MIN_TOKENS: u64 = 16;
 
+// ─── Last prompt tokens cache (b: true-value closed loop) ─────
+static LAST_PROMPT_TOKENS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+fn last_prompt_cache() -> &'static Mutex<HashMap<String, u64>> {
+    LAST_PROMPT_TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn remembered_prompt_tokens(model: &str) -> Option<u64> {
+    last_prompt_cache().lock().ok()?.get(model).copied()
+}
+fn remember_prompt_tokens(model: &str, tokens: u64) {
+    if let Ok(mut m) = last_prompt_cache().lock() {
+        m.insert(model.to_string(), tokens);
+    }
+}
+fn is_context_overflow_400(status: u16, body: &[u8]) -> bool {
+    if status != 400 {
+        return false;
+    }
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.get("type")).and_then(|t| t.as_str()).map(|s| s == "invalid_request_error"))
+        .unwrap_or(false)
+}
+
 fn estimate_chars_for_value(v: &Value) -> usize {
     serde_json::to_string(v).map(|s| s.len()).unwrap_or(0)
 }
@@ -1970,7 +1993,15 @@ fn clamp_responses_max_output_tokens(
     if context_window == 0 {
         return;
     }
-    let est = estimate_input_tokens_for_responses(body);
+    let est = {
+        let h = estimate_input_tokens_for_responses(body);
+        if let Some(last) = remembered_prompt_tokens(real_model) {
+            let inflated = ((last as f64) * 1.05).ceil() as u64;
+            h.max(inflated)
+        } else {
+            h
+        }
+    };
     let available = context_window
         .saturating_sub(est)
         .saturating_sub(MAX_OUTPUT_SAFETY_TOKENS);
@@ -1994,7 +2025,15 @@ fn clamp_chat_max_tokens(body: &mut Value, profile: &ProviderProfile, real_model
         if context_window == 0 {
             continue;
         }
-        let est = estimate_input_tokens_for_chat(body);
+        let est = {
+            let h = estimate_input_tokens_for_chat(body);
+            if let Some(last) = remembered_prompt_tokens(real_model) {
+                let inflated = ((last as f64) * 1.05).ceil() as u64;
+                h.max(inflated)
+            } else {
+                h
+            }
+        };
         let available = context_window
             .saturating_sub(est)
             .saturating_sub(MAX_OUTPUT_SAFETY_TOKENS);
@@ -2113,7 +2152,7 @@ async fn forward_responses_mixed(
         let request_headers =
             build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
         let send_body = if is_native {
-            candidate_body
+            candidate_body.clone()
         } else {
             match responses_to_chat(&candidate_body) {
                 Ok(mut converted) => {
@@ -2144,6 +2183,7 @@ async fn forward_responses_mixed(
                     let usage = serde_json::from_slice::<Value>(&body_bytes)
                         .ok()
                         .and_then(|value| crate::usage::extract_usage(&value));
+                    if let Some(u) = usage.as_ref() { remember_prompt_tokens(real_model, u.prompt_tokens); }
                     log_request(
                         name,
                         true,
@@ -2164,6 +2204,7 @@ async fn forward_responses_mixed(
                 match serde_json::from_slice::<Value>(&body_bytes) {
                     Ok(chat) => {
                         let usage = crate::usage::extract_usage(&chat);
+                        if let Some(u) = usage.as_ref() { remember_prompt_tokens(real_model, u.prompt_tokens); }
                         match chat_response_to_responses(
                             chat,
                             real_model,
@@ -2256,6 +2297,89 @@ async fn forward_responses_mixed(
                 let status = upstream.status();
                 let response_headers = upstream.headers().clone();
                 let body_bytes = upstream.bytes().await.unwrap_or_default().to_vec();
+                if is_context_overflow_400(status.as_u16(), &body_bytes) {
+                    let mut retry_body = candidate_body.clone();
+                    retry_body["max_output_tokens"] = serde_json::json!(MAX_OUTPUT_MIN_TOKENS);
+                    let retry_send = if is_native {
+                        retry_body.clone()
+                    } else {
+                        match responses_to_chat(&retry_body) {
+                            Ok(mut c) => {
+                                clamp_chat_max_tokens(&mut c, &profile, real_model);
+                                c
+                            }
+                            Err(_) => {
+                                log_failed_attempt(
+                                    name,
+                                    None,
+                                    Some(status.as_u16()),
+                                    Some(&url),
+                                    body.get("model").and_then(|v| v.as_str()),
+                                    conversation_id,
+                                    conversation_name.as_deref(),
+                                )
+                                .await;
+                                return Ok(buffered_response(status, &response_headers, body_bytes));
+                            }
+                        }
+                    };
+                    let retry_headers = build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
+                    let retry_url = if is_native {
+                        format!("{base}/responses")
+                    } else {
+                        format!("{base}/chat/completions")
+                    };
+                    if let Ok(retry_up) = client.post(&retry_url).headers(retry_headers).json(&retry_send).send().await {
+                        if retry_up.status().is_success() {
+                            let r_status = retry_up.status();
+                            let r_headers = retry_up.headers().clone();
+                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
+                            record_success(name, is_half_open).await;
+                            if is_native {
+                                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&r_bytes) {
+                                    if let Some(u) = crate::usage::extract_usage(&v) {
+                                        remember_prompt_tokens(real_model, u.prompt_tokens);
+                                    }
+                                }
+                                let r_usage = serde_json::from_slice::<serde_json::Value>(&r_bytes).ok().and_then(|v| crate::usage::extract_usage(&v));
+                                log_request(
+                                    name,
+                                    true,
+                                    None,
+                                    Some(r_status.as_u16()),
+                                    Some(&retry_url),
+                                    None,
+                                    body.get("model").and_then(|v| v.as_str()),
+                                    r_usage,
+                                    conversation_id,
+                                    conversation_name.as_deref(),
+                                    lookup_model_cost(&profile, real_model),
+                                )
+                                .await;
+                                return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                            } else {
+                                if let Ok(chat) = serde_json::from_slice::<serde_json::Value>(&r_bytes) {
+                                    let ru = crate::usage::extract_usage(&chat);
+                                    if let Some(u) = ru.as_ref() {
+                                        remember_prompt_tokens(real_model, u.prompt_tokens);
+                                    }
+                                    if let Ok(rb) = chat_response_to_responses(chat.clone(), real_model, Some(chrono::Utc::now().timestamp() as u64)) {
+                                        log_request(name, true, None, Some(200), Some(&retry_url), None, body.get("model").and_then(|v| v.as_str()), ru, conversation_id, conversation_name.as_deref(), lookup_model_cost(&profile, real_model)).await;
+                                        let s = serde_json::to_string(&rb).unwrap_or_default();
+                                        return Ok(axum::response::Response::builder().status(200).header("content-type", "application/json").body(axum::body::Body::from(s)).unwrap());
+                                    }
+                                }
+                                return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                            }
+                        } else {
+                            let r_status = retry_up.status();
+                            let r_headers = retry_up.headers().clone();
+                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
+                            log_failed_attempt(name, None, Some(r_status.as_u16()), Some(&retry_url), body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref()).await;
+                            return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                        }
+                    }
+                }
                 log_failed_attempt(
                     name,
                     None,
@@ -2374,7 +2498,7 @@ async fn forward_responses_mixed_stream(
         let request_headers =
             build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
         let send_body = if is_native {
-            candidate_body
+            candidate_body.clone()
         } else {
             match responses_to_chat(&candidate_body) {
                 Ok(mut converted) => {
@@ -2474,6 +2598,74 @@ async fn forward_responses_mixed_stream(
                 let status = upstream.status();
                 let response_headers = upstream.headers().clone();
                 let body_bytes = upstream.bytes().await.unwrap_or_default().to_vec();
+                if is_context_overflow_400(status.as_u16(), &body_bytes) {
+                    let mut retry_body = candidate_body.clone();
+                    retry_body["max_output_tokens"] = serde_json::json!(MAX_OUTPUT_MIN_TOKENS);
+                    let retry_send = if is_native {
+                        retry_body.clone()
+                    } else {
+                        match responses_to_chat(&retry_body) {
+                            Ok(mut c) => {
+                                clamp_chat_max_tokens(&mut c, &profile, real_model);
+                                c
+                            }
+                            Err(_) => {
+                                log_failed_attempt(
+                                    name,
+                                    None,
+                                    Some(status.as_u16()),
+                                    Some(&url),
+                                    body.get("model").and_then(|v| v.as_str()),
+                                    conversation_id,
+                                    conversation_name.as_deref(),
+                                )
+                                .await;
+                                return Ok(buffered_response(status, &response_headers, body_bytes));
+                            }
+                        }
+                    };
+                    let retry_headers = build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
+                    let retry_url = if is_native {
+                        format!("{base}/responses")
+                    } else {
+                        format!("{base}/chat/completions")
+                    };
+                    if let Ok(retry_up) = client.post(&retry_url).headers(retry_headers).json(&retry_send).send().await {
+                        if retry_up.status().is_success() {
+                            if is_native {
+                                record_success(name, is_half_open).await;
+                                let mut fields = StreamLogFields::for_success(name, retry_up.status().as_u16(), &retry_url, body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref());
+                                fields.cost = lookup_model_cost(&profile, real_model);
+                                return Ok(stream_response(retry_up, Some(fields)));
+                            } else {
+                                let is_sse = retry_up.headers().get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|t| t.contains("event-stream"));
+                                if !is_sse {
+                                    let r_status2 = retry_up.status();
+                                    let r_headers2 = retry_up.headers().clone();
+                                    let r_bytes2 = retry_up.bytes().await.unwrap_or_default().to_vec();
+                                    return Ok(buffered_response(r_status2, &r_headers2, r_bytes2));
+                                }
+                                record_success(name, is_half_open).await;
+                                let mut builder = axum::response::Response::builder().status(200);
+                                for (hn, hv) in forward_headers(retry_up.headers()) {
+                                    builder = builder.header(hn, hv);
+                                }
+                                builder = builder.header("content-type", "text/event-stream");
+                                let mut fields = StreamLogFields::for_success(name, 200, &retry_url, body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref());
+                                fields.cost = lookup_model_cost(&profile, real_model);
+                                let converter = ChatSseToResponses::new(real_model);
+                                let transform = ResponsesStreamTransform::new(retry_up.bytes_stream(), converter, fields);
+                                return Ok(builder.body(axum::body::Body::from_stream(transform)).unwrap());
+                            }
+                        } else {
+                            let r_status = retry_up.status();
+                            let r_headers = retry_up.headers().clone();
+                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
+                            log_failed_attempt(name, None, Some(r_status.as_u16()), Some(&retry_url), body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref()).await;
+                            return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                        }
+                    }
+                }
                 log_failed_attempt(
                     name,
                     None,
