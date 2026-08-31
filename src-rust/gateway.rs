@@ -117,6 +117,7 @@ fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::
                     ..Default::default()
                 });
             entry.id = format!("{}/{}", name, real_id);
+            ensure_reasoning_supports_developer_role(&mut entry);
             if let Ok(v) = serde_json::to_value(&entry) {
                 gateway_models.push(v);
             }
@@ -131,6 +132,22 @@ fn build_proposed_gateway_entry(config: &config::PiSwitchConfig) -> serde_json::
         "models": gateway_models,
         "proxy": false,
     })
+}
+
+fn ensure_reasoning_supports_developer_role(entry: &mut crate::config::ModelEntry) {
+    if entry.reasoning != Some(true) {
+        return;
+    }
+    let mut compat = entry.compat.take().unwrap_or_else(|| serde_json::json!({}));
+    if let Some(obj) = compat.as_object_mut() {
+        if !obj.contains_key("supportsDeveloperRole") {
+            obj.insert(
+                "supportsDeveloperRole".to_string(),
+                serde_json::json!(false),
+            );
+        }
+    }
+    entry.compat = Some(compat);
 }
 
 fn merge_gateway_extra(current: &serde_json::Value, proposed: &mut serde_json::Value) {
@@ -593,5 +610,81 @@ mod tests {
         );
         let preview2 = preview_gateway().expect("preview after apply should succeed");
         assert_eq!(preview2.pending_count, 0, "after apply pending should be 0");
+    }
+
+    #[test]
+    fn reasoning_model_in_gateway_gets_supports_developer_role_false_when_missing() {
+        let mut config = crate::config::PiSwitchConfig::default();
+        let profile = serde_json::json!({
+            "api": "openai-completions",
+            "baseUrl": "https://example.com/v1",
+            "apiKey": "sk-test",
+            "models": [{ "id": "m1", "reasoning": true, "contextWindow": 128000, "maxTokens": 16384 }],
+            "exposedModels": ["m1"]
+        });
+        config.profiles.insert("p".to_string(), profile);
+        let entry = build_proposed_gateway_entry(&config);
+        let model = entry["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == "p/m1")
+            .expect("model p/m1");
+        assert_eq!(
+            model["compat"]["supportsDeveloperRole"],
+            serde_json::json!(false),
+            "reasoning model must carry compat.supportsDeveloperRole:false"
+        );
+    }
+
+    #[test]
+    fn reasoning_model_preserves_explicit_supports_developer_role_true() {
+        let mut config = crate::config::PiSwitchConfig::default();
+        let profile = serde_json::json!({
+            "api": "openai-completions",
+            "baseUrl": "https://example.com/v1",
+            "apiKey": "sk-test",
+            "models": [{ "id": "m1", "reasoning": true, "contextWindow": 128000, "maxTokens": 16384, "compat": { "supportsDeveloperRole": true } }],
+            "exposedModels": ["m1"]
+        });
+        config.profiles.insert("p".to_string(), profile);
+        let entry = build_proposed_gateway_entry(&config);
+        let model = entry["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == "p/m1")
+            .unwrap();
+        assert_eq!(
+            model["compat"]["supportsDeveloperRole"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn non_reasoning_model_does_not_get_developer_role_patch() {
+        let mut config = crate::config::PiSwitchConfig::default();
+        let profile = serde_json::json!({
+            "api": "openai-completions",
+            "baseUrl": "https://example.com/v1",
+            "apiKey": "sk-test",
+            "models": [{ "id": "m1", "reasoning": false, "contextWindow": 128000, "maxTokens": 16384 }],
+            "exposedModels": ["m1"]
+        });
+        config.profiles.insert("p".to_string(), profile);
+        let entry = build_proposed_gateway_entry(&config);
+        let model = entry["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == "p/m1")
+            .unwrap();
+        assert!(
+            model
+                .get("compat")
+                .and_then(|c| c.get("supportsDeveloperRole"))
+                .is_none(),
+            "non-reasoning should not inject"
+        );
     }
 }
