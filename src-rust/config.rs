@@ -5,6 +5,34 @@ use std::path::PathBuf;
 
 // ─── Types matching pi-switch JS config ───────────────────
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponsesMode {
+    #[default]
+    Auto,
+    Passthrough,
+    Convert,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversationSource {
+    #[default]
+    SessionScan,
+    Proxy,
+    Off,
+}
+
+impl ConversationSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConversationSource::SessionScan => "sessionScan",
+            ConversationSource::Proxy => "proxy",
+            ConversationSource::Off => "off",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
@@ -91,24 +119,81 @@ pub struct ModelCostTier {
     pub extra: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Upstream {
+    #[serde(default, skip_serializing_if = "String::is_empty", rename = "baseUrl")]
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty", rename = "apiKey")]
+    pub api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Map<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Upstream {
+    /// 校验单个上游配置
+    pub fn validate(&self, path: &str) -> std::result::Result<(), String> {
+        if !self.base_url.is_empty()
+            && !self.base_url.starts_with("http://")
+            && !self.base_url.starts_with("https://")
+        {
+            return Err(format!(
+                "{path}.baseUrl must start with http:// or https://"
+            ));
+        }
+        if let Some(headers) = &self.headers {
+            validate_string_map(&Value::Object(headers.clone()), &format!("{path}.headers"))?;
+        }
+        if let Some(w) = self.weight {
+            if w == 0 {
+                return Err(format!("{path}.weight must be greater than 0"));
+            }
+        }
+        if let Some(name) = &self.name {
+            if name.trim().is_empty() {
+                return Err(format!("{path}.name must not be empty if set"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api: String,
+    #[serde(default, rename = "responsesMode")]
+    pub responses_mode: ResponsesMode,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[serde(rename = "baseUrl")]
     pub base_url: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[serde(rename = "apiKey")]
     pub api_key: String,
+    /// 多上游配置（进程隔离后每个 Upstream 独立调度）。为空时回退到单 baseUrl/apiKey/headers。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upstreams: Vec<Upstream>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）。
+    /// 显式值优先；为空时按 preset 推断（如 openrouter→openrouter）；推断失败则跳过模型元数据 enrich，不阻断保存。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "modelsDevProvider"
+    )]
+    pub models_dev_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -139,6 +224,94 @@ pub struct ProviderProfile {
     pub spoof: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl ProviderProfile {
+    /// 是否配置多上游
+    #[allow(dead_code)]
+    pub fn has_upstreams(&self) -> bool {
+        !self.upstreams.is_empty()
+    }
+
+    /// 解析生效的上游列表：upstreams 非空时直接返回，否则回退构造单 upstream（兼容旧字段）
+    #[allow(dead_code)]
+    pub fn resolved_upstreams(&self) -> Vec<Upstream> {
+        if !self.upstreams.is_empty() {
+            self.upstreams.clone()
+        } else if !self.base_url.is_empty() || !self.api_key.is_empty() || self.headers.is_some() {
+            vec![Upstream {
+                base_url: self.base_url.clone(),
+                api_key: self.api_key.clone(),
+                headers: self.headers.clone(),
+                weight: None,
+                name: None,
+                extra: Map::new(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// 主 baseUrl（多上游时取首个，否则回退单字段）
+    pub fn primary_base_url(&self) -> &str {
+        if let Some(first) = self.upstreams.first() {
+            if !first.base_url.is_empty() {
+                return &first.base_url;
+            }
+        }
+        &self.base_url
+    }
+
+    /// 主 apiKey（多上游时取首个，否则回退单字段）
+    pub fn primary_api_key(&self) -> &str {
+        if let Some(first) = self.upstreams.first() {
+            if !first.api_key.is_empty() {
+                return &first.api_key;
+            }
+        }
+        &self.api_key
+    }
+
+    /// 主 headers（多上游时取首个，否则回退）
+    pub fn primary_headers(&self) -> Option<&Map<String, Value>> {
+        if let Some(first) = self.upstreams.first() {
+            if first.headers.is_some() {
+                return first.headers.as_ref();
+            }
+        }
+        self.headers.as_ref()
+    }
+}
+
+/// 将 preset id 推断为模型目录的 provider key（用于模型元数据 enrich）。
+/// 已知映射：openrouter/anthropic/deepseek/openai/siliconflow 等（与目录 key 一致）。
+/// 未知 preset 返回 None，调用方应跳过 enrich 而非报错。
+pub fn preset_to_models_dev_key(preset: &str) -> Option<&'static str> {
+    match preset {
+        "openrouter" => Some("openrouter"),
+        "anthropic" => Some("anthropic"),
+        "deepseek" => Some("deepseek"),
+        "openai" => Some("openai"),
+        "siliconflow" => Some("siliconflow"),
+        _ => None,
+    }
+}
+
+/// 解析 profile 对应的模型目录 provider key（用于模型元数据 enrich）。
+/// 优先级：显式 modelsDevProvider > preset 推断；均无或推断失败则返回 None（跳过 enrich，不报错）。
+pub fn resolve_models_dev_provider(profile: &ProviderProfile) -> Option<String> {
+    if let Some(ref raw) = profile.models_dev_provider {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(ref preset) = profile.preset {
+        if let Some(key) = preset_to_models_dev_key(preset) {
+            return Some(key.to_string());
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -186,25 +359,6 @@ impl Default for WebSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum ConversationSource {
-    #[default]
-    SessionScan,
-    Proxy,
-    Off,
-}
-
-impl ConversationSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ConversationSource::SessionScan => "sessionScan",
-            ConversationSource::Proxy => "proxy",
-            ConversationSource::Off => "off",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Settings {
     #[serde(default = "default_prefix")]
@@ -215,6 +369,8 @@ pub struct Settings {
     pub write_mode: String,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default = "default_gateway_api", rename = "gatewayApi")]
+    pub gateway_api: String,
     #[serde(default)]
     pub proxy: ProxySettings,
     #[serde(default)]
@@ -242,6 +398,11 @@ impl<'de> serde::Deserialize<'de> for Settings {
             .map(|s| s.to_string())
             .unwrap_or_else(default_write_mode);
         let language = obj.get("language").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let gateway_api = obj
+            .get("gatewayApi")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_gateway_api);
         let proxy = obj
             .get("proxy")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
@@ -250,7 +411,6 @@ impl<'de> serde::Deserialize<'de> for Settings {
             .get("web")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
             .unwrap_or_default();
-        // conversationSource handling with legacy fallback
         let explicit_cs = obj.get("conversationSource").and_then(|v| v.as_str());
         let legacy = obj.get("injectOpenCodeAttribution").and_then(|v| v.as_bool());
         let conversation_source = if let Some(cs) = explicit_cs {
@@ -274,11 +434,11 @@ impl<'de> serde::Deserialize<'de> for Settings {
         } else {
             ConversationSource::default()
         };
-        // legacy is absorbed — not stored after migration
         Ok(Settings {
             provider_prefix,
             write_mode,
             language,
+            gateway_api,
             proxy,
             web,
             conversation_source,
@@ -295,15 +455,7 @@ pub(crate) fn migrated_for_save(config: &PiSwitchConfig) -> PiSwitchConfig {
         } else {
             ConversationSource::Off
         };
-        // Only override if current is still the default (meaning file had no explicit conversationSource)
-        // Explicit proxy/off/sessionScan already wins over legacy.
         if out.settings.conversation_source == ConversationSource::SessionScan {
-            // If legacy was true -> Proxy, false -> Off. For explicit sessionScan vs legacy true,
-            // this would incorrectly map, but that case only arises via direct struct construction;
-            // file-based explicit sessionScan would have cleared legacy at deserialize time.
-            // To keep explicit sessionScan, we require that legacy mapping only applies when
-            // conversation_source is default AND legacy existed. For the test helper, default SessionScan + legacy true => Proxy is expected,
-            // so we map in that case.
             out.settings.conversation_source = mapped;
         }
     }
@@ -312,7 +464,6 @@ pub(crate) fn migrated_for_save(config: &PiSwitchConfig) -> PiSwitchConfig {
     }
     out
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiSwitchConfig {
@@ -339,6 +490,14 @@ fn default_cooldown() -> u32 {
 fn default_host() -> String {
     "127.0.0.1".into()
 }
+pub fn normalize_gateway_host(host: &str) -> &str {
+    let trimmed = host.trim();
+    if trimmed.is_empty() || trimmed == "0.0.0.0" || trimmed == "::" || trimmed == "[::]" {
+        "127.0.0.1"
+    } else {
+        trimmed
+    }
+}
 fn default_port() -> u16 {
     43112
 }
@@ -350,6 +509,9 @@ fn default_web_port() -> u16 {
 }
 fn default_prefix() -> String {
     "pi-switch".into()
+}
+fn default_gateway_api() -> String {
+    "openai-completions".into()
 }
 fn default_write_mode() -> String {
     "merge".into()
@@ -374,6 +536,7 @@ impl Default for PiSwitchConfig {
                 provider_prefix: default_prefix(),
                 write_mode: default_write_mode(),
                 language: None,
+                gateway_api: default_gateway_api(),
                 proxy: ProxySettings {
                     host: default_host(),
                     port: default_port(),
@@ -770,6 +933,16 @@ fn validate_model_override(value: &Value, path: &str) -> std::result::Result<(),
     Ok(())
 }
 
+fn validate_responses_mode(profile: &ProviderProfile) -> std::result::Result<(), String> {
+    match profile.responses_mode {
+        ResponsesMode::Auto => Ok(()),
+        ResponsesMode::Passthrough if profile.api == "openai-responses" => Ok(()),
+        ResponsesMode::Convert if profile.api == "openai-completions" => Ok(()),
+        ResponsesMode::Passthrough => Err("passthrough requires openai-responses api".into()),
+        ResponsesMode::Convert => Err("convert requires openai-completions api".into()),
+    }
+}
+
 pub fn validate_provider_profile(
     name: &str,
     profile: &ProviderProfile,
@@ -785,13 +958,24 @@ pub fn validate_provider_profile(
     if !profile.api.is_empty() && !SUPPORTED_APIS.contains(&profile.api.as_str()) {
         return Err(format!("api is not supported: {}", profile.api));
     }
+    validate_responses_mode(profile)?;
     if !profile.base_url.is_empty()
         && !profile.base_url.starts_with("http://")
         && !profile.base_url.starts_with("https://")
     {
         return Err("baseUrl must start with http:// or https://".into());
     }
-    if !profile.models.is_empty() && profile.base_url.is_empty() {
+    // 校验多上游（新增字段，向后兼容：单 baseUrl 仍可用）
+    for (idx, upstream) in profile.upstreams.iter().enumerate() {
+        upstream.validate(&format!("upstreams[{idx}]"))?;
+    }
+    // baseUrl 必填校验：兼容多上游，回退到首个 upstream
+    let has_effective_base = if !profile.upstreams.is_empty() {
+        profile.upstreams.iter().any(|u| !u.base_url.is_empty())
+    } else {
+        !profile.base_url.is_empty()
+    };
+    if !profile.models.is_empty() && !has_effective_base {
         return Err("baseUrl is required when models are defined".into());
     }
     if !profile.models.is_empty()
@@ -871,6 +1055,34 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
+pub(crate) fn models_dev_provider_warning(
+    name: &str,
+    profile: &ProviderProfile,
+) -> Option<ValidationIssue> {
+    let raw = profile.models_dev_provider.as_ref()?.trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    let known = [
+        "openrouter",
+        "anthropic",
+        "deepseek",
+        "openai",
+        "siliconflow",
+    ];
+    if known.contains(&raw.as_str()) {
+        return None;
+    }
+    Some(ValidationIssue {
+        level: "warning".into(),
+        path: format!("profiles.{}.modelsDevProvider", name),
+        message: format!(
+            "未知的模型目录 provider '{}'，模型元数据 enrich 时将跳过（不阻断保存）",
+            raw
+        ),
+    })
+}
+
 pub fn validate_config() -> Result<Vec<ValidationIssue>> {
     let config = load_config()?;
     let mut issues = Vec::new();
@@ -914,6 +1126,10 @@ pub fn validate_config() -> Result<Vec<ValidationIssue>> {
                 message: "No models defined".into(),
             });
         }
+
+        if let Some(warning) = models_dev_provider_warning(name, &profile) {
+            issues.push(warning);
+        }
     }
 
     // Check current setting
@@ -945,6 +1161,16 @@ pub fn validate_config() -> Result<Vec<ValidationIssue>> {
             });
         }
     }
+    if !SUPPORTED_APIS.contains(&config.settings.gateway_api.as_str()) {
+        issues.push(ValidationIssue {
+            level: "error".into(),
+            path: "settings.gatewayApi".into(),
+            message: format!(
+                "gatewayApi is not supported: {}",
+                config.settings.gateway_api
+            ),
+        });
+    }
 
     Ok(issues)
 }
@@ -971,7 +1197,10 @@ pub fn resolve_env(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_provider_wrapper, parse_provider_wrapper};
+    use super::{
+        format_provider_wrapper, parse_provider_wrapper, ConversationSource, PiSwitchConfig,
+        ResponsesMode, Settings,
+    };
 
     #[test]
     fn parses_full_pi_provider_wrapper_without_losing_fields() {
@@ -1084,77 +1313,246 @@ mod tests {
     }
 
     #[test]
-    fn settings_defaults_to_session_scan_when_missing() {
-        let s: super::Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(s.conversation_source, super::ConversationSource::SessionScan);
+    fn missing_responses_mode_defaults_to_auto() {
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-responses"}}"#,
+        )
+        .expect("valid provider");
+        assert_eq!(profile.responses_mode, ResponsesMode::Auto);
     }
 
     #[test]
-    fn settings_parses_all_three_variants() {
-        let proxy: super::Settings = serde_json::from_str(r#"{"conversationSource":"proxy"}"#).unwrap();
-        assert_eq!(proxy.conversation_source, super::ConversationSource::Proxy);
-        let off: super::Settings = serde_json::from_str(r#"{"conversationSource":"off"}"#).unwrap();
-        assert_eq!(off.conversation_source, super::ConversationSource::Off);
-        let scan: super::Settings = serde_json::from_str(r#"{"conversationSource":"sessionScan"}"#).unwrap();
-        assert_eq!(scan.conversation_source, super::ConversationSource::SessionScan);
+    fn rejects_incompatible_responses_mode() {
+        let input = r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions","responsesMode":"passthrough"}}"#;
+        let error = parse_provider_wrapper(input).unwrap_err();
+        assert!(error.contains("passthrough requires openai-responses"));
     }
 
     #[test]
-    fn settings_migrates_legacy_true_to_proxy() {
-        let s: super::Settings = serde_json::from_str(r#"{"injectOpenCodeAttribution":true}"#).unwrap();
-        assert_eq!(s.conversation_source, super::ConversationSource::Proxy);
+    fn accepts_compatible_responses_modes() {
+        for (api, mode) in [
+            ("openai-responses", "passthrough"),
+            ("openai-completions", "convert"),
+            ("openai-responses", "auto"),
+            ("openai-completions", "auto"),
+        ] {
+            let input = format!(
+                r#"{{"custom":{{"baseUrl":"https://example.com/v1","api":"{api}","responsesMode":"{mode}"}}}}"#,
+            );
+            parse_provider_wrapper(&input).expect("compatible mode");
+        }
     }
 
     #[test]
-    fn settings_migrates_legacy_false_to_off() {
-        let s: super::Settings = serde_json::from_str(r#"{"injectOpenCodeAttribution":false}"#).unwrap();
-        assert_eq!(s.conversation_source, super::ConversationSource::Off);
+    fn responses_mode_round_trips_as_camel_case_json() {
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-responses","responsesMode":"passthrough"}}"#,
+        )
+        .expect("valid provider");
+        let value = serde_json::to_value(profile).expect("serializable provider");
+        assert_eq!(value["responsesMode"], "passthrough");
     }
 
     #[test]
-    fn settings_explicit_wins_over_legacy() {
-        let s: super::Settings = serde_json::from_str(r#"{"conversationSource":"off","injectOpenCodeAttribution":true}"#).unwrap();
-        assert_eq!(s.conversation_source, super::ConversationSource::Off);
-        // legacy should be absorbed (no longer stored)
-        assert!(s.inject_open_code_attribution.is_none());
+    fn settings_round_trips_inject_opencode_attribution() {
+        // 旧字段 injectOpenCodeAttribution 迁移到 conversationSource，序列化后仅保留 conversationSource
+        let input = r#"{
+          "version": 1,
+          "current": null,
+          "profiles": {},
+          "settings": {
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge",
+            "injectOpenCodeAttribution": false
+          }
+        }"#;
+        let config: PiSwitchConfig = serde_json::from_str(input).expect("valid config");
+        assert_eq!(config.settings.conversation_source, ConversationSource::Off);
+        assert!(config.settings.inject_open_code_attribution.is_none());
+        let value = serde_json::to_value(&config).expect("serializable config");
+        assert_eq!(value["settings"]["conversationSource"], "off");
+        assert!(value["settings"].get("injectOpenCodeAttribution").is_none());
     }
 
     #[test]
-    fn config_version_migrates_and_defaults() {
-        let json_v1 = r#"{"version":1,"settings":{"injectOpenCodeAttribution":true}}"#;
-        let cfg: super::PiSwitchConfig = serde_json::from_str(json_v1).unwrap();
-        assert_eq!(cfg.version, 1);
-        assert_eq!(cfg.settings.conversation_source, super::ConversationSource::Proxy);
-        let json_default = r#"{"version":1,"settings":{}}"#;
-        let cfg2: super::PiSwitchConfig = serde_json::from_str(json_default).unwrap();
-        assert_eq!(cfg2.settings.conversation_source, super::ConversationSource::SessionScan);
-        let cfg_default = super::PiSwitchConfig::default();
-        assert_eq!(cfg_default.version, 2);
-        assert_eq!(cfg_default.settings.conversation_source, super::ConversationSource::SessionScan);
+    fn settings_defaults_inject_opencode_attribution_to_true() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
+        assert_eq!(settings.conversation_source, ConversationSource::SessionScan);
+        assert!(settings.inject_open_code_attribution.is_none());
+    }
+
+    // ── Ticket 02: 模型目录映射字段 ─────────────────────────────────
+
+    #[test]
+    fn models_dev_provider_deserializes_none_when_missing() {
+        // 旧配置无 modelsDevProvider 时兼容为 None
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions"}}"#,
+        )
+        .expect("valid provider");
+        assert!(profile.models_dev_provider.is_none());
+        assert!(profile.preset.is_none());
     }
 
     #[test]
-    fn save_migration_removes_legacy_and_bumps_version() {
-        let tmp = std::env::temp_dir().join(format!("pi-switch-test-{}-{}", std::process::id(), 1));
-        let _ = std::fs::create_dir_all(&tmp);
-        let file = tmp.join("config.json");
-        // Build config with legacy true and version 1, then save via helper
-        let mut cfg = super::PiSwitchConfig::default();
-        cfg.version = 1;
-        cfg.settings.inject_open_code_attribution = Some(true);
-        cfg.settings.conversation_source = super::ConversationSource::SessionScan;
-        // Use internal helper to get migrated json
-        let migrated = super::migrated_for_save(&cfg);
-        assert_eq!(migrated.version, 2);
-        assert!(migrated.settings.inject_open_code_attribution.is_none());
-        assert_eq!(migrated.settings.conversation_source, super::ConversationSource::Proxy);
-        // Also verify serialization has no legacy key and has conversationSource
-        let json = serde_json::to_value(&migrated).unwrap();
-        assert!(json.get("settings").unwrap().get("injectOpenCodeAttribution").is_none());
-        assert_eq!(json["settings"]["conversationSource"], "proxy");
-        let _ = std::fs::remove_dir_all(&tmp);
-        let _ = file;
+    fn models_dev_provider_round_trips_and_preserves_explicit_value() {
+        let input = r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions","preset":"openai","modelsDevProvider":"openai","models":[]}}"#;
+        let (_name, profile) = parse_provider_wrapper(input).expect("valid provider");
+        assert_eq!(profile.models_dev_provider.as_deref(), Some("openai"));
+        assert_eq!(profile.preset.as_deref(), Some("openai"));
+        let value = serde_json::to_value(&profile).expect("serializable");
+        assert_eq!(value["modelsDevProvider"], "openai");
+        assert_eq!(value["preset"], "openai");
+        // round-trip via wrapper
+        let formatted = format_provider_wrapper(input).expect("format");
+        let (_, reparsed) = parse_provider_wrapper(&formatted).expect("reparsed");
+        assert_eq!(reparsed.models_dev_provider.as_deref(), Some("openai"));
     }
 
+    #[test]
+    fn models_dev_provider_skip_serializing_when_none() {
+        let (_, profile) = parse_provider_wrapper(
+            r#"{"custom":{"baseUrl":"https://example.com/v1","api":"openai-completions"}}"#,
+        )
+        .expect("valid provider");
+        let value = serde_json::to_value(&profile).expect("serializable");
+        assert!(value.get("modelsDevProvider").is_none());
+        // Some 时应序列化
+        let mut with = profile.clone();
+        with.models_dev_provider = Some("openai".into());
+        let v2 = serde_json::to_value(&with).expect("serializable");
+        assert_eq!(v2["modelsDevProvider"], "openai");
+    }
 
+    #[test]
+    fn models_dev_provider_allows_unknown_key_without_error() {
+        // validate_provider_profile 对未知 modelsDevProvider 仅 warning，不阻断
+        let mut profile = crate::config::ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            ..Default::default()
+        };
+        profile.models_dev_provider = Some("unknown_provider_xyz".into());
+        let result = crate::config::validate_provider_profile("custom", &profile);
+        assert!(
+            result.is_ok(),
+            "unknown modelsDevProvider should not error: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn preset_to_models_dev_key_maps_known_presets() {
+        use crate::config::preset_to_models_dev_key;
+        assert_eq!(preset_to_models_dev_key("openrouter"), Some("openrouter"));
+        assert_eq!(preset_to_models_dev_key("anthropic"), Some("anthropic"));
+        assert_eq!(preset_to_models_dev_key("deepseek"), Some("deepseek"));
+        assert_eq!(preset_to_models_dev_key("openai"), Some("openai"));
+        assert_eq!(preset_to_models_dev_key("siliconflow"), Some("siliconflow"));
+        assert_eq!(preset_to_models_dev_key("unknown"), None);
+        assert_eq!(preset_to_models_dev_key(""), None);
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_prefers_explicit_over_preset() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let mut p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            preset: Some("anthropic".into()),
+            models_dev_provider: Some("openai".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
+        // explicit trimmed
+        p.models_dev_provider = Some("  deepseek  ".into());
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("deepseek"));
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_falls_back_to_preset() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            preset: Some("openai".into()),
+            models_dev_provider: None,
+            ..Default::default()
+        };
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
+        // 对 siliconflow 同理
+        let p2 = ProviderProfile {
+            preset: Some("siliconflow".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_models_dev_provider(&p2).as_deref(),
+            Some("siliconflow")
+        );
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_none_when_no_mapping() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        // 无显式、无 preset
+        let p = ProviderProfile::default();
+        assert!(resolve_models_dev_provider(&p).is_none());
+        // 未知 preset 且无显式
+        let p2 = ProviderProfile {
+            preset: Some("custom-preset".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p2).is_none());
+        // 显式为空白时回退到 preset，preset 未知则 None
+        let p3 = ProviderProfile {
+            preset: Some("custom-preset".into()),
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p3).is_none());
+    }
+
+    #[test]
+    fn resolve_models_dev_provider_trims_whitespace_and_fallbacks() {
+        use crate::config::{resolve_models_dev_provider, ProviderProfile};
+        let p = ProviderProfile {
+            preset: Some("openai".into()),
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        // 空白显式应 fallback 到 preset
+        assert_eq!(resolve_models_dev_provider(&p).as_deref(), Some("openai"));
+        let p2 = ProviderProfile {
+            preset: None,
+            models_dev_provider: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(resolve_models_dev_provider(&p2).is_none());
+    }
+
+    #[test]
+    fn models_dev_provider_warning_for_unknown_key() {
+        use crate::config::ProviderProfile;
+        let p = ProviderProfile {
+            base_url: "https://example.com/v1".into(),
+            api: "openai-completions".into(),
+            models_dev_provider: Some("unknown_provider".into()),
+            ..Default::default()
+        };
+        let w = crate::config::models_dev_provider_warning("custom", &p);
+        assert!(w.is_some());
+        let w = w.unwrap();
+        assert_eq!(w.level, "warning");
+        assert!(w.path.contains("modelsDevProvider"));
+        // 已知 key 不产生 warning
+        let p2 = ProviderProfile {
+            models_dev_provider: Some("openai".into()),
+            ..Default::default()
+        };
+        assert!(crate::config::models_dev_provider_warning("custom", &p2).is_none());
+        // None 不产生 warning
+        let p3 = ProviderProfile::default();
+        assert!(crate::config::models_dev_provider_warning("custom", &p3).is_none());
+    }
 }

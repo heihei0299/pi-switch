@@ -2,6 +2,7 @@
 mod catalog;
 mod ccswitch;
 mod config;
+mod scan_pi;
 mod credits;
 mod daemon;
 mod database;

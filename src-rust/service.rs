@@ -52,6 +52,26 @@ pub fn list_backups() -> Result<Vec<String>> {
     Ok(entries)
 }
 
+pub fn get_gateway() -> Result<Value> {
+    let entry = crate::ops::get_gateway()?;
+    Ok(json!({ "gateway": entry }))
+}
+
+pub fn gateway_preview() -> Result<Value> {
+    let preview = crate::ops::preview_gateway()?;
+    Ok(json!({
+        "current": preview.current,
+        "proposed": preview.proposed,
+        "conflicts": preview.conflicts,
+        "pending_count": preview.pending_count,
+    }))
+}
+
+pub fn apply_gateway(value: Value) -> Result<Value> {
+    crate::ops::apply_gateway(value)?;
+    Ok(json!({ "ok": true }))
+}
+
 // ─── Presets ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]

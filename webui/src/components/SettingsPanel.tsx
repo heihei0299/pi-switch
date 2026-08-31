@@ -14,7 +14,11 @@ export function SettingsPanel({
   const toast = useToast();
   const { t, lang, setLang } = useI18n();
   // Deep clone so edits don't mutate the shared state until saved.
-  const [s, setS] = useState<Settings>(() => JSON.parse(JSON.stringify(state.settings)));
+  const [s, setS] = useState<Settings>(() => {
+    const init = JSON.parse(JSON.stringify(state.settings));
+    if (!init.conversationSource) init.conversationSource = "sessionScan";
+    return init;
+  });
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
   const setProxy = (patch: Partial<Settings["proxy"]>) =>
@@ -78,24 +82,23 @@ export function SettingsPanel({
               <option value="zh">zh</option>
             </Select>
           </Field>
+          <Field label={t("Conversation source")}>
+            <Select
+              aria-label={t("Conversation source")}
+              value={s.conversationSource ?? "sessionScan"}
+              onChange={(e) => set({ conversationSource: e.target.value as Settings["conversationSource"] })}
+            >
+              <option value="sessionScan">sessionScan</option>
+              <option value="proxy">proxy</option>
+              <option value="off">off</option>
+            </Select>
+          </Field>
           <Field label={t("Current UI language")}>
             <Input value={lang === "zh" ? "中文" : "English"} readOnly />
           </Field>
         </div>
 
-        <div className="mt-2 rounded-lg border border-white/10 p-3">
-          <label className="flex items-center gap-2 text-sm text-zinc-300">
-            <input
-              type="checkbox"
-              checked={s.injectOpenCodeAttribution ?? true}
-              onChange={(e) => set({ injectOpenCodeAttribution: e.target.checked })}
-            />
-            {t("Inject opencode attribution headers (x-opencode-session / x-opencode-client)")}
-          </label>
-          <p className="mt-1 text-xs text-zinc-500">
-            {t("Send x-opencode-session (conversation id) and x-opencode-client=pi on provider requests. Requires a pi restart to take effect.")}
-          </p>
-        </div>
+        
       </Card>
 
       <Card className="mb-4">

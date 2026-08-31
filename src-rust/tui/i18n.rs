@@ -641,7 +641,7 @@ pub fn help_form_enter() -> &'static str {
 pub fn help_form_space() -> &'static str {
     t!(
         "    Space           cycle API type",
-        "    Space           切换 API 类型"
+        "    Space           切换接口格式"
     )
 }
 pub fn help_form_ctrl_s() -> &'static str {
@@ -790,6 +790,7 @@ pub fn toast_models_fetched(count: usize) -> String {
         format!("{} models fetched", count)
     }
 }
+#[allow(dead_code)]
 pub fn toast_models_updated(name: &str) -> String {
     if is_zh() {
         format!("已更新供应商 '{}' 的模型列表", name)
@@ -797,6 +798,85 @@ pub fn toast_models_updated(name: &str) -> String {
         format!("Updated models for '{}'", name)
     }
 }
+pub fn toast_models_fetched_with_enrich(
+    count: usize,
+    enriched: usize,
+    skipped: usize,
+    failed: usize,
+    warning: Option<&str>,
+) -> String {
+    let base = if is_zh() {
+        format!("已获取 {} 个模型（上游模型列表）", count)
+    } else {
+        format!("{} models fetched (upstream)", count)
+    };
+    let enrich_part = if is_zh() {
+        if failed > 0 {
+            format!(
+                " · 模型元数据 enrich 失败 {} 条，跳过 {} 条，已 enrich {} 条",
+                failed, skipped, enriched
+            )
+        } else {
+            format!(
+                " · 已 enrich {} 条模型元数据，跳过 {} 条（模型目录未覆盖）",
+                enriched, skipped
+            )
+        }
+    } else {
+        if failed > 0 {
+            format!(
+                " · model metadata enrich failed {} , skipped {} , enriched {}",
+                failed, skipped, enriched
+            )
+        } else {
+            format!(
+                " · enriched {} model metadata, skipped {} (not in catalog)",
+                enriched, skipped
+            )
+        }
+    };
+    let mut msg = format!("{}{}", base, enrich_part);
+    if let Some(w) = warning {
+        msg.push_str(&format!(" · {}", w));
+    }
+    msg
+}
+
+pub fn toast_models_updated_with_enrich(
+    name: &str,
+    enriched: usize,
+    skipped: usize,
+    failed: usize,
+    warning: Option<&str>,
+) -> String {
+    let base = if is_zh() {
+        format!("已更新供应商 '{}' 的模型列表", name)
+    } else {
+        format!("Updated models for '{}'", name)
+    };
+    let enrich_part = if is_zh() {
+        if failed > 0 {
+            format!(" · 模型元数据 enrich 失败 {} 条", failed)
+        } else {
+            format!(
+                " · 已 enrich {} 条，跳过 {} 条（模型目录未覆盖）",
+                enriched, skipped
+            )
+        }
+    } else {
+        if failed > 0 {
+            format!(" · enrich failed {}", failed)
+        } else {
+            format!(" · enriched {} , skipped {}", enriched, skipped)
+        }
+    };
+    let mut msg = format!("{}{}", base, enrich_part);
+    if let Some(w) = warning {
+        msg.push_str(&format!(" · {}", w));
+    }
+    msg
+}
+
 pub fn toast_exposed_models_updated(name: &str) -> String {
     if is_zh() {
         format!("已更新供应商 '{}' 的暴露模型并同步到 pi 配置", name)
@@ -924,7 +1004,14 @@ pub fn field_name() -> &'static str {
     t!("name", "名称")
 }
 pub fn field_api() -> &'static str {
-    t!("api", "API 类型")
+    t!("api", "接口格式")
+}
+#[allow(dead_code)]
+pub fn field_api_help() -> &'static str {
+    t!(
+        "Select the API interface format for the AI service.",
+        "选择 AI 服务的 API 接口格式"
+    )
 }
 pub fn field_base_url() -> &'static str {
     t!("baseUrl", "API 地址")

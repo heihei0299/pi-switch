@@ -7,7 +7,7 @@ use ratatui::widgets::{
 use ratatui::Frame;
 
 use crate::tui::app::App;
-use crate::tui::form::{FieldKind, FormFocus, FormMode, API_CHOICES};
+use crate::tui::form::{FieldKind, FormFocus, FormMode};
 use crate::tui::i18n;
 use crate::tui::text_edit::visible_text_window;
 
@@ -550,7 +550,7 @@ fn render_form_fields(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let rows = FieldKind::ALL.iter().map(|field| {
         let value = match field {
             FieldKind::Api => {
-                format!("◂ {} ▸", API_CHOICES[form.api_idx])
+                format!("◂ {} ▸", form.current_api_label())
             }
             _ => form.field_value(*field),
         };
@@ -603,7 +603,7 @@ fn render_form_fields(frame: &mut Frame<'_>, app: &App, area: Rect) {
         FieldKind::Api => {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::raw(format!(" {}", API_CHOICES[form.api_idx])),
+                    Span::raw(format!(" {}", form.current_api_label())),
                     Span::styled(i18n::form_api_cycle_hint(), Style::default().fg(theme.dim)),
                 ])),
                 edit_inner,

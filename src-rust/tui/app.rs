@@ -79,7 +79,10 @@ impl Overlay {
 }
 
 pub enum FetchModelsMessage {
-    Success(Vec<String>),
+    Success {
+        models: Vec<String>,
+        enrich: crate::ops::EnrichStats,
+    },
     Error(String),
 }
 
@@ -298,7 +301,10 @@ impl App {
             if let Ok(msg) = rx.try_recv() {
                 self.model_selection_loading = false;
                 match msg {
-                    FetchModelsMessage::Success(fetched_models) => {
+                    FetchModelsMessage::Success {
+                        models: fetched_models,
+                        enrich,
+                    } => {
                         // Check if we're in form mode (Route::FetchModels with "_temp_form")
                         let is_form_mode =
                             matches!(&self.route, Route::FetchModels(name) if name == "_temp_form");
@@ -327,10 +333,14 @@ impl App {
                                 })
                                 .collect();
 
-                            self.push_toast(
-                                ToastKind::Success,
-                                i18n::toast_models_fetched(self.model_selection_list.len()),
+                            let msg = i18n::toast_models_fetched_with_enrich(
+                                self.model_selection_list.len(),
+                                enrich.enriched,
+                                enrich.skipped,
+                                enrich.failed,
+                                enrich.warning.as_deref(),
                             );
+                            self.push_toast(ToastKind::Success, msg);
                         } else {
                             // Model selection mode: merge preserving selection state
                             let existing: std::collections::HashSet<_> = self
@@ -355,10 +365,14 @@ impl App {
                                 })
                                 .collect();
 
-                            self.push_toast(
-                                ToastKind::Success,
-                                i18n::toast_models_fetched(self.model_selection_list.len()),
+                            let msg = i18n::toast_models_fetched_with_enrich(
+                                self.model_selection_list.len(),
+                                enrich.enriched,
+                                enrich.skipped,
+                                enrich.failed,
+                                enrich.warning.as_deref(),
                             );
+                            self.push_toast(ToastKind::Success, msg);
                         }
                     }
                     FetchModelsMessage::Error(err) => {
@@ -1692,7 +1706,7 @@ impl App {
 
         // Build a temporary profile to fetch from
         let temp_profile = crate::config::ProviderProfile {
-            api: super::form::API_CHOICES[form.api_idx].to_string(),
+            api: form.current_api(),
             base_url: form.base_url.value.trim().to_string(),
             api_key: form.api_key.value.trim().to_string(),
             models: vec![],
@@ -1721,6 +1735,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let manual_models_clone = manual_models.clone();
 
+        let temp_profile_for_stats = temp_profile.clone();
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
@@ -1746,42 +1761,63 @@ impl App {
             let candidate_urls =
                 ops::build_model_fetch_urls(&temp_profile.base_url, &temp_profile.api);
 
-            let result = rt.block_on(async {
-                for url in candidate_urls {
-                    let mut req = client.get(&url);
-                    req = match temp_profile.api.as_str() {
-                        "openai-completions" => {
-                            req.header("Authorization", format!("Bearer {}", api_key))
-                        }
-                        "anthropic-messages" => req
-                            .header("x-api-key", &api_key)
-                            .header("anthropic-version", "2023-06-01"),
-                        _ => req.header("Authorization", format!("Bearer {}", api_key)),
-                    };
+            let result: Result<(Vec<String>, crate::ops::EnrichStats), crate::error::AppError> = rt
+                .block_on(async {
+                    let mut fetched: Vec<String> = Vec::new();
+                    for url in candidate_urls {
+                        let mut req = client.get(&url);
+                        req = match temp_profile.api.as_str() {
+                            "openai-completions" => {
+                                req.header("Authorization", format!("Bearer {}", api_key))
+                            }
+                            "anthropic-messages" => req
+                                .header("x-api-key", &api_key)
+                                .header("anthropic-version", "2023-06-01"),
+                            _ => req.header("Authorization", format!("Bearer {}", api_key)),
+                        };
 
-                    if let Ok(resp) = req.send().await {
-                        if resp.status().is_success() {
-                            if let Ok(payload) = resp.json::<serde_json::Value>().await {
-                                let mut models = ops::parse_model_ids(&payload);
-                                // Merge with manual models (keep manual ones at front)
-                                for manual in &manual_models_clone {
-                                    if !models.contains(manual) {
-                                        models.insert(0, manual.clone());
+                        if let Ok(resp) = req.send().await {
+                            if resp.status().is_success() {
+                                if let Ok(payload) = resp.json::<serde_json::Value>().await {
+                                    let mut models = ops::parse_model_ids(&payload);
+                                    // Merge with manual models (keep manual ones at front)
+                                    for manual in &manual_models_clone {
+                                        if !models.contains(manual) {
+                                            models.insert(0, manual.clone());
+                                        }
                                     }
-                                }
-                                if !models.is_empty() {
-                                    return Ok(models);
+                                    if !models.is_empty() {
+                                        fetched = models;
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                Err(crate::error::AppError::Message("No models found".into()))
-            });
+                    if fetched.is_empty() {
+                        return Err(crate::error::AppError::Message("No models found".into()));
+                    }
+                    // 模型目录 enrich 统计（24h 缓存命中、无重复网络；过期回退并报告 warning）
+                    let (catalog_opt, warning) =
+                        match crate::catalog::get_or_refresh_catalog_with_warning().await {
+                            Ok((v, w)) => (v, w),
+                            Err(e) => {
+                                let w = format!("模型目录获取失败，跳过模型元数据 enrich: {}", e);
+                                (None, Some(w))
+                            }
+                        };
+                    let stats = crate::ops::enrich_stats_for_ids(
+                        &temp_profile_for_stats,
+                        &fetched,
+                        catalog_opt.as_ref(),
+                        warning,
+                    );
+                    Ok((fetched, stats))
+                });
 
             match result {
-                Ok(models) => {
-                    let _ = tx.send(FetchModelsMessage::Success(models));
+                Ok((models, enrich)) => {
+                    let _ = tx.send(FetchModelsMessage::Success { models, enrich });
                 }
                 Err(e) => {
                     let _ = tx.send(FetchModelsMessage::Error(e.to_string()));
@@ -1899,7 +1935,7 @@ impl App {
             );
             self.route = Route::Form;
         } else {
-            // Profile mode: save to config
+            // Profile mode: save to config（带模型目录 enrich 统计）
             let selected_models: Vec<crate::config::ModelEntry> = self
                 .model_selection_list
                 .iter()
@@ -1910,9 +1946,16 @@ impl App {
                 })
                 .collect();
 
-            match ops::update_provider_models(name, selected_models) {
-                Ok(_) => {
-                    self.push_toast(ToastKind::Success, i18n::toast_models_updated(name));
+            match ops::update_provider_models_with_stats(name, selected_models) {
+                Ok((_, stats)) => {
+                    let msg = i18n::toast_models_updated_with_enrich(
+                        name,
+                        stats.enriched,
+                        stats.skipped,
+                        stats.failed,
+                        stats.warning.as_deref(),
+                    );
+                    self.push_toast(ToastKind::Success, msg);
                     self.refresh();
                     self.route = Route::ProfileDetail(name.to_string());
                 }
