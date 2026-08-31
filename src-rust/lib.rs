@@ -1,5 +1,6 @@
 mod ccswitch;
 mod config;
+mod scan_pi;
 mod daemon;
 mod database;
 mod error;
