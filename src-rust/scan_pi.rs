@@ -193,6 +193,8 @@ pub struct PiSession {
     pub id: String,
     pub title: String,
     pub last_active_at: Option<String>,
+    pub model: Option<String>,
+    pub prompt_tokens_hint: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +206,8 @@ struct RawEntry {
     name: Option<String>,
     message_role: Option<String>,
     message_text: Option<String>,
+    model_id: Option<String>,
+    prompt_tokens: Option<u64>,
 }
 
 fn extract_text_from_message_value(msg: &serde_json::Value) -> Option<String> {
@@ -265,6 +269,27 @@ fn parse_line_to_entry(line: &str) -> Option<RawEntry> {
     } else {
         (None, None)
     };
+    let model_id = if typ == "model_change" {
+        v.get("modelId").and_then(|x| x.as_str()).map(|s| s.to_string())
+    } else if typ == "message" {
+        v.get("message")
+            .and_then(|m| m.get("model"))
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| v.get("modelId").and_then(|x| x.as_str()).map(|s| s.to_string()))
+    } else {
+        None
+    };
+    let prompt_tokens = if typ == "message" {
+        v.get("message")
+            .and_then(|m| m.get("usage"))
+            .and_then(|u| u.get("input"))
+            .and_then(|x| x.as_u64())
+            .or_else(|| v.get("usage").and_then(|u| u.get("input")).and_then(|x| x.as_u64()))
+            .or_else(|| v.get("message").and_then(|m| m.get("usage")).and_then(|u| u.get("prompt_tokens")).and_then(|x| x.as_u64()))
+    } else {
+        None
+    };
     Some(RawEntry {
         id,
         parent_id,
@@ -273,6 +298,8 @@ fn parse_line_to_entry(line: &str) -> Option<RawEntry> {
         name,
         message_role,
         message_text,
+        model_id,
+        prompt_tokens,
     })
 }
 
@@ -327,6 +354,8 @@ pub fn parse_session_str(content: &str) -> Option<PiSession> {
                 .get("timestamp")
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string()),
+            model: None,
+            prompt_tokens_hint: None,
         });
     }
 
@@ -378,10 +407,14 @@ fn parse_legacy(
     // title extraction over linear order
     let title = extract_title(&entries, &cwd);
     let last_active_at = extract_last_active(&entries, &header_v);
+    let model = extract_model(&entries);
+    let prompt_tokens_hint = extract_prompt_hint(&entries);
     Some(PiSession {
         id: header_id,
         title,
         last_active_at,
+        model,
+        prompt_tokens_hint,
     })
 }
 
@@ -445,6 +478,8 @@ fn parse_v2(
                     .get("timestamp")
                     .and_then(|x| x.as_str())
                     .map(|s| s.to_string()),
+                model: None,
+                prompt_tokens_hint: None,
             });
         }
     };
@@ -491,15 +526,19 @@ fn parse_v2(
                 .get("timestamp")
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string()),
+            model: None,
+            prompt_tokens_hint: None,
         });
     }
 
     let title = extract_title(&active_entries, &cwd);
     let last_active_at = extract_last_active(&active_entries, &header_v);
+    let model = extract_model(&active_entries);
     Some(PiSession {
         id: header_id,
         title,
         last_active_at,
+        model,
     })
 }
 
@@ -551,6 +590,31 @@ fn extract_last_active(entries: &[RawEntry], header_v: &serde_json::Value) -> Op
         }
     }
     best_str
+}
+
+fn extract_model(entries: &[RawEntry]) -> Option<String> {
+    // latest model_change or message model in active branch order (last wins)
+    let mut model: Option<String> = None;
+    for e in entries {
+        if let Some(m) = &e.model_id {
+            let t = m.trim();
+            if !t.is_empty() {
+                model = Some(t.to_string());
+            }
+        }
+    }
+    model
+}
+
+fn extract_prompt_hint(entries: &[RawEntry]) -> Option<u64> {
+    // last usage input in active branch
+    let mut hint: Option<u64> = None;
+    for e in entries {
+        if let Some(pt) = e.prompt_tokens {
+            hint = Some(pt);
+        }
+    }
+    hint
 }
 
 // ─── File-level helpers ──────────────────────────────────────

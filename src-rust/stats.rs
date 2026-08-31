@@ -1,4 +1,5 @@
-use crate::config::config_dir;
+use crate::config::{config_dir, ConversationSource};
+use crate::scan_pi::PiSession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -343,6 +344,120 @@ fn cmp_ts_desc(a: &Option<String>, b: &Option<String>) -> std::cmp::Ordering {
     }
 }
 
+const VIRTUAL_WINDOW_MS: u64 = 5 * 60 * 1000;
+const VIRTUAL_TOLERANCE_MS: u64 = 2000;
+
+/// Find the best virtual session for an unlabeled entry under sessionScan.
+/// Returns the matching PiSession (cloned) when model+time (±2s) within 5min window hits.
+pub fn virtual_session_for(
+    entry: &RequestLogEntry,
+    sessions: &HashMap<String, PiSession>,
+    now_ms: u64,
+) -> Option<PiSession> {
+    // already labeled -> no virtual
+    if entry.conversation_id.as_deref().filter(|s| !s.is_empty()).is_some() {
+        return None;
+    }
+    let ts_str = entry.ts.as_deref()?;
+    let entry_ms = ts_epoch_ms(ts_str)?;
+    // 5min window: entry must be within [now-5min, now+2s]
+    if entry_ms > now_ms + VIRTUAL_TOLERANCE_MS {
+        return None;
+    }
+    if now_ms.saturating_sub(entry_ms) > VIRTUAL_WINDOW_MS {
+        return None;
+    }
+    let entry_model = entry.model.as_deref().filter(|s| !s.is_empty());
+    let mut candidates: Vec<(&PiSession, u64, Option<u64>)> = Vec::new(); // (session, time_diff, prompt_diff)
+    for sess in sessions.values() {
+        let sess_ms = match sess.last_active_at.as_deref().and_then(ts_epoch_ms) {
+            Some(m) => m,
+            None => continue,
+        };
+        let time_diff = if sess_ms > entry_ms { sess_ms - entry_ms } else { entry_ms - sess_ms };
+        if time_diff > VIRTUAL_TOLERANCE_MS {
+            continue;
+        }
+        // model check: if both present, must equal; if sess has no model, allow; if entry has no model, skip candidate (cannot match)
+        if let Some(em) = entry_model {
+            if let Some(sm) = sess.model.as_deref() {
+                if sm != em {
+                    continue;
+                }
+            }
+        } else {
+            continue;
+        }
+        let prompt_diff = match (entry.prompt_tokens, sess.prompt_tokens_hint) {
+            (Some(a), Some(b)) => Some(if a > b { a - b } else { b - a }),
+            _ => None,
+        };
+        candidates.push((sess, time_diff, prompt_diff));
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    // Prefer candidates with smallest prompt_diff when entry has prompt_tokens, else smallest time_diff
+    // Among candidates with prompt diff, minimal prompt diff wins; tie -> minimal time diff
+    candidates.sort_by(|a, b| {
+        match (a.2, b.2) {
+            (Some(ad), Some(bd)) => ad.cmp(&bd).then_with(|| a.1.cmp(&b.1)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.1.cmp(&b.1),
+        }
+    });
+    Some(candidates[0].0.clone())
+}
+
+/// Resolve effective conversation id+name for one entry under the given source.
+/// For sessionScan with a virtual hit, returns (virtual_id, Some(title)); otherwise
+/// falls back to the entry's own conversation_id/name or unlabeled.
+pub fn effective_conversation(
+    entry: &RequestLogEntry,
+    sessions: &HashMap<String, PiSession>,
+    now_ms: u64,
+    source: &ConversationSource,
+) -> (String, Option<String>) {
+    match source {
+        ConversationSource::Off => ("unlabeled".to_string(), None),
+        ConversationSource::Proxy => {
+            let id = entry
+                .conversation_id
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("unlabeled")
+                .to_string();
+            let name = entry.conversation_name.as_deref().filter(|s| !s.is_empty()).map(|s| s.to_string());
+            (id, name)
+        }
+        ConversationSource::SessionScan => {
+            if let Some(id) = entry.conversation_id.as_deref().filter(|s| !s.is_empty()) {
+                let name = entry.conversation_name.as_deref().filter(|s| !s.is_empty()).map(|s| s.to_string());
+                return (id.to_string(), name);
+            }
+            if let Some(sess) = virtual_session_for(entry, sessions, now_ms) {
+                return (sess.id.clone(), Some(sess.title.clone()));
+            }
+            ("unlabeled".to_string(), None)
+        }
+    }
+}
+
+/// Load scan map for virtual grouping. Returns empty and warns on failure.
+pub fn load_scan_map() -> HashMap<String, PiSession> {
+    let root = crate::scan_pi::resolve_session_root();
+    match root {
+        crate::scan_pi::SessionRoot::Available(p) => crate::scan_pi::scan_sessions(&p),
+        crate::scan_pi::SessionRoot::RequiresProjectContext(msg) => {
+            log::warn!("scan sessions requires project context: {}", msg);
+            HashMap::new()
+        }
+        crate::scan_pi::SessionRoot::Unavailable => HashMap::new(),
+    }
+}
+
+
 /// Aggregate request-log entries into a `UsageStats`. Pure: all inputs are
 /// injected (entries, circuit state, cooldown, current time, optional
 /// time window), no I/O. The window is `(from_ms, to_ms)` in epoch
@@ -403,6 +518,20 @@ pub fn aggregate_paged(
     window: Option<(u64, u64)>,
     page: usize,
     limit: usize,
+) -> UsageStats {
+    aggregate_paged_with_source(entries, circuit, cooldown_ms, now_ms, window, page, limit, &ConversationSource::Proxy, &HashMap::new())
+}
+
+pub fn aggregate_paged_with_source(
+    entries: &[RequestLogEntry],
+    circuit: &HashMap<String, CircuitBreakerEntry>,
+    cooldown_ms: u64,
+    now_ms: u64,
+    window: Option<(u64, u64)>,
+    page: usize,
+    limit: usize,
+    source: &ConversationSource,
+    sessions: &HashMap<String, PiSession>,
 ) -> UsageStats {
     let circuit_breaker: HashMap<String, CircuitBreakerStatus> = circuit
         .iter()
@@ -481,45 +610,57 @@ pub fn aggregate_paged(
         }
 
         // Per conversation: every row counts toward requests/last-active;
-        // only countable usage rows contribute tokens.
-        let key = entry
-            .conversation_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("unlabeled")
-            .to_string();
-        let conv = conversations
-            .entry(key.clone())
-            .or_insert_with(|| ConversationStats {
-                conversation_id: key.clone(),
-                name: None,
-                requests: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                cached_tokens: 0,
-                reasoning_tokens: 0,
-                last_active: None,
-                cache_rate: "-".into(),
-                cost: None,
-            });
-        conv.requests += 1;
-        // Name: newest named row in the window wins (log order is
-        // chronological). Never a grouping key — ADR-0002.
-        if let Some(name) = entry.conversation_name.as_deref().filter(|s| !s.is_empty()) {
-            conv.name = Some(name.to_string());
-        }
-        if let Some(ts) = entry.ts.as_deref() {
-            if conv.last_active.as_deref().is_none_or(|last| ts > last) {
-                conv.last_active = Some(ts.to_string());
+        // only countable usage rows contribute tokens. Virtual grouping
+        // (sessionScan) may synthesize an id/title for unlabeled recent rows.
+        let (eff_id, eff_name) = effective_conversation(entry, sessions, now_ms, source);
+        let key = eff_id.clone();
+        // Off档不分组：跳过 by_conversation 聚合（保持全局维度）
+        let is_off = matches!(source, ConversationSource::Off);
+        if !is_off {
+            let conv = conversations
+                .entry(key.clone())
+                .or_insert_with(|| ConversationStats {
+                    conversation_id: key.clone(),
+                    name: None,
+                    requests: 0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cached_tokens: 0,
+                    reasoning_tokens: 0,
+                    last_active: None,
+                    cache_rate: "-".into(),
+                    cost: None,
+                });
+            conv.requests += 1;
+            // Name: virtual title wins when present, otherwise newest named row.
+            if let Some(vname) = eff_name.as_deref().filter(|s| !s.is_empty()) {
+                // virtual title or explicit entry name
+                // For sessionScan virtual, eff_name is sess.title; for proxy it's entry name
+                // Prefer virtual/explicit over keeping old; newest wins (log order)
+                conv.name = Some(vname.to_string());
+            } else if let Some(name) = entry.conversation_name.as_deref().filter(|s| !s.is_empty()) {
+                conv.name = Some(name.to_string());
             }
+            if let Some(ts) = entry.ts.as_deref() {
+                if conv.last_active.as_deref().is_none_or(|last| ts > last) {
+                    conv.last_active = Some(ts.to_string());
+                }
+            }
+        } else {
+            // Off档仍需处理 last_active? No, by_conversation为空，无需记录
         }
-        if let Some(u) = &usage {
-            conv.input_tokens += u.prompt;
-            conv.output_tokens += u.completion;
-            conv.cached_tokens += u.cached;
-            conv.reasoning_tokens += u.reasoning;
-            if let Some(c) = entry.cost_total {
-                conv.cost = Some(conv.cost.unwrap_or(0.0) + c);
+        if !is_off {
+            if let Some(u) = &usage {
+                // Find the conv we just inserted (if not off)
+                if let Some(conv) = conversations.get_mut(&key) {
+                    conv.input_tokens += u.prompt;
+                    conv.output_tokens += u.completion;
+                    conv.cached_tokens += u.cached;
+                    conv.reasoning_tokens += u.reasoning;
+                    if let Some(c) = entry.cost_total {
+                        conv.cost = Some(conv.cost.unwrap_or(0.0) + c);
+                    }
+                }
             }
         }
 
@@ -583,7 +724,28 @@ pub fn aggregate_paged(
 
         // Per-request detail rows: every in-window entry gets one row; token
         // fields only from countable usage, otherwise null with a "-" rate.
-        let detail = request_detail(entry);
+        // Effective conversation id/name (virtual when applicable) is reflected.
+        let mut detail = request_detail(entry);
+        let (eff_id2, eff_name2) = effective_conversation(entry, sessions, now_ms, source);
+        if eff_id2 != "unlabeled" {
+            detail.conversation_id = Some(eff_id2);
+            if let Some(n) = eff_name2 {
+                if detail.conversation_name.is_none() || detail.conversation_name.as_deref().filter(|s| !s.is_empty()).is_none() {
+                    detail.conversation_name = Some(n);
+                }
+            }
+        } else {
+            // keep original None for unlabeled; detail already has None when entry has no id
+            // Ensure off档 stays unlabeled (virtual disabled)
+            if matches!(source, ConversationSource::Off) {
+                detail.conversation_id = None;
+                detail.conversation_name = None;
+            } else if entry.conversation_id.as_deref().filter(|s| !s.is_empty()).is_none() {
+                // unlabeled virtual miss stays None
+                detail.conversation_id = None;
+                detail.conversation_name = None;
+            }
+        }
         stats.recent_requests.push(detail);
     }
 
@@ -690,8 +852,17 @@ pub fn get_stats_paged(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
+    // ConversationSource determines virtual grouping; hot-reload per request
+    let source = crate::config::load_config()
+        .map(|c| c.settings.conversation_source)
+        .unwrap_or_default();
+    let sessions = if matches!(source, ConversationSource::SessionScan) {
+        load_scan_map()
+    } else {
+        HashMap::new()
+    };
 
-    aggregate_paged(
+    aggregate_paged_with_source(
         &entries,
         &circuit_entries,
         cooldown_ms,
@@ -699,6 +870,8 @@ pub fn get_stats_paged(
         window,
         page.unwrap_or(0),
         limit.unwrap_or(100),
+        &source,
+        &sessions,
     )
 }
 
@@ -713,17 +886,29 @@ pub fn aggregate_conversations_paged(
     page: usize,
     limit: usize,
 ) -> (Vec<ConversationStats>, usize) {
+    // Default: proxy behavior (no virtual). Virtual-aware variant below.
+    aggregate_conversations_paged_with_source(entries, window, page, limit, &ConversationSource::Proxy, &HashMap::new(), 0)
+}
+
+pub fn aggregate_conversations_paged_with_source(
+    entries: &[RequestLogEntry],
+    window: Option<(u64, u64)>,
+    page: usize,
+    limit: usize,
+    source: &ConversationSource,
+    sessions: &HashMap<String, PiSession>,
+    now_ms: u64,
+) -> (Vec<ConversationStats>, usize) {
+    if matches!(source, ConversationSource::Off) {
+        return (Vec::new(), 0);
+    }
     let mut conversations: HashMap<String, ConversationStats> = HashMap::new();
     for entry in entries {
         if !in_window(entry, window) {
             continue;
         }
-        let key = entry
-            .conversation_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("unlabeled")
-            .to_string();
+        let (eff_id, eff_name) = effective_conversation(entry, sessions, now_ms, source);
+        let key = eff_id.clone();
         let conv = conversations
             .entry(key.clone())
             .or_insert_with(|| ConversationStats {
@@ -739,9 +924,9 @@ pub fn aggregate_conversations_paged(
                 cost: None,
             });
         conv.requests += 1;
-        // Name: newest named row in the window wins (log order is
-        // chronological). Never a grouping key — ADR-0002.
-        if let Some(name) = entry.conversation_name.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(vname) = eff_name.as_deref().filter(|s| !s.is_empty()) {
+            conv.name = Some(vname.to_string());
+        } else if let Some(name) = entry.conversation_name.as_deref().filter(|s| !s.is_empty()) {
             conv.name = Some(name.to_string());
         }
         if let Some(ts) = entry.ts.as_deref() {
@@ -780,6 +965,21 @@ pub fn get_conversations_paged(
     limit: Option<usize>,
 ) -> (Vec<ConversationStats>, usize) {
     let entries = parse_logs();
+    let source = crate::config::load_config()
+        .map(|c| c.settings.conversation_source)
+        .unwrap_or_default();
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let sessions = if matches!(source, ConversationSource::SessionScan) {
+        load_scan_map()
+    } else {
+        HashMap::new()
+    };
+    if matches!(source, ConversationSource::Off) {
+        return (Vec::new(), 0);
+    }
+    if matches!(source, ConversationSource::SessionScan) {
+        return aggregate_conversations_paged_with_source(&entries, window, page.unwrap_or(0), limit.unwrap_or(100), &source, &sessions, now_ms);
+    }
     aggregate_conversations_paged(&entries, window, page.unwrap_or(0), limit.unwrap_or(100))
 }
 
@@ -802,10 +1002,40 @@ pub fn aggregate_conversation_requests(
     page: usize,
     limit: usize,
 ) -> (Vec<RecentRequest>, usize) {
+    aggregate_conversation_requests_with_source(entries, conversation_id, page, limit, &ConversationSource::Proxy, &HashMap::new(), 0)
+}
+
+pub fn aggregate_conversation_requests_with_source(
+    entries: &[RequestLogEntry],
+    conversation_id: &str,
+    page: usize,
+    limit: usize,
+    source: &ConversationSource,
+    sessions: &HashMap<String, PiSession>,
+    now_ms: u64,
+) -> (Vec<RecentRequest>, usize) {
     let mut rows: Vec<RecentRequest> = entries
         .iter()
-        .filter(|e| matches_conversation(e, conversation_id))
-        .map(request_detail)
+        .filter(|e| {
+            let (eff_id, _) = effective_conversation(e, sessions, now_ms, source);
+            eff_id == conversation_id
+        })
+        .map(|e| {
+            let mut d = request_detail(e);
+            let (eff_id, eff_name) = effective_conversation(e, sessions, now_ms, source);
+            if eff_id != "unlabeled" {
+                d.conversation_id = Some(eff_id);
+                if let Some(n) = eff_name {
+                    if d.conversation_name.is_none() {
+                        d.conversation_name = Some(n);
+                    }
+                }
+            } else {
+                d.conversation_id = None;
+                d.conversation_name = None;
+            }
+            d
+        })
         .collect();
     rows.sort_by(|a, b| cmp_ts_desc(&a.ts, &b.ts));
     let total = rows.len();
@@ -822,11 +1052,23 @@ pub fn get_conversation_requests(
     limit: Option<usize>,
 ) -> (Vec<RecentRequest>, usize) {
     let entries = parse_logs();
-    aggregate_conversation_requests(
+    let source = crate::config::load_config()
+        .map(|c| c.settings.conversation_source)
+        .unwrap_or_default();
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let sessions = if matches!(source, ConversationSource::SessionScan) {
+        load_scan_map()
+    } else {
+        HashMap::new()
+    };
+    aggregate_conversation_requests_with_source(
         &entries,
         conversation_id,
         page.unwrap_or(0),
         limit.unwrap_or(100),
+        &source,
+        &sessions,
+        now_ms,
     )
 }
 
@@ -2815,5 +3057,252 @@ mod tests {
 
         let (beyond, _) = aggregate_conversation_requests(&entries, "conv-a", 5, 2);
         assert!(beyond.is_empty(), "page beyond the end yields no rows");
+    }
+
+    // ─── virtual grouping (issue 03) ───────────────────────────────
+    use crate::config::ConversationSource;
+    use crate::scan_pi::PiSession;
+
+    fn pi_sess(id: &str, title: &str, last: &str, model: &str, prompt: Option<u64>) -> PiSession {
+        PiSession {
+            id: id.to_string(),
+            title: title.to_string(),
+            last_active_at: Some(last.to_string()),
+            model: Some(model.to_string()),
+            prompt_tokens_hint: prompt,
+        }
+    }
+
+    fn sess_map(sessions: Vec<PiSession>) -> std::collections::HashMap<String, PiSession> {
+        let mut m = std::collections::HashMap::new();
+        for s in sessions {
+            m.insert(s.id.clone(), s);
+        }
+        m
+    }
+
+    fn ts_ms(s: &str) -> u64 {
+        ts_epoch_ms(s).unwrap()
+    }
+
+    #[test]
+    fn virtual_session_matches_model_and_time_within_tolerance() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "hello", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        // entry 1s after session -> within 2s, same model, within 5min
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            ok: Some(true),
+            provider: Some("hyb".into()),
+            model: Some("gpt-5.4".into()),
+            prompt_tokens: Some(100),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let hit = virtual_session_for(&e, &map, now);
+        assert!(hit.is_some());
+        assert_eq!(hit.unwrap().id, "sess-1");
+        // model mismatch -> no hit
+        let mut e2 = e.clone();
+        e2.model = Some("other-model".into());
+        assert!(virtual_session_for(&e2, &map, now).is_none());
+        // time outside 2s -> no hit
+        let mut e3 = e.clone();
+        e3.ts = Some("2026-08-02T10:04:03Z".into()); // 3s after sess (1004040000 vs 1004043000 diff 3000)
+        assert!(virtual_session_for(&e3, &map, now).is_none());
+        // outside 5min window -> no hit (entry 6min old)
+        let mut e4 = e.clone();
+        e4.ts = Some("2026-08-02T09:58:00Z".into());
+        assert!(virtual_session_for(&e4, &map, now).is_none());
+    }
+
+    #[test]
+    fn virtual_session_uses_prompt_tokens_to_disambiguate() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        // two sessions same time, same model, different prompt hints
+        let s1 = pi_sess("sess-a", "a", "2026-08-02T10:04:00Z", "gpt-5.4", Some(100));
+        let s2 = pi_sess("sess-b", "b", "2026-08-02T10:04:01Z", "gpt-5.4", Some(500));
+        let map = sess_map(vec![s1, s2]);
+        // entry with prompt 110 should match sess-a (closer)
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            prompt_tokens: Some(110),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let hit = virtual_session_for(&e, &map, now).unwrap();
+        assert_eq!(hit.id, "sess-a");
+        // entry with prompt 480 should match sess-b
+        let mut e2 = e.clone();
+        e2.prompt_tokens = Some(480);
+        let hit2 = virtual_session_for(&e2, &map, now).unwrap();
+        assert_eq!(hit2.id, "sess-b");
+    }
+
+    #[test]
+    fn virtual_session_ignores_labeled_entries() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "t", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        let mut e = entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z");
+        e.conversation_id = Some("already".into());
+        e.model = Some("gpt-5.4".into());
+        e.ts = Some("2026-08-02T10:04:01Z".into());
+        assert!(virtual_session_for(&e, &map, now).is_none());
+    }
+
+    #[test]
+    fn aggregate_session_scan_virtual_groups_and_shows_title() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "my title", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        // unlabeled recent request should be virtual grouped
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            conversation_id: None,
+            conversation_name: None,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(10),
+            cached_tokens: Some(0),
+            reasoning_tokens: Some(0),
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let stats = aggregate_paged_with_source(
+            &[e],
+            &HashMap::new(),
+            60_000,
+            now,
+            None,
+            0,
+            100,
+            &ConversationSource::SessionScan,
+            &map,
+        );
+        assert_eq!(stats.by_conversation.len(), 1);
+        assert_eq!(stats.by_conversation[0].conversation_id, "sess-1");
+        assert_eq!(stats.by_conversation[0].name.as_deref(), Some("my title"));
+        assert_eq!(stats.recent_requests[0].conversation_id.as_deref(), Some("sess-1"));
+        assert_eq!(stats.recent_requests[0].conversation_name.as_deref(), Some("my title"));
+        // old entry outside 5min stays unlabeled
+        let old = RequestLogEntry {
+            ts: Some("2026-08-02T09:00:00Z".into()),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T09:00:00Z")
+        };
+        let stats2 = aggregate_paged_with_source(
+            &[old],
+            &HashMap::new(),
+            60_000,
+            now,
+            None,
+            0,
+            100,
+            &ConversationSource::SessionScan,
+            &map,
+        );
+        assert_eq!(stats2.by_conversation[0].conversation_id, "unlabeled");
+    }
+
+    #[test]
+    fn aggregate_proxy_preserves_original_and_off_empty() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "t", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        let mut e = entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z");
+        e.conversation_id = Some("orig-123".into());
+        e.conversation_name = Some("orig name".into());
+        e.model = Some("gpt-5.4".into());
+        // proxy should keep original, not virtual
+        let stats_proxy = aggregate_paged_with_source(
+            &[e.clone()],
+            &HashMap::new(),
+            60_000,
+            now,
+            None,
+            0,
+            100,
+            &ConversationSource::Proxy,
+            &map,
+        );
+        assert_eq!(stats_proxy.by_conversation[0].conversation_id, "orig-123");
+        assert_eq!(stats_proxy.by_conversation[0].name.as_deref(), Some("orig name"));
+        // off should be empty
+        let stats_off = aggregate_paged_with_source(
+            &[e.clone()],
+            &HashMap::new(),
+            60_000,
+            now,
+            None,
+            0,
+            100,
+            &ConversationSource::Off,
+            &map,
+        );
+        assert!(stats_off.by_conversation.is_empty());
+        // off recentRequests should stay unlabeled
+        assert_eq!(stats_off.recent_requests[0].conversation_id, None);
+    }
+
+    #[test]
+    fn aggregate_virtual_is_immutable_and_repeatable() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "t", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let entries = vec![e];
+        let first = aggregate_paged_with_source(&entries, &HashMap::new(), 60_000, now, None, 0, 100, &ConversationSource::SessionScan, &map);
+        let second = aggregate_paged_with_source(&entries, &HashMap::new(), 60_000, now, None, 0, 100, &ConversationSource::SessionScan, &map);
+        assert_eq!(first.by_conversation[0].conversation_id, second.by_conversation[0].conversation_id);
+        // original entries unchanged (conversation_id still None)
+        assert_eq!(entries[0].conversation_id, None);
+        // token/cost unchanged
+        let mut priced = with_usage(entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z"), 100, 10, 0);
+        priced.cost_total = Some(0.5);
+        let stats = aggregate_paged_with_source(&[priced], &HashMap::new(), 60_000, now, None, 0, 100, &ConversationSource::SessionScan, &map);
+        assert_eq!(stats.total_cost, Some(0.5));
+    }
+
+    #[test]
+    fn aggregate_conversations_paged_virtual_and_off() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "t", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let (rows, total) = aggregate_conversations_paged_with_source(&[e.clone()], None, 0, 50, &ConversationSource::SessionScan, &map, now);
+        assert_eq!(total, 1);
+        assert_eq!(rows[0].conversation_id, "sess-1");
+        let (rows_off, total_off) = aggregate_conversations_paged_with_source(&[e], None, 0, 50, &ConversationSource::Off, &map, now);
+        assert_eq!(total_off, 0);
+        assert!(rows_off.is_empty());
+    }
+
+    #[test]
+    fn aggregate_conversation_requests_virtual_filter() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "t", "2026-08-02T10:04:00Z", "gpt-5.4", None);
+        let map = sess_map(vec![sess]);
+        let e1 = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            conversation_id: None,
+            ..entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:01Z")
+        };
+        let mut e2 = entry(true, "hyb", "gpt-5.4", 10, "2026-08-02T10:04:02Z");
+        e2.conversation_id = Some("other".into());
+        let entries = vec![e1, e2];
+        let (rows, total) = aggregate_conversation_requests_with_source(&entries, "sess-1", 0, 50, &ConversationSource::SessionScan, &map, now);
+        assert_eq!(total, 1);
+        assert_eq!(rows[0].ts.as_deref(), Some("2026-08-02T10:04:01Z"));
+        // proxy off virtual should not match
+        let (rows2, total2) = aggregate_conversation_requests_with_source(&entries, "sess-1", 0, 50, &ConversationSource::Proxy, &map, now);
+        assert_eq!(total2, 0);
     }
 }
