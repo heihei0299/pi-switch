@@ -1,6 +1,6 @@
 # Runtime Discipline
 
-本仓库会话的运行时纪律，执行口径源自 `.opencode/docs/agents/skill-design.md` 的三条规则（规范正文）。术语定义见 `.opencode/CONTEXT.md`。
+本仓库会话的运行时纪律，执行口径源自 `docs/agents/skill-design.md` 的四条规则（规范正文）。术语定义见 `CONTEXT.md`。
 
 ## 回合连续性规则
 
@@ -11,7 +11,7 @@
 - 外部阻塞：权限拒绝、缺失授权、依赖不可用——明确说明所需授权或替代路径，不静默停止
 - 阶段完成：整个阶段的出口条件满足（如 seam 全绿、typecheck 通过、commit 完成）
 
-预告下一步后立即执行该步骤，禁止把"分析/预告"当作回合终点。随包示例见 `.opencode/skills/tdd-implement/SKILL.md` 与 `references/stages.md` 阶段③ 3e。
+预告下一步后立即执行该步骤，禁止把"分析/预告"当作回合终点。随包示例见 `.agents/skills/tdd-implement/SKILL.md` 与 `references/stages.md` 阶段③ 3e。
 
 ## 运行纪律（长程任务）
 
@@ -20,6 +20,7 @@
 - **长程声明**：执行长程技能前，确认技能文本自带长程任务声明与回合连续性规则（Turn Continuity）——阶段内连续动作一回合内完成，不依赖 harness `/goal` 防线。tdd-implement 已内嵌（SKILL.md 声明 + references/stages.md 阶段③规则）。
 - **模型选择**：flash 级模型长程任务卡住概率显著更高；关键长任务优先强模型或 `/goal` 模式。
 - **任务分解（Chunking）**：巨型操作拆小步执行——单次 `write` 超过 ~150 行先写骨架再分批补全；批量 `replace` 超过 ~5 处分批执行，每批后立即验证。tdd-implement 已内嵌该规则（随包分发）。
+- **Git 历史保护（Git History Preservation）**：任何触及 git 的操作必须追加历史、不可改写丢弃。阶段入口记录 `BASE_HEAD=$(git rev-parse HEAD)`，阶段出口与 commit 前校验 `git merge-base --is-ancestor $BASE_HEAD HEAD`，失败即经 `git reflog` 恢复后才继续。"目录卫生"仅删本次产生的 `[DEBUG-...]`/一次性脚本等未跟踪临时文件，禁止为达干净而执行 `git reset --hard`、`git checkout .`、`git clean -fd`、`git stash push --include-untracked`、`git push --force`、`git rebase -i` 等（需显式用户确认）。
 
 ## 执行原则（细则）
 
