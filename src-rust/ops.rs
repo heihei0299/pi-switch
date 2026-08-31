@@ -117,6 +117,9 @@ fn write_models_atomic(models: &serde_json::Value) -> Result<()> {
     let tmp = config::config_dir().join("models.json.tmp");
     let json = serde_json::to_string_pretty(models).map_err(|e| AppError::json(&tmp, e))?;
     std::fs::write(&tmp, json + "\n").map_err(|e| AppError::io(&tmp, e))?;
+    if let Some(parent) = models_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
     std::fs::rename(&tmp, &models_path).map_err(|e| AppError::io(&models_path, e))?;
     Ok(())
 }
@@ -141,8 +144,6 @@ pub fn update_exposed_models(name: &str, model_ids: Vec<String>) -> Result<Optio
 
     save_config(&config)?;
 
-    // Refresh the single gateway provider in pi's models.json
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
@@ -193,8 +194,6 @@ pub fn update_provider_models(
 
     save_config(&config)?;
 
-    // Refresh the gateway so model metadata in pi's models.json stays current
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
@@ -281,8 +280,6 @@ pub fn upsert_profile(
     }
     save_config(&config)?;
 
-    // Keep pi's gateway model list in sync with the profiles
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
@@ -301,8 +298,6 @@ pub fn remove_profile(name: &str) -> Result<Option<PathBuf>> {
     }
     save_config(&config)?;
 
-    // Rebuild the gateway provider without the removed profile's models
-    sync_gateway_to_pi()?;
 
     Ok(backup)
 }
