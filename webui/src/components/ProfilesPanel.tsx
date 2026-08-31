@@ -80,59 +80,91 @@ export function ProfilesPanel({
         {entries.map(([name, p]) => {
           const isCurrent = state.current === name;
           const exposed = p.exposedModels?.length ?? 0;
+          const upstreamsList = hasUpstreams(p) ? resolvedUpstreams(p) : [];
+          const mainUrl = (upstreamsList[0]?.baseUrl || p.baseUrl) || t("no base url");
           return (
-            <Card key={name} className="flex flex-col gap-3">
+            <Card
+              key={name}
+              variant={isCurrent ? "active" : "default"}
+              className="flex flex-col gap-3 transition-all"
+            >
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate font-medium text-zinc-100">{name}</span>
-                  {isCurrent && <Badge tone="amber">{t("current")}</Badge>}
-                  {p.proxy && <Badge tone="amber">{t("proxy")}</Badge>}
-                  <Badge>{p.api || "?"}</Badge>
-                  <Badge tone="amber">{t("Responses")}: {effectiveResponsesMode(p)}</Badge>
-                  {exposed > 0 && <Badge tone="green">{exposed} {t("exposed")}</Badge>}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate font-mono text-[14px] font-semibold text-zinc-100">{name}</span>
+                    {isCurrent && (
+                      <Badge tone="amber" dot mono>
+                        {t("current")}
+                      </Badge>
+                    )}
+                    {p.proxy && (
+                      <Badge tone="indigo" mono>
+                        {t("proxy")}
+                      </Badge>
+                    )}
+                    <Badge mono>{p.api || "?"}</Badge>
+                    <Badge tone="amber" mono>
+                      {t("Responses")}: {effectiveResponsesMode(p)}
+                    </Badge>
+                    {exposed > 0 && (
+                      <Badge tone="green" dot mono>
+                        {exposed} {t("exposed")}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-zinc-400">
+                    <span className="truncate max-w-md text-zinc-300" title={mainUrl}>
+                      {mainUrl}
+                    </span>
+                    <span className="text-zinc-600">·</span>
+                    <span>{p.models?.length ?? 0} {t("models")}</span>
+                    {hasUpstreams(p) && (
+                      <>
+                        <span className="text-zinc-600">·</span>
+                        <span className="text-indigo-400">{upstreamsList.length} upstream(s)</span>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-0.5 truncate text-xs text-zinc-500">
-                  {(hasUpstreams(p) ? resolvedUpstreams(p)[0]?.baseUrl : p.baseUrl) || t("no base url")} · {p.models?.length ?? 0} {t("models")} {hasUpstreams(p) ? `· ${resolvedUpstreams(p).length} upstream(s)` : ""}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
-                {!isCurrent && (
-                  <Button
-                    onClick={() =>
-                      run(() => api.useProfile(name), `${t("Switched to")} ${name}`, refresh)
+                <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
+                  {!isCurrent && (
+                    <Button
+                      variant="subtle"
+                      className="border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/50"
+                      onClick={() =>
+                        run(() => api.useProfile(name), `${t("Switched to")} ${name}`, refresh)
+                      }
+                    >
+                      {t("Use")}
+                    </Button>
+                  )}
+                  <Button onClick={() => setModels(name)}>{t("Models")}</Button>
+                  <Button onClick={() => setEditing({ name })}>{t("Edit")}</Button>
+                  <ProfileCardMenu
+                    name={name}
+                    onTest={() =>
+                      run(
+                        async () => {
+                          const r = await api.testProfile(name);
+                          if (!r.success) throw new Error(r.message);
+                          return r;
+                        },
+                        t("Test OK"),
+                      )
                     }
-                  >
-                    {t("Use")}
-                  </Button>
-                )}
-                <Button onClick={() => setModels(name)}>{t("Models")}</Button>
-                <Button onClick={() => setEditing({ name })}>{t("Edit")}</Button>
-                <ProfileCardMenu
-                  name={name}
-                  onTest={() =>
-                    run(
-                      async () => {
-                        const r = await api.testProfile(name);
-                        if (!r.success) throw new Error(r.message);
-                        return r;
-                      },
-                      t("Test OK"),
-                    )
-                  }
-                  onCopy={() => {
-                    const to = prompt(
-                      `${t("Duplicate profile '{{name}}' as:").replace("{{name}}", name)}`,
-                      `${name}-copy`,
-                    );
-                    if (to) run(() => api.duplicateProfile(name, to), t("Duplicated"), refresh);
-                  }}
-                  onDelete={() => {
-                    if (confirm(t("Delete profile '{{name}}'?").replace("{{name}}", name)))
-                      run(() => api.deleteProfile(name), t("Deleted"), refresh);
-                  }}
-                />
-              </div>
+                    onCopy={() => {
+                      const to = prompt(
+                        `${t("Duplicate profile '{{name}}' as:").replace("{{name}}", name)}`,
+                        `${name}-copy`,
+                      );
+                      if (to) run(() => api.duplicateProfile(name, to), t("Duplicated"), refresh);
+                    }}
+                    onDelete={() => {
+                      if (confirm(t("Delete profile '{{name}}'?").replace("{{name}}", name)))
+                        run(() => api.deleteProfile(name), t("Deleted"), refresh);
+                    }}
+                  />
+                </div>
               </div>
               <SupplierCreditsPanel name={name} profile={p} />
             </Card>

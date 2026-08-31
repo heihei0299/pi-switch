@@ -40,13 +40,28 @@ export function Card({
   className,
   style,
   children,
-}: {
-  className?: string;
-  style?: React.CSSProperties;
-  children: React.ReactNode;
+  variant = "default",
+  ...rest
+}: React.HTMLAttributes<HTMLDivElement> & {
+  variant?: "default" | "active" | "subtle" | "dashed" | "glass";
 }) {
+  const variants: Record<string, string> = {
+    default: "border-line bg-panel/70 backdrop-blur shadow-sm",
+    active: "border-amber-500/40 bg-gradient-to-br from-amber-500/[0.08] via-panel/90 to-panel/70 glow-signal ring-1 ring-amber-500/20",
+    subtle: "border-white/[0.07] bg-panel/40 backdrop-blur-sm",
+    dashed: "border-dashed border-white/15 bg-transparent",
+    glass: "border-line/80 bg-zinc-950/60 backdrop-blur-md",
+  };
   return (
-    <div style={style} className={cx("rounded-xl border border-line bg-panel/70 p-4 shadow-sm backdrop-blur", className)}>
+    <div
+      style={style}
+      className={cx(
+        "rounded-xl border p-4 transition-all duration-200",
+        variants[variant] || variants.default,
+        className,
+      )}
+      {...rest}
+    >
       {children}
     </div>
   );
@@ -54,7 +69,7 @@ export function Card({
 
 export function SectionTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-line/40 pb-2">
       <h2 className="font-display text-[15px] font-semibold tracking-tight text-zinc-100">{children}</h2>
       {hint && <span className="text-[12px] font-normal tracking-wide text-zinc-500">{hint}</span>}
     </div>
@@ -69,8 +84,7 @@ export function Label({ children }: { children: React.ReactNode }) {
 
 const CTRL =
   "w-full rounded-lg border border-line bg-zinc-950/70 px-3.5 py-2 text-[13px] leading-5 text-zinc-100 " +
-  "outline-none placeholder:text-zinc-600 focus:border-signal/50 focus:ring-2 focus:ring-signal/20";
-  "outline-none placeholder:text-zinc-600 focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20";
+  "outline-none placeholder:text-zinc-600 focus:border-signal/50 focus:ring-2 focus:ring-signal/20 transition-colors";
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(CTRL, props.className)} />;
@@ -129,24 +143,43 @@ export function Field({
 export function Badge({
   children,
   tone = "zinc",
+  dot = false,
+  mono = false,
+  className,
 }: {
   children: React.ReactNode;
-  tone?: "zinc" | "green" | "red" | "indigo" | "amber";
+  tone?: "zinc" | "green" | "red" | "indigo" | "amber" | "sky";
+  dot?: boolean;
+  mono?: boolean;
+  className?: string;
 }) {
-  const tones: Record<string, string> = {
-    zinc: "bg-white/[0.06] text-zinc-300 border-white/10",
-    green: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-    red: "bg-red-500/15 text-red-300 border-red-500/30",
-    indigo: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
-    amber: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  const tones: Record<string, { bg: string; dot: string }> = {
+    zinc: { bg: "bg-white/[0.06] text-zinc-300 border-white/10", dot: "bg-zinc-400" },
+    green: { bg: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400" },
+    red: { bg: "bg-red-500/15 text-red-300 border-red-500/30", dot: "bg-red-400" },
+    indigo: { bg: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30", dot: "bg-indigo-400" },
+    amber: { bg: "bg-amber-500/15 text-amber-300 border-amber-500/30", dot: "bg-amber-400" },
+    sky: { bg: "bg-sky-500/15 text-sky-300 border-sky-500/30", dot: "bg-sky-400" },
   };
+  const toneCfg = tones[tone] || tones.zinc;
   return (
     <span
       className={cx(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium tracking-wide",
-        tones[tone],
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium tracking-wide",
+        mono && "font-mono tracking-tight",
+        toneCfg.bg,
+        className,
       )}
     >
+      {dot && (
+        <span
+          className={cx(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            toneCfg.dot,
+            tone === "green" || tone === "amber" ? "animate-dot-pulse" : "",
+          )}
+        />
+      )}
       {children}
     </span>
   );
