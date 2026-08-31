@@ -4,8 +4,6 @@ import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useAction, useToast } from "./ui";
 import { ModelCard } from "./ModelCard";
-import { RequestHeadersEditor } from "./RequestHeadersEditor";
-import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import type { ModelEntry } from "../types";
@@ -36,8 +34,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<ModelDraft[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
-  const [headers, setHeaders] = useState<Record<string, string>>({});
-  const [compat, setCompat] = useState<Record<string, unknown>>({});
   const [apiType, setApiType] = useState("openai-completions");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -67,16 +63,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setApiType((rec.api as string) || "openai-completions");
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
-      setHeaders(
-        rec.headers && typeof rec.headers === "object" && !Array.isArray(rec.headers)
-          ? (rec.headers as Record<string, string>)
-          : {},
-      );
-      setCompat(
-        rec.compat && typeof rec.compat === "object" && !Array.isArray(rec.compat)
-          ? (rec.compat as Record<string, unknown>)
-          : {},
-      );
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
       // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
@@ -112,15 +98,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       api: apiType,
       baseUrl: baseUrl.trim(),
       ...(apiKey ? { apiKey } : {}),
-      ...(Object.keys(headers).length ? { headers } : { headers: undefined }),
-      ...(Object.keys(compat).length ? { compat } : { compat: undefined }),
       models: modelsPreview,
     };
-    if (!Object.keys(headers).length) delete (next as any).headers;
-    if (!Object.keys(compat).length) delete (next as any).compat;
     if (!apiKey) delete (next as any).apiKey;
     return JSON.stringify(next, null, 2);
-  }, [draft, drafts, apiType, baseUrl, apiKey, headers, compat]);
+  }, [draft, drafts, apiType, baseUrl, apiKey]);
 
   const validation = useMemo(() => validateGatewayJson(liveJson), [liveJson]);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
@@ -150,8 +132,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setApiType((rec.api as string) || "openai-completions");
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
-      setHeaders(rec.headers && typeof rec.headers === "object" && !Array.isArray(rec.headers) ? (rec.headers as Record<string, string>) : {});
-      setCompat(rec.compat && typeof rec.compat === "object" && !Array.isArray(rec.compat) ? (rec.compat as Record<string, unknown>) : {});
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
     }
@@ -345,17 +325,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           </div>
         </div>
 
-        <div className="mt-4 space-y-4">
-          <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
-          <StructuredOptionsEditor
-            title={t("Compatibility")}
-            hint={t("Adjust compatibility for endpoints or local services.")}
-            emptyLabel={t("No compatibility options")}
-            addLabel={t("Add")}
-            options={compat}
-            onOptionsChange={setCompat}
-          />
-        </div>
 
         {/* Models section — cc-switch style */}
         <div className="mt-6 border-l border-white/10 pl-3">
