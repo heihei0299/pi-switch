@@ -7,9 +7,9 @@
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![许可证](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**TUI + CLI 双模式的 pi agent 配置切换工具**
+**WebUI 优先的 pi agent 控制面板**
 
-管理 provider 配置，运行支持按模型名路由的本地网关 — 通过交互式 TUI 或命令行。
+通过浏览器优先的 WebUI 管理 provider 配置、运行本地模型名路由网关 — CLI 与 TUI 复用同一套 Rust 核心。
 
 [English](README.md) | [中文](#)
 
@@ -17,10 +17,18 @@
 
 ---
 
-## 📸 截图
+## 📸 截图 — WebUI
 
 <div align="center">
-  <img src="assets/main.png" alt="pi-switch TUI" width="80%"/>
+
+<img src="assets/webui-home.png" alt="pi-switch WebUI — Home" width="48%"/>
+<img src="assets/webui-profiles.png" alt="pi-switch WebUI — Profiles" width="48%"/>
+<br/>
+<img src="assets/webui-gateway.png" alt="pi-switch WebUI — Gateway" width="48%"/>
+<img src="assets/webui-stats.png" alt="pi-switch WebUI — Stats" width="48%"/>
+
+<br/>
+<sub>Home · Profiles · Gateway（Current vs Proposed）· Stats — 深色主题 1280×800。TUI 仍可用：<code>assets/main.png</code></sub>
 </div>
 
 ---
@@ -41,8 +49,12 @@ pi install npm:@heihei0299/pi-switch
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
 npm install
-npm run build:native
-node bin/pi-switch.js tui
+npm run build              # 构建 webui/dist 并嵌入到 .node
+# 或分步：
+# npm run build:webui      # vite 构建 → webui/dist
+# npm run build:native     # napi build --release（嵌入 webui/dist）
+node bin/pi-switch.js webui start --daemon
+# 打开 http://127.0.0.1:43110
 ```
 
 ### 系统兼容性
@@ -62,21 +74,23 @@ npm install -g @heihei0299/pi-switch --build-from-source
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始 — WebUI 优先
 
 ```bash
-pi-switch tui          # 交互式 TUI（推荐）
-pi-switch webui start --daemon  # 浏览器界面 http://127.0.0.1:43110（后台守护进程）
-pi-switch doctor       # 运行环境诊断
+pi-switch webui start --daemon  # 浏览器界面 http://127.0.0.1:43110（推荐）
+pi-switch tui                   # 交互式 TUI（备选）
+pi-switch doctor                # 运行环境诊断
 ```
 
-> **三端同源。** CLI、TUI、WebUI 都是同一套 Rust 核心之上的薄适配层。
-> WebUI 用法及三端如何保持同步，见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md)。
+> **WebUI 是主界面。** CLI、TUI、WebUI 都是同一套 Rust 核心之上的薄适配层。
+> WebUI 在浏览器中覆盖 Profiles、Gateway、Proxy、Stats、Settings 等全部能力；
+> TUI 与 CLI 为终端工作流提供同等操作。
+> 架构、新增操作的 4 步 recipe 与完整 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md)。
 
-### 常用 CLI 命令
+### 常用命令 — CLI 与 WebUI 对照
 
 ```bash
-# Provider 管理
+# Provider 管理（CLI）
 pi-switch provider add <名称> [--preset <id>] [--api-key <key>]
 pi-switch provider list
 pi-switch provider show <名称>
@@ -84,10 +98,14 @@ pi-switch provider delete <名称>
 pi-switch provider expose <名称> <model-ids...>    # 暴露模型到 pi agent
 pi-switch provider fetch-models <名称>             # 从 API 抓取模型列表
 
+# WebUI：Profiles → + Add profile / Import from cc-switch → Edit → Expose
+
 # 代理（网关）
 pi-switch proxy failover <p1,p2,...>               # 同模型故障转移链
 pi-switch proxy start --daemon                     # 启动代理守护进程
 pi-switch proxy status
+
+# WebUI：Gateway → Current vs Proposed → Apply to Pi， Proxy → Start/Stop
 
 # Package 管理
 pi-switch package list                             # 列出已安装的包
@@ -95,6 +113,8 @@ pi-switch package add <id> <名称> <版本>            # 添加新包
 pi-switch package toggle <id>                      # 启用/禁用包
 pi-switch package remove <id>                      # 删除包
 pi-switch package show <id>                        # 显示包详情
+
+# WebUI：Packages → Add / Toggle / Remove
 
 # WebUI（浏览器配置）——建议始终使用 --daemon 后台运行，
 # 这样可以用 `pi-switch webui stop` 停止
@@ -118,15 +138,16 @@ pi-switch stats                                     # 查看请求统计
 
 | 分类 | 亮点 |
 |------|------|
+| 🌐 **WebUI（主界面）** | 浏览器控制面板 `http://127.0.0.1:43110` — Profiles 增删改查、Gateway `Current vs Proposed` 差异与 `Apply to Pi`、Proxy 启停、Stats 仪表（时间窗口/自动刷新）、Packages、Settings、Doctor。Daemon 托管（独立 pid/log/port），本地回环免认证、非回环 Basic 认证。 |
 | 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、暴露到 pi agent、配置 Responses API 透传/转换模式 |
 | ⇥ **cc-switch 导入** | 一键从 cc-switch（Claude Code / Codex / Gemini）导入 provider，按 baseUrl 去重、跳过官方预置项 — CLI、TUI、WebUI 三端支持 |
 | 💡 **内置预设** | OpenRouter、Anthropic、DeepSeek、SiliconFlow、OpenAI — 一键创建配置 |
 | 🌉 **模型名网关** | 无状态按 `profile/model` 路由、SSE 流式、User-Agent 伪装、请求体过滤、OpenAI ↔ Anthropic 转换、Responses ↔ Chat Completions 转换（含 function tools）、原生 OpenAI Responses 透传、故障转移、断路器 |
 | 🗂️ **模型目录** | 从 https://models.dev 自动补齐模型元数据（cost/limit/reasoning/input），24h 缓存、按 profile 的 `modelsDevProvider` 映射与全局回退 |
 | 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |
-| 🖥️ **交互式 TUI** | ratatui 驱动、Dracula 主题、鼠标支持、vim 键位 (`hjkl`) |
+| 🖥️ **TUI（次要）** | ratatui 驱动、Dracula 主题、鼠标支持、vim 键位 (`hjkl`) — 与 WebUI/CLI 全量对齐的终端备选 |
 | 🌐 **双语支持** | English / 中文，持久化到配置，Settings 中切换 |
-| 📊 **使用统计** | 按 provider、按模型的请求指标与延迟；四维度 token 总量（输入/输出/缓存/推理）、缓存命中率、时间窗口查询（当天/24h/7 天/自定义）、按对话统计 |
+| 📊 **使用统计** | 按 provider、按模型的请求指标与延迟；四维度 token 总量（输入/输出/缓存/推理）、缓存命中率、时间窗口查询（当天/24h/7 天/自定义）、按对话统计 — 数据模型见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) |
 | 💾 **备份与同步** | 每次修改自动备份、AES-256-CBC 加密导出/导入 |
 | 🩺 **诊断工具** | `doctor` 命令检查配置、models.json、结构完整性 |
 
@@ -157,15 +178,9 @@ pi-switch import ccswitch --path /路径/cc-switch.db   # 自定义数据库路�
 
 每次代理请求都会以 JSON 行追加写入 `~/.pi-switch/requests.log`。流式响应通过 tee 旁路解析：请求的输入/输出/命中缓存/推理 token 数（上游上报时）与对话标识在流结束后补写进日志——流本身从不缓冲，逐 token 体验不变。推理 token 是输出 token 的子集（解析自上游上报的 `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`），不计入总量。
 
-- **TUI 统计页**：显示累计输入/输出 token 与缓存命中率。
-- **统计接口**（`GET /api/stats`）：返回 `totalTokens` 四维度——输入/输出/缓存/推理（`total = 输入 + 输出`，推理是输出的子集）——以及 `cacheHitRate`、按供应商与按模型的 token 明细列（输入/输出/缓存/总/缓存率/消费）与 `byConversation`（按最近活跃倒序、截取 Top 20；无标识请求合并为 `unlabeled` 一组）。
-- **时间窗口**：WebUI 统计页带时间范围选择器：**当天**（本地自然日 0 点起）、**24 小时以内**与**7 天以内**（滚动窗口）、**自定义**（起日 0 点至止日 24 点，起止日期均必填）。默认当天。选择器把窗口换算成 `from`/`to` 毫秒调用 `GET /api/stats?range=<today|last24h|last7d|custom>&from=<毫秒>&to=<毫秒>`；不带窗口参数的请求返回全量历史。
-- **WebUI 面板**：token 总量平铺 5 格（输入/输出/缓存/推理/合计）并带子集角标（`Cached ⊆ Input`、`Reasoning ⊆ Output`）；每个对话行补齐输入/输出/缓存/推理/缓存命中率/合计六项，超宽时两行平铺；token 缺失或 0 值显示 `-`。
-- **请求明细**：「By conversation」卡片下方列出当前窗口内每条请求，倒序截取最近 100 条：时间、provider、model、状态（失败带错误）以及输入/输出/缓存/推理/合计与单条缓存命中率。无使用量上报的行显示 `-`，绝不冒充 0 测量。**缓存率低于 50% 标红**；点击会话单元格可复制完整会话 ID。
-- **缓存命中率** = 命中缓存的输入 token ÷ 总输入 token（输出 token 不参与）。无缓存数据时显示 `-`，绝不显示误导的 `0%`。
-- **对话标识**来自客户端：`x-conversation-id` 请求头优先，`x-opencode-session` 请求头次之（pi / open-code 客户端自带），body `conversation_id` 兜底（ADR-0002）。子代理（subagent）发起的请求归并到父会话标识，后台代理不会打碎统计。`x-opencode-session` / `x-opencode-client` 两个归因头由 pi 侧 conversation-id-inject 扩展注入；在 `~/.pi-switch/config.json` 设 `settings.injectOpenCodeAttribution: false`（或在 WebUI 设置页取消勾选）并重启 pi 即可关闭扩展的注入（pi 核心在直连 opencode/opencode-go 时仍会注入；经 pi-switch 代理时不会）。
-- **对话名称**：注入的 `x-conversation-name` 为会话显式标题；无标题时回退到第一条用户消息作为可读名称。非 Latin-1 标题在传输层做百分号编码保证 header 合法，代理与 webui 显示层分别解码还原，中文标题在仪表盘可读显示（修复前写入的历史编码行也在显示时兼容解码）。选取回退标题时跳过 pi 的 skill 注入消息（`<skill name="…">`），标签永远是用户自己的第一条消息，而非注入的标签。
-- 仅成功且上报了 usage 的请求计入 token 统计；failover/重试的中间行与升级前的旧日志行（无 token 字段）优雅跳过，升级不会清空或污染既有历史。
+- **WebUI 统计页**：token 总量平铺 5 格（输入/输出/缓存/推理/合计）并带子集角标（`Cached ⊆ Input`、`Reasoning ⊆ Output`）；`By provider` / `By conversation` 表格、时间范围选择器（当天 / 24 小时 / 7 天 / 自定义）、自动刷新档位（Off / 5s / 30s / 5min）与分页的请求明细。
+- **统计接口**（`GET /api/stats`）：返回 `totalTokens` 四维度——输入/输出/缓存/推理（`total = 输入 + 输出`，推理是输出的子集）——以及 `cacheHitRate`、按供应商与按模型的 token 明细与 `byConversation`。
+- 完整数据模型、窗口语义与日志 schema 见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) 与 `stats.rs` / `usage.rs` 模块 — README 仅保留概览以保持轻量。
 
 ---
 
@@ -204,26 +219,33 @@ graph LR
     style L fill:#ff5555,stroke:#ff5555,color:#f8f8f2
 ```
 
-### 操作步骤
+### 操作步骤 — WebUI 优先
 
-**1. 添加 provider**（CLI 或 TUI）
+**1. 添加 provider** — WebUI：`Profiles → + Add profile → 填写表单 → Save`；或 CLI：
+
 ```bash
 pi-switch provider add provider-a --api openai-completions --base-url https://api.example.com/v1 \
     --api-key '$API_KEY' --models gpt-5.4,claude-sonnet-4-5
 ```
-TUI 中：`Profiles → a → 填写表单 → Ctrl+S`
 
-**2. 暴露模型到 pi agent** — 选择哪些模型出现在 `~/.pi/agent/models.json` 中
+_TUI：`Profiles → a → 填写表单 → Ctrl+S` 仍作为终端备选。_
+
+**2. 暴露模型到 pi agent** — WebUI：`Profiles → 选择 provider → Models → 勾选 → Save`（仅写 `~/.pi-switch/config.json`）；或 CLI：
+
 ```bash
 pi-switch provider expose provider-a gpt-5.4
 ```
-TUI 中：`Profiles → 选择 provider → x`
 
-**3. 启动代理** — 读取已发布的 `pi-switch` 网关 provider（需先在 **Gateway → 应用到 Pi** 显式发布，启动时不再自动写）
+**2.5 发布到 Pi** — WebUI：`Gateway → Current vs Proposed → Apply to Pi`（显式发布，展示差异并支持回滚）；或 `PUT /api/models/gateway`。供应商与网关隔离保证 Profiles 的修改不会自动覆写 `~/.pi/agent/models.json`，必须显式发布。
+
+**3. 启动代理** — 读取已发布的 `pi-switch` 网关 provider：
+
 ```bash
 pi-switch proxy failover provider-b,provider-c          # 可选：同模型故障转移
 pi-switch proxy start --daemon
 ```
+
+_WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）_
 
 **4. 在 pi 中使用** — 选择 `pi-switch` provider，然后选 `provider-a/gpt-5.4` 这样的模型
 
@@ -250,6 +272,9 @@ pi-switch/
 ├── bin/pi-switch.js         # CLI 入口
 ├── index.js                 # ESM 包装器，用于原生插件
 ├── pi-switch-native.cjs     # NAPI 加载器（自动平台检测）
+├── webui/                   # React 前端（Vite + Tailwind，通过 rust-embed 嵌入）
+│   ├── src/components/      # Home, Profiles, Gateway, Proxy, Stats 等
+│   └── dist/                # vite 构建产物（release 时烘焙进 .node）
 ├── src-rust/                # Rust 原生核心（napi-rs）
 │   ├── lib.rs               # NAPI 函数导出
 │   ├── config.rs            # 配置加载/保存、类型
@@ -266,7 +291,7 @@ pi-switch/
 │   ├── stats.rs             # 请求日志聚合 + token 统计
 │   ├── usage.rs             # Token 使用量提取 & SSE 流解析
 │   ├── sync.rs              # 加密导出/导入
-│   └── tui/                 # 交互式终端 UI（ratatui）
+│   └── tui/                 # 交互式终端 UI（ratatui）— 次要界面
 │       ├── app.rs           # 状态机 + 按键处理
 │       ├── form.rs          # Provider 表单
 │       ├── i18n.rs          # 双语（EN/ZH）
@@ -282,6 +307,8 @@ pi-switch/
 - `~/.pi-switch/backups/` — 每次修改自动生成带时间戳的备份
 - `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 写入单个网关 provider）
 
+WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — 该指南是厚参考，本 README 保持轻量。
+
 ---
 
 ## ❓ 常见问题
@@ -292,7 +319,7 @@ pi-switch/
 
 在 pi 中打开 `/model`，选择任意 `profile/model`（如 `provider-a/gpt-5.4`）。代理按每个请求的模型名路由 — 无需额外操作。
 
-要添加更多模型，在 TUI 中暴露（`Profiles → 选择 provider → x`）或使用 CLI：
+要添加更多模型，在 WebUI 中暴露（`Profiles → 选择 provider → Models`）或使用 CLI：
 ```bash
 pi-switch provider expose <名称> <model-id>...
 ```
@@ -303,7 +330,7 @@ pi-switch provider expose <名称> <model-id>...
 <summary><b>如何设置故障转移？</b></summary>
 <br>
 
-TUI 中：`Settings → Failover` → `Enter` → 输入逗号分隔的名称 → `Enter`。
+WebUI 中：`Gateway` / `Proxy` 面板展示并编辑故障转移链（或 TUI：`Settings → Failover` → `Enter` → 输入逗号分隔的名称 → `Enter`）。
 或使用 CLI：
 ```bash
 pi-switch proxy failover provider-b,provider-c
@@ -315,7 +342,6 @@ pi-switch proxy failover provider-b,provider-c
 
 <details>
 <summary><b>[proxy] 徽章是什么意思？</b></summary>
-
 <br>
 
 `[proxy]` 徽章表示该 profile 是一个元 profile（`"proxy": true`），用于在 pi 中注册指向本地网关的 provider，不参与上游路由。
@@ -326,7 +352,6 @@ pi-switch proxy failover provider-b,provider-c
 
 <details>
 <summary><b>网关路由如何工作？</b></summary>
-
 <br>
 
 代理在一个 `pi-switch` provider 下以 `profile/真实模型ID` 格式列出所有暴露模型。当 pi 发送 `"model": "provider-a/gpt-5.4"` 的请求时：
@@ -353,7 +378,6 @@ pi-switch proxy start --daemon
 
 <details>
 <summary><b>reasoning 模型报错 `unknown variant 'developer'`（400）？</b></summary>
-
 <br>
 
 **问题** — pi 对标记了 `reasoning: true` 的模型默认使用 OpenAI 的 `developer` role（2025 新推荐项）。部分上游网关的 schema 只接受 `system` / `user` / `assistant` / `tool`（如 opencode zen），直接拒绝请求：
@@ -433,7 +457,7 @@ pi-switch proxy start --daemon
 | Codex | `codex_cli_rs/0.1.0` | — |
 | Gemini | `gemini-cli/0.1.5` | `x-goog-api-client` |
 
-- **全局**：`Settings → User-Agent`，用 `←/→` 切换。
+- **全局**：`Settings → User-Agent`，用 `←/→` 切换（TUI）或下拉框（WebUI）。
 - **按 profile**：在 profile 详情页按 `u` 循环切换；profile 级的值会覆盖全局。适合只有部分上游有 UA 白名单的情况。
 
 注意：这只能通过"看客户端名称"的校验，不会伪造更深的请求级令牌（turn state、session id 等）——严格的一方端点会校验这些。
@@ -453,12 +477,14 @@ pi-switch proxy start --daemon
 ## 🛠️ 开发
 
 ```bash
-npm run build:native:debug     # 构建 Rust 扩展（debug）
-npm run build:native           # 构建 Rust 扩展（release）
-cargo build                    # 仅 Rust 构建
-cargo clippy                   # Lint
-cargo fmt                      # 格式化
-cargo test --release --lib     # 运行单元测试
+npm run build                    # 一次性：构建 webui/dist 并嵌入到 .node
+npm run build:webui              # vite 构建 → webui/dist
+npm run build:native             # napi build --release（嵌入 webui/dist）
+npm run build:native:debug       # 构建 Rust 扩展（debug）
+cargo build                      # 仅 Rust 构建
+cargo clippy                     # Lint
+cargo fmt                        # 格式化
+cargo test --release --lib       # 运行单元测试
 ```
 
 **注意：** 在 Windows 上执行 `npm run build:native` 前请停掉 TUI/daemon，避免文件锁定错误。

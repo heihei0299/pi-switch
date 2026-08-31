@@ -7,9 +7,9 @@
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**TUI + CLI dual-mode profile switcher for pi agent**
+**WebUI-first control plane for pi agent**
 
-Manage provider profiles and run a local model-name routing gateway with failover — via an interactive TUI or CLI.
+Manage provider profiles and run a local model-name routing gateway — via a browser-first WebUI, with CLI and TUI on the same Rust core.
 
 [English](#) | [中文](README_ZH.md)
 
@@ -17,10 +17,18 @@ Manage provider profiles and run a local model-name routing gateway with failove
 
 ---
 
-## 📸 Screenshots
+## 📸 Screenshots — WebUI
 
 <div align="center">
-  <img src="assets/main.png" alt="pi-switch TUI" width="80%"/>
+
+<img src="assets/webui-home.png" alt="pi-switch WebUI — Home" width="48%"/>
+<img src="assets/webui-profiles.png" alt="pi-switch WebUI — Profiles" width="48%"/>
+<br/>
+<img src="assets/webui-gateway.png" alt="pi-switch WebUI — Gateway" width="48%"/>
+<img src="assets/webui-stats.png" alt="pi-switch WebUI — Stats" width="48%"/>
+
+<br/>
+<sub>Home · Profiles · Gateway (Current vs Proposed) · Stats — dark theme, 1280×800. &nbsp; TUI remains available: <code>assets/main.png</code></sub>
 </div>
 
 ---
@@ -41,8 +49,12 @@ pi install npm:@heihei0299/pi-switch
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
 npm install
-npm run build:native
-node bin/pi-switch.js tui
+npm run build              # builds webui/dist + embeds into the .node
+# or step by step:
+# npm run build:webui      # vite build → webui/dist
+# npm run build:native     # napi build --release (embeds webui/dist)
+node bin/pi-switch.js webui start --daemon
+# open http://127.0.0.1:43110
 ```
 
 ### System Compatibility
@@ -62,22 +74,23 @@ npm install -g @heihei0299/pi-switch --build-from-source
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start — WebUI first
 
 ```bash
-pi-switch tui          # Interactive TUI (recommended)
-pi-switch webui start --daemon  # Browser UI at http://127.0.0.1:43110 (background daemon)
-pi-switch doctor       # Run environment diagnostics
+pi-switch webui start --daemon  # Browser UI at http://127.0.0.1:43110 (recommended)
+pi-switch tui                   # Interactive TUI (alternative)
+pi-switch doctor                # Run environment diagnostics
 ```
 
-> **Three ways, one core.** CLI, TUI, and WebUI are thin adapters over the same
-> Rust core. See [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for the WebUI and how to keep
-> the three interfaces in sync.
+> **WebUI is the primary interface.** CLI, TUI, and WebUI are thin adapters over the same
+> Rust core. The WebUI covers Profiles, Gateway, Proxy, Stats and Settings in the browser;
+> TUI and CLI expose the same operations for terminal workflows.
+> See [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for architecture, the 4-step recipe for adding operations, and the full REST ↔ core map.
 
-### Essential CLI Commands
+### Essential Commands — CLI & WebUI equivalents
 
 ```bash
-# Provider management
+# Provider management (CLI)
 pi-switch provider add <name> [--preset <id>] [--api-key <key>]
 pi-switch provider list
 pi-switch provider show <name>
@@ -85,10 +98,14 @@ pi-switch provider delete <name>
 pi-switch provider expose <name> <model-ids...>    # Expose models to pi agent
 pi-switch provider fetch-models <name>             # Fetch models from API
 
+# In WebUI: Profiles → + Add profile / Import from cc-switch → Edit → Expose
+
 # Proxy (gateway)
 pi-switch proxy failover <p1,p2,...>               # Same-model fallback chain
 pi-switch proxy start --daemon                     # Start proxy daemon
 pi-switch proxy status
+
+# In WebUI: Gateway → Current vs Proposed → Apply to Pi,  Proxy → Start/Stop
 
 # Package management
 pi-switch package list                             # List installed packages
@@ -96,6 +113,8 @@ pi-switch package add <id> <name> <version>        # Add a new package
 pi-switch package toggle <id>                      # Enable/disable package
 pi-switch package remove <id>                      # Remove package
 pi-switch package show <id>                        # Show package details
+
+# In WebUI: Packages → Add / Toggle / Remove
 
 # WebUI (browser config) — always use --daemon so it runs in the
 # background and can be stopped with `pi-switch webui stop`
@@ -119,15 +138,16 @@ pi-switch stats                                     # View request statistics
 
 | Category | Highlights |
 |----------|------------|
+| 🌐 **WebUI (primary)** | Browser control plane at `http://127.0.0.1:43110` — Profiles CRUD, Gateway `Current vs Proposed` diff & `Apply to Pi`, Proxy control, Stats dashboard with time windows, Packages, Settings, Doctor. Daemon-managed (own pid/log/port), loopback-open / non-loopback Basic auth. |
 | 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with baseUrl/apiKey/headers/weight), expose to pi agent, configure Responses API passthrough/conversion mode |
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
 | 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
 | 🗂️ **Model Catalog** | Auto-enrich model metadata (cost/limit/reasoning/input) from https://models.dev with 24h cache, per-profile `modelsDevProvider` mapping & global fallback |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
-| 🖥️ **Interactive TUI** | ratatui-powered, Dracula theme, mouse support, vim keys (`hjkl`) |
+| 🖥️ **TUI (secondary)** | ratatui-powered, Dracula theme, mouse support, vim keys (`hjkl`) — full parity with WebUI/CLI for terminal-first workflows |
 | 🌐 **Bilingual** | English / 中文, persisted to config, toggle in Settings |
-| 📊 **Usage Stats** | Per-provider, per-model request metrics & latency; four-dimension token totals (input/output/cached/reasoning), cache hit rate, time-window queries (today/24h/7d/custom), per-conversation breakdown |
+| 📊 **Usage Stats** | Per-provider, per-model request metrics & latency; four-dimension token totals (input/output/cached/reasoning), cache hit rate, time-window queries (today/24h/7d/custom), per-conversation breakdown — see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for the data model |
 | 💾 **Backup & Sync** | Auto-backup on mutation, AES-256-CBC encrypted export/import |
 | 🩺 **Diagnostics** | `doctor` command checks config, models.json, structure |
 
@@ -158,15 +178,9 @@ Available in all three UIs: CLI (`pi-switch import ccswitch`), TUI (Profiles →
 
 Every proxied request is appended to `~/.pi-switch/requests.log` as a JSON line. For streaming responses the upstream SSE stream is teed: each request's input/output/cached/reasoning token counts (when the upstream reports them) and conversation id are parsed on the side and the log line is written when the stream ends — the stream itself is never buffered. Reasoning tokens are a subset of output tokens (parsed from `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens` where the upstream reports them); they never inflate the total.
 
-- **TUI Stats page** shows the cumulative input/output tokens and the cache hit rate.
-- **Stats API** (`GET /api/stats`) returns `totalTokens` with four dimensions — input / output / cached / reasoning (`total = input + output`, reasoning is a subset of output) — plus `cacheHitRate`, per-provider and per-model token detail columns (input / output / cached / total / cache rate / cost), and `byConversation` — conversations sorted by most recent activity (top 20), with requests without an id merged into a single `unlabeled` group.
-- **Time window** — the WebUI stats page has a time-range picker: **Today** (local calendar day from 00:00), **Last 24h** and **Last 7d** (rolling windows), and **Custom** (start day 00:00 → end day 24:00, both dates required). The default is Today. The picker converts the window to `from`/`to` epoch-millis and calls `GET /api/stats?range=<today|last24h|last7d|custom>&from=<ms>&to=<ms>`; a bare request with no window parameters returns the full history.
-- **WebUI dashboard** — token totals render as five tiles (Input / Output / Cached / Reasoning / Total) with subset badges (`Cached ⊆ Input`, `Reasoning ⊆ Output`), and each conversation row adds Input / Output / Cached / Reasoning / cache hit rate / Total in a two-line layout when over-wide; missing or zero token values show `-`.
-- **Request details** — below the conversation card, the stats page lists every request in the current window, newest first, capped at the most recent 100: time, provider, model, status (with error for failures), and input / output / cached / reasoning / total tokens plus per-request cache hit rate. Rows without reported usage show `-`, never a misleading zero. **Cache rates below 50% render in red**, and clicking a conversation cell copies the full conversation id to the clipboard.
-- **Cache hit rate** = cached input tokens ÷ total input tokens (output tokens excluded). When no cache data exists it shows `-`, never a misleading `0%`.
-- **Conversation id** comes from the client: `x-conversation-id` header first, `x-opencode-session` second (sent by pi/open-code clients), `conversation_id` body field as fallback (ADR-0002). Requests from spawned subagents fold into the parent conversation id, so background agents don't fragment the stats. The two opencode attribution headers (`x-opencode-session` / `x-opencode-client`) are injected by the pi-side conversation-id-inject extension; set `settings.injectOpenCodeAttribution: false` in `~/.pi-switch/config.json` (or uncheck it in the WebUI Settings panel) and restart pi to stop the extension from sending them (pi core itself still injects them for direct opencode/opencode-go connections; through the pi-switch proxy it does not).
-- **Conversation name** — the injected `x-conversation-name` is the session's explicit title, or falls back to the first user message as a readable label. Non-Latin1 titles are percent-encoded on the wire so the header stays HTTP-safe, then decoded back by the proxy and again defensively by the webui, so Chinese titles render readably in the dashboard (legacy pre-decode log rows are decoded at display time too). Pi's skill-injection messages (`<skill name="…">`) are skipped when picking the fallback title, so the label is the user's own first message, never the injected tag.
-- Only successful requests with reported usage count towards token totals; failover/retry intermediate rows and old log lines without token fields are excluded gracefully, so upgrading never breaks or blanks existing history.
+- **WebUI Stats page** — token totals as five tiles (Input / Output / Cached / Reasoning / Total) with subset badges, plus `By provider` / `By conversation` tables, a time-range picker (Today / Last 24h / Last 7d / Custom), auto-refresh tiers (Off / 5s / 30s / 5min) and recent-request details (paginated, with status, latency, cache rate).
+- **Stats API** (`GET /api/stats`) returns `totalTokens` with four dimensions — input / output / cached / reasoning (`total = input + output`, reasoning is a subset of output) — plus `cacheHitRate`, per-provider and per-model detail columns and `byConversation`.
+- For the full data model, window semantics and log schema, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) and the `stats.rs` / `usage.rs` modules — the README keeps only the overview to stay thin.
 
 ---
 
@@ -205,33 +219,40 @@ graph LR
     style L fill:#ff5555,stroke:#ff5555,color:#f8f8f2
 ```
 
-### Step by Step
+### Step by Step — WebUI first
 
-**1. Add a provider** (CLI or TUI)
+**1. Add a provider** — WebUI: `Profiles → + Add profile → fill form → Save`; or CLI:
+
 ```bash
 pi-switch provider add provider-a --api openai-completions --base-url https://api.example.com/v1 \
     --api-key '$API_KEY' --models gpt-5.4,claude-sonnet-4-5
 ```
-In TUI: `Profiles → a → fill form → Ctrl+S`
 
-**2. Expose models to pi agent** — choose which models appear in `~/.pi/agent/models.json` (local only)
+_TUI: `Profiles → a → fill form → Ctrl+S` still works as a terminal alternative._
+
+**2. Expose models to pi agent** — WebUI: `Profiles → select provider → Models → check → Save` (writes only `~/.pi-switch/config.json`); or CLI:
+
 ```bash
 pi-switch provider expose provider-a gpt-5.4
 ```
-In TUI/WebUI: `Profiles → select provider → x` (does not yet write `models.json`)
 
 **2.5 Publish to Pi** — Gateway explicitly writes the aggregated provider
+
 ```bash
 # WebUI: Gateway → Current vs Proposed → Apply to Pi
 # or via API: PUT /api/models/gateway
 ```
-In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback)
+
+In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback). The supplier vs gateway isolation guarantees Profiles mutations never auto-write `~/.pi/agent/models.json` — you publish explicitly.
 
 **3. Start the proxy** — it reads the published `pi-switch` gateway provider
+
 ```bash
 pi-switch proxy failover provider-b,provider-c          # optional same-model fallback
 pi-switch proxy start --daemon
 ```
+
+_WebUI: `Proxy → Start` (same daemon, WebUI shows status)._
 
 **4. Use in pi** — select the `pi-switch` provider, then pick a `profile/model` like `provider-a/gpt-5.4`
 
@@ -258,6 +279,9 @@ pi-switch/
 ├── bin/pi-switch.js         # CLI entry point
 ├── index.js                 # ESM wrapper for native addon
 ├── pi-switch-native.cjs     # NAPI loader (auto platform detection)
+├── webui/                   # React frontend (Vite + Tailwind, embedded via rust-embed)
+│   ├── src/components/      # Home, Profiles, Gateway, Proxy, Stats, etc.
+│   └── dist/                # vite build output (baked into .node in release)
 ├── src-rust/                # Rust native core (napi-rs)
 │   ├── lib.rs               # NAPI function exports
 │   ├── config.rs            # Config load/save, types (ProviderProfile + Upstream)
@@ -275,7 +299,7 @@ pi-switch/
 │   ├── stats.rs             # Request log aggregation + token usage stats
 │   ├── usage.rs             # Token usage extraction & SSE stream parsing
 │   ├── sync.rs              # Encrypted export/import
-│   └── tui/                 # Interactive terminal UI (ratatui)
+│   └── tui/                 # Interactive terminal UI (ratatui) — secondary interface
 │       ├── app.rs           # State machine + key handler
 │       ├── form.rs          # Provider form state
 │       ├── i18n.rs          # Bilingual (EN/ZH)
@@ -291,6 +315,8 @@ pi-switch/
 - `~/.pi-switch/backups/` — timestamped auto-backups on every mutation
 - `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes a single gateway provider)
 
+For the WebUI's thin-adapter architecture, the 4-step recipe for adding operations, and the REST ↔ core map, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — that guide is the thick reference; this README stays thin.
+
 ---
 
 ## ❓ FAQ
@@ -301,7 +327,7 @@ pi-switch/
 
 In pi, open `/model` and pick any advertised `profile/model` (e.g. `provider-a/gpt-5.4`). The proxy routes by the model name in each request — no extra step needed.
 
-To add more models, expose them in TUI (`Profiles → select provider → x`) or via CLI:
+To add more models, expose them in WebUI (`Profiles → select provider → Models`) or via CLI:
 ```bash
 pi-switch provider expose <name> <model-id>...
 ```
@@ -312,7 +338,7 @@ pi-switch provider expose <name> <model-id>...
 <summary><b>How do I set up failover?</b></summary>
 <br>
 
-In TUI: `Settings → Failover` → `Enter` → enter comma-separated profile names → `Enter`.
+In WebUI: `Gateway`/`Proxy` panels expose the failover chain (or `Settings → Failover` in TUI → `Enter` → comma-separated names → `Enter`).
 Or via CLI:
 ```bash
 pi-switch proxy failover provider-b,provider-c
@@ -324,7 +350,6 @@ Profiles in the failover chain that expose the same model are tried in order whe
 
 <details>
 <summary><b>What does the [proxy] badge mean?</b></summary>
-
 <br>
 
 The `[proxy]` badge indicates this profile is a meta-profile (with `"proxy": true`). Proxy profiles are used to register a pi provider that points to the local gateway. They are excluded from upstream routing.
@@ -335,7 +360,6 @@ In the current gateway mode, proxy profiles are typically not needed — the pro
 
 <details>
 <summary><b>How does gateway routing work?</b></summary>
-
 <br>
 
 The proxy advertises every exposed model as `profile/realModelId` under a single `pi-switch` provider. When pi sends a request with `"model": "provider-a/gpt-5.4"`, the proxy:
@@ -362,7 +386,6 @@ In pi, select the `pi-switch` provider, then `provider-a/gpt-5.4`. The model nam
 
 <details>
 <summary><b>Pi errors with `unknown variant 'developer'` (400) for reasoning models?</b></summary>
-
 <br>
 
 **Problem** — pi sends the OpenAI `developer` role (the 2025 recommendation) for models marked `reasoning: true`. Some upstream gateways only accept `system` / `user` / `assistant` / `tool` (e.g. opencode zen) and reject the request:
@@ -442,8 +465,8 @@ Some upstream channels only accept requests from whitelisted clients (checking t
 | Codex | `codex_cli_rs/0.1.0` | — |
 | Gemini | `gemini-cli/0.1.5` | `x-goog-api-client` |
 
-- **Global**: `Settings → User-Agent`, cycle with `←/→`.
-- **Per-profile**: in a profile's detail view press `u` to cycle; a per-profile value overrides the global one. Useful when only some upstreams enforce a UA whitelist.
+- **Global**: `Settings → User-Agent`, cycle with `←/→` (TUI) or dropdown (WebUI).
+- **Per-profile**: in a profile's detail view use the spoof control; a per-profile value overrides the global one.
 
 Note: this only passes checks that look at the client name. It does not fabricate deeper per-request tokens (turn state, session ids), which strict first-party endpoints validate.
 
@@ -462,12 +485,14 @@ Everything under `~/.pi-switch/`. Pi's own registry is `~/.pi/agent/models.json`
 ## 🛠️ Development
 
 ```bash
-npm run build:native:debug     # Build Rust addon (debug)
-npm run build:native           # Build Rust addon (release)
-cargo build                    # Rust-only build
-cargo clippy                   # Lint
-cargo fmt                      # Format
-cargo test --release --lib     # Run unit tests
+npm run build                    # one-shot: webui/dist + native .node (embeds webui)
+npm run build:webui              # vite build → webui/dist
+npm run build:native             # napi build --release (embeds webui/dist)
+npm run build:native:debug       # Build Rust addon (debug)
+cargo build                      # Rust-only build
+cargo clippy                     # Lint
+cargo fmt                        # Format
+cargo test --release --lib       # Run unit tests
 ```
 
 **Note:** Stop the TUI/daemon before `npm run build:native` to avoid file-lock errors on Windows.
