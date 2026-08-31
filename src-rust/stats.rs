@@ -401,7 +401,9 @@ pub fn virtual_session_for(
         // model check: if both present, must equal; if sess has no model, allow; if entry has no model, skip candidate (cannot match)
         if let Some(em) = entry_model {
             if let Some(sm) = sess.model.as_deref() {
-                if sm != em {
+                let em_norm = em.split('/').last().unwrap_or(em);
+                let sm_norm = sm.split('/').last().unwrap_or(sm);
+                if sm_norm != em_norm {
                     continue;
                 }
             }
@@ -3301,6 +3303,28 @@ mod tests {
         e.model = Some("gpt-5.4".into());
         e.ts = Some("2026-08-02T10:04:01Z".into());
         assert!(virtual_session_for(&e, &map, now).is_none());
+    }
+    #[test]
+    fn virtual_session_matches_with_provider_prefix_stripped() {
+        let now = ts_ms("2026-08-02T10:05:00Z");
+        let sess = pi_sess("sess-1", "hello", "2026-08-02T10:04:00Z", "opencode/minimax-m3", None);
+        let map = sess_map(vec![sess]);
+        let e = RequestLogEntry {
+            ts: Some("2026-08-02T10:04:01Z".into()),
+            model: Some("minimax-m3".into()),
+            conversation_id: None,
+            ..entry(true, "hyb", "minimax-m3", 10, "2026-08-02T10:04:01Z")
+        };
+        let hit = virtual_session_for(&e, &map, now);
+        assert!(hit.is_some(), "should match after stripping provider prefix");
+        assert_eq!(hit.unwrap().id, "sess-1");
+        // reverse: sess without prefix, entry with prefix
+        let sess2 = pi_sess("sess-2", "hello", "2026-08-02T10:04:00Z", "minimax-m3", None);
+        let map2 = sess_map(vec![sess2]);
+        let mut e2 = e.clone();
+        e2.model = Some("opencode/minimax-m3".into());
+        let hit2 = virtual_session_for(&e2, &map2, now);
+        assert!(hit2.is_some(), "should match when entry has prefix and sess does not");
     }
 
     #[test]
