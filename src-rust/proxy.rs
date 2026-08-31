@@ -16,6 +16,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// UA sent when no disguise preset is configured. Cloudflare (opencode.ai front)
+/// rejects UA-less upstream requests with 403 "Access denied" (observed 2026-08-31);
+/// real clients always send one, so a plain curl-like default is the safe baseline.
+const DEFAULT_FORWARD_USER_AGENT: &str = "curl/8.5.0";
+
 // ─── Disguise: preset → real client identity ───────────────
 //
 // Values match real CLI clients. UA whitelists (e.g. Kimi coding) check only the
@@ -56,7 +61,11 @@ fn build_disguised_client(
     Option<String>,
     Vec<(&'static str, &'static str)>,
 ) {
-    let ua = spoof.map(|p| resolve_user_agent(p).to_string());
+    // Cloudflare (opencode.ai front) rejects UA-less requests with 403 "Access denied"
+    // since 2026-08-31; disguise preset wins, plain curl-like UA is the safe default.
+    let ua = spoof
+        .map(|p| resolve_user_agent(p).to_string())
+        .or_else(|| Some(DEFAULT_FORWARD_USER_AGENT.to_string()));
     let mut b = ReqwestClient::builder();
     if let Some(ref u) = ua {
         b = b.user_agent(u);
