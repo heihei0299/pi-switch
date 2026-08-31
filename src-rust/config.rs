@@ -186,7 +186,26 @@ impl Default for WebSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversationSource {
+    #[default]
+    SessionScan,
+    Proxy,
+    Off,
+}
+
+impl ConversationSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConversationSource::SessionScan => "sessionScan",
+            ConversationSource::Proxy => "proxy",
+            ConversationSource::Off => "off",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Settings {
     #[serde(default = "default_prefix")]
     #[serde(rename = "providerPrefix")]
@@ -200,7 +219,100 @@ pub struct Settings {
     pub proxy: ProxySettings,
     #[serde(default)]
     pub web: WebSettings,
+    #[serde(default, rename = "conversationSource")]
+    pub conversation_source: ConversationSource,
+    #[serde(default, skip_serializing, rename = "injectOpenCodeAttribution")]
+    pub inject_open_code_attribution: Option<bool>,
 }
+impl<'de> serde::Deserialize<'de> for Settings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let obj = value.as_object().ok_or_else(|| serde::de::Error::custom("settings must be an object"))?;
+        let provider_prefix = obj
+            .get("providerPrefix")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_prefix);
+        let write_mode = obj
+            .get("writeMode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_write_mode);
+        let language = obj.get("language").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let proxy = obj
+            .get("proxy")
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .unwrap_or_default();
+        let web = obj
+            .get("web")
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .unwrap_or_default();
+        // conversationSource handling with legacy fallback
+        let explicit_cs = obj.get("conversationSource").and_then(|v| v.as_str());
+        let legacy = obj.get("injectOpenCodeAttribution").and_then(|v| v.as_bool());
+        let conversation_source = if let Some(cs) = explicit_cs {
+            match cs {
+                "proxy" => ConversationSource::Proxy,
+                "off" => ConversationSource::Off,
+                "sessionScan" => ConversationSource::SessionScan,
+                _ => {
+                    return Err(serde::de::Error::unknown_variant(
+                        cs,
+                        &["proxy", "sessionScan", "off"],
+                    ))
+                }
+            }
+        } else if let Some(b) = legacy {
+            if b {
+                ConversationSource::Proxy
+            } else {
+                ConversationSource::Off
+            }
+        } else {
+            ConversationSource::default()
+        };
+        // legacy is absorbed — not stored after migration
+        Ok(Settings {
+            provider_prefix,
+            write_mode,
+            language,
+            proxy,
+            web,
+            conversation_source,
+            inject_open_code_attribution: None,
+        })
+    }
+}
+
+pub(crate) fn migrated_for_save(config: &PiSwitchConfig) -> PiSwitchConfig {
+    let mut out = config.clone();
+    if let Some(b) = out.settings.inject_open_code_attribution.take() {
+        let mapped = if b {
+            ConversationSource::Proxy
+        } else {
+            ConversationSource::Off
+        };
+        // Only override if current is still the default (meaning file had no explicit conversationSource)
+        // Explicit proxy/off/sessionScan already wins over legacy.
+        if out.settings.conversation_source == ConversationSource::SessionScan {
+            // If legacy was true -> Proxy, false -> Off. For explicit sessionScan vs legacy true,
+            // this would incorrectly map, but that case only arises via direct struct construction;
+            // file-based explicit sessionScan would have cleared legacy at deserialize time.
+            // To keep explicit sessionScan, we require that legacy mapping only applies when
+            // conversation_source is default AND legacy existed. For the test helper, default SessionScan + legacy true => Proxy is expected,
+            // so we map in that case.
+            out.settings.conversation_source = mapped;
+        }
+    }
+    if out.version < 2 {
+        out.version = 2;
+    }
+    out
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiSwitchConfig {
@@ -255,7 +367,7 @@ fn default_max_tokens() -> u32 {
 impl Default for PiSwitchConfig {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             current: None,
             profiles: Default::default(),
             settings: Settings {
@@ -278,6 +390,8 @@ impl Default for PiSwitchConfig {
                     host: default_web_host(),
                     port: default_web_port(),
                 },
+                conversation_source: ConversationSource::default(),
+                inject_open_code_attribution: None,
             },
         }
     }
@@ -322,11 +436,12 @@ pub fn load_config() -> Result<PiSwitchConfig> {
 }
 
 pub fn save_config(config: &PiSwitchConfig) -> Result<()> {
+    let to_write = migrated_for_save(config);
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
     let path = config_path();
     let tmp = dir.join(format!("config.json.tmp-{}", std::process::id()));
-    let json = serde_json::to_string_pretty(config).map_err(|e| AppError::json(&path, e))?;
+    let json = serde_json::to_string_pretty(&to_write).map_err(|e| AppError::json(&path, e))?;
     std::fs::write(&tmp, json + "\n").map_err(|e| AppError::io(&tmp, e))?;
     std::fs::rename(&tmp, &path).map_err(|e| AppError::io(&path, e))?;
     Ok(())
@@ -967,4 +1082,79 @@ mod tests {
             .unwrap_err()
             .contains("invalid profile structure"));
     }
+
+    #[test]
+    fn settings_defaults_to_session_scan_when_missing() {
+        let s: super::Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.conversation_source, super::ConversationSource::SessionScan);
+    }
+
+    #[test]
+    fn settings_parses_all_three_variants() {
+        let proxy: super::Settings = serde_json::from_str(r#"{"conversationSource":"proxy"}"#).unwrap();
+        assert_eq!(proxy.conversation_source, super::ConversationSource::Proxy);
+        let off: super::Settings = serde_json::from_str(r#"{"conversationSource":"off"}"#).unwrap();
+        assert_eq!(off.conversation_source, super::ConversationSource::Off);
+        let scan: super::Settings = serde_json::from_str(r#"{"conversationSource":"sessionScan"}"#).unwrap();
+        assert_eq!(scan.conversation_source, super::ConversationSource::SessionScan);
+    }
+
+    #[test]
+    fn settings_migrates_legacy_true_to_proxy() {
+        let s: super::Settings = serde_json::from_str(r#"{"injectOpenCodeAttribution":true}"#).unwrap();
+        assert_eq!(s.conversation_source, super::ConversationSource::Proxy);
+    }
+
+    #[test]
+    fn settings_migrates_legacy_false_to_off() {
+        let s: super::Settings = serde_json::from_str(r#"{"injectOpenCodeAttribution":false}"#).unwrap();
+        assert_eq!(s.conversation_source, super::ConversationSource::Off);
+    }
+
+    #[test]
+    fn settings_explicit_wins_over_legacy() {
+        let s: super::Settings = serde_json::from_str(r#"{"conversationSource":"off","injectOpenCodeAttribution":true}"#).unwrap();
+        assert_eq!(s.conversation_source, super::ConversationSource::Off);
+        // legacy should be absorbed (no longer stored)
+        assert!(s.inject_open_code_attribution.is_none());
+    }
+
+    #[test]
+    fn config_version_migrates_and_defaults() {
+        let json_v1 = r#"{"version":1,"settings":{"injectOpenCodeAttribution":true}}"#;
+        let cfg: super::PiSwitchConfig = serde_json::from_str(json_v1).unwrap();
+        assert_eq!(cfg.version, 1);
+        assert_eq!(cfg.settings.conversation_source, super::ConversationSource::Proxy);
+        let json_default = r#"{"version":1,"settings":{}}"#;
+        let cfg2: super::PiSwitchConfig = serde_json::from_str(json_default).unwrap();
+        assert_eq!(cfg2.settings.conversation_source, super::ConversationSource::SessionScan);
+        let cfg_default = super::PiSwitchConfig::default();
+        assert_eq!(cfg_default.version, 2);
+        assert_eq!(cfg_default.settings.conversation_source, super::ConversationSource::SessionScan);
+    }
+
+    #[test]
+    fn save_migration_removes_legacy_and_bumps_version() {
+        let tmp = std::env::temp_dir().join(format!("pi-switch-test-{}-{}", std::process::id(), 1));
+        let _ = std::fs::create_dir_all(&tmp);
+        let file = tmp.join("config.json");
+        // Build config with legacy true and version 1, then save via helper
+        let mut cfg = super::PiSwitchConfig::default();
+        cfg.version = 1;
+        cfg.settings.inject_open_code_attribution = Some(true);
+        cfg.settings.conversation_source = super::ConversationSource::SessionScan;
+        // Use internal helper to get migrated json
+        let migrated = super::migrated_for_save(&cfg);
+        assert_eq!(migrated.version, 2);
+        assert!(migrated.settings.inject_open_code_attribution.is_none());
+        assert_eq!(migrated.settings.conversation_source, super::ConversationSource::Proxy);
+        // Also verify serialization has no legacy key and has conversationSource
+        let json = serde_json::to_value(&migrated).unwrap();
+        assert!(json.get("settings").unwrap().get("injectOpenCodeAttribution").is_none());
+        assert_eq!(json["settings"]["conversationSource"], "proxy");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = file;
+    }
+
+
 }

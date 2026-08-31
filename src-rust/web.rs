@@ -112,7 +112,7 @@ pub fn make_web_router(state: Arc<WebState>) -> Router {
         .route("/proxy/start", post(post_proxy_start))
         .route("/proxy/stop", post(post_proxy_stop))
         .route("/proxy/failover", put(put_failover))
-        .route("/settings", put(put_settings))
+        .route("/settings", get(get_settings).put(put_settings))
         .route("/config/export", post(post_config_export))
         .route("/config/import", post(post_config_import))
         .route("/config/restore", post(post_config_restore))
@@ -529,6 +529,11 @@ async fn put_failover(Json(body): Json<FailoverBody>) -> ApiJson {
     ok(backup_msg(backup))
 }
 
+async fn get_settings() -> ApiJson {
+    let config = config::load_config()?;
+    Ok(Json(serde_json::to_value(config.settings).unwrap_or_else(|_| json!({}))))
+}
+
 async fn put_settings(Json(settings): Json<Value>) -> ApiJson {
     let backup = ops::update_settings(&settings)?;
     ok(backup_msg(backup))
@@ -799,5 +804,91 @@ mod tests {
         assert_eq!(list.status(), StatusCode::OK, "list route unaffected");
         let detail = get("/api/stats/conversations/conv-a/requests").await;
         assert_eq!(detail.status(), StatusCode::OK, "detail route resolves too");
+    }
+
+    #[test]
+    fn settings_payload_roundtrips_conversation_source() {
+        let payload = serde_json::json!({
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge",
+            "conversationSource": "proxy"
+        });
+        let settings: crate::config::Settings = serde_json::from_value(payload.clone()).unwrap();
+        assert_eq!(settings.conversation_source, crate::config::ConversationSource::Proxy);
+        let back = serde_json::to_value(&settings).unwrap();
+        assert_eq!(back["conversationSource"], "proxy");
+    }
+
+    #[test]
+    fn settings_missing_conversation_source_defaults_to_session_scan() {
+        let payload = serde_json::json!({
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge"
+        });
+        let settings: crate::config::Settings = serde_json::from_value(payload).unwrap();
+        assert_eq!(settings.conversation_source, crate::config::ConversationSource::SessionScan);
+    }
+
+    #[tokio::test]
+    async fn settings_get_and_put_roundtrip() {
+        // Use a temp HOME so we don't clobber the real config
+        let tmp = std::env::temp_dir().join(format!("pi-switch-web-test-{}-{}", std::process::id(), 42));
+        let _ = std::fs::create_dir_all(&tmp);
+        let orig_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &tmp);
+        // Ensure clean start: remove any pre-existing config
+        let cfg_path = tmp.join(".pi-switch").join("config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        // PUT with proxy
+        let put_payload = serde_json::json!({
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge",
+            "language": null,
+            "proxy": {"host":"127.0.0.1","port":43112,"failover":[],"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},
+            "web": {"host":"127.0.0.1","port":43110},
+            "conversationSource": "proxy"
+        });
+        let req = Request::builder()
+            .uri("/api/settings")
+            .method("PUT")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&put_payload).unwrap()))
+            .unwrap();
+        let res = router().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // GET should return proxy
+        let get_res = get("/api/settings").await;
+        assert_eq!(get_res.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(get_res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["conversationSource"], "proxy");
+
+        // PUT without conversationSource should default to sessionScan
+        let put_missing = serde_json::json!({
+            "providerPrefix": "pi-switch",
+            "writeMode": "merge",
+            "proxy": {"host":"127.0.0.1","port":43112,"failover":[],"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},
+            "web": {"host":"127.0.0.1","port":43110}
+        });
+        let req2 = Request::builder()
+            .uri("/api/settings")
+            .method("PUT")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&put_missing).unwrap()))
+            .unwrap();
+        let res2 = router().oneshot(req2).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::OK);
+        let get2 = get("/api/settings").await;
+        let body2: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(get2.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body2["conversationSource"], "sessionScan");
+
+        // cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 }
