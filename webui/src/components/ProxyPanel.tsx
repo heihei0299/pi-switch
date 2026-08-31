@@ -34,18 +34,18 @@ export function ProxyPanel({
       <SectionTitle hint={t("routes by profile/model in the request body")}>{t("Proxy")}</SectionTitle>
 
       <Card className="mb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
             <Badge tone={status?.running ? "green" : "zinc"}>
               {status?.running ? t("running") : t("stopped")}
             </Badge>
             {status?.running && (
-              <span className="text-sm text-zinc-400">
+              <span className="break-all text-sm text-zinc-400">
                 PID {status.pid} · http://{status.host}:{status.port}
               </span>
             )}
           </div>
-          <Button onClick={() => void loadStatus()}>{t("Refresh")}</Button>
+          <Button onClick={() => void loadStatus()} className="self-start sm:self-auto">{t("Refresh")}</Button>
         </div>
         {status?.message && <div className="mt-2 text-xs text-zinc-500">{status.message}</div>}
 
@@ -57,7 +57,7 @@ export function ProxyPanel({
             <Input value={port} onChange={(e) => setPort(e.target.value)} />
           </Field>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="primary"
             disabled={status?.running}
@@ -110,68 +110,76 @@ function FailoverEditor({
     setChain(next);
   };
 
+  async function save() {
+    await api.setFailover(chain);
+    await refresh();
+  }
+
   return (
-    <Card>
-      <div className="mb-1 text-sm font-semibold text-zinc-200">{t("Failover chain")}</div>
-      <div className="mb-3 text-xs text-zinc-500">
-        {t("Same-model fallback order when the primary provider fails. Proxy profiles are excluded.")}
-      </div>
+    <>
+      <Card>
+        <div className="mb-1 text-sm font-semibold text-zinc-200">{t("Failover chain")}</div>
+        <div className="mb-3 text-xs text-zinc-500">
+          {t("Same-model fallback order when the primary provider fails. Proxy profiles are excluded.")}
+        </div>
 
-      <div className="space-y-1">
-        {chain.length === 0 && (
-          <div className="text-sm text-zinc-500">{t("No failover configured.")}</div>
-        )}
-        {chain.map((name, i) => (
-          <div
-            key={name}
-            className="flex items-center justify-between rounded-md border border-white/10 px-2 py-1.5 text-sm"
-          >
-            <span className="text-zinc-200">
-              <span className="mr-2 text-zinc-500">{i + 1}.</span>
-              {name}
-            </span>
-            <div className="flex gap-1">
-              <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, -1)}>
-                ↑
-              </button>
-              <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, 1)}>
-                ↓
-              </button>
-              <button
-                className="px-1 text-zinc-400 hover:text-red-300"
-                onClick={() => setChain(chain.filter((x) => x !== name))}
-              >
-                ✕
-              </button>
+        <div className="space-y-1">
+          {chain.length === 0 && (
+            <div className="text-sm text-zinc-500">{t("No failover configured.")}</div>
+          )}
+          {chain.map((name, i) => (
+            <div
+              key={name}
+              className="flex items-center justify-between rounded-md border border-white/10 px-2 py-1.5 text-sm"
+            >
+              <span className="text-zinc-200">
+                <span className="mr-2 text-zinc-500">{i + 1}.</span>
+                {name}
+              </span>
+              <div className="flex gap-1">
+                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, -1)}>
+                  ↑
+                </button>
+                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, 1)}>
+                  ↓
+                </button>
+                <button
+                  className="px-1 text-zinc-400 hover:text-red-300"
+                  onClick={() => setChain(chain.filter((x) => x !== name))}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        {available.length > 0 && (
-          <select
-            className="rounded-md border border-white/10 bg-zinc-950/60 px-2 py-1.5 text-sm text-zinc-100"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) setChain([...chain, e.target.value]);
-            }}
+        <div className="mt-3 flex items-center gap-2">
+          {available.length > 0 && (
+            <select
+              className="rounded-md border border-white/10 bg-zinc-950/60 px-2 py-1.5 text-sm text-zinc-100"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) setChain([...chain, e.target.value]);
+              }}
+            >
+              <option value="">+ add profile…</option>
+              {available.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button
+            variant="primary"
+            onClick={() => run(save, t("Failover saved"))}
           >
-            <option value="">+ add profile…</option>
-            {available.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        )}
-        <Button
-          variant="primary"
-          onClick={() => run(() => api.setFailover(chain), t("Failover saved"), refresh)}
-        >
-          {t("Save chain")}
-        </Button>
-      </div>
-    </Card>
+            {t("Save chain")}
+          </Button>
+        </div>
+      </Card>
+
+    </>
   );
 }

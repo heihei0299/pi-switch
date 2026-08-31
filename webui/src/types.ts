@@ -28,14 +28,30 @@ export interface ModelEntry {
   [key: string]: unknown;
 }
 
+export type ResponsesMode = "auto" | "passthrough" | "convert";
+
+export interface Upstream {
+  baseUrl: string;
+  apiKey: string;
+  headers?: Record<string, string>;
+  weight?: number;
+  name?: string;
+  [key: string]: unknown;
+}
+
 export interface ProviderProfile {
   name?: string;
   api: string;
+  responsesMode?: ResponsesMode;
   baseUrl: string;
   apiKey: string;
+  /** 多上游配置（进程隔离后独立调度）。空时回退到单 baseUrl/apiKey/headers，兼容旧字段 */
+  upstreams?: Upstream[];
   models: ModelEntry[];
   oauth?: "radius";
   preset?: string;
+  /** 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）；显式值优先，未填时按 preset 推断，推断失败跳过模型元数据 enrich */
+  modelsDevProvider?: string;
   headers?: Record<string, string>;
   authHeader?: boolean;
   compat?: Record<string, unknown>;
@@ -46,6 +62,18 @@ export interface ProviderProfile {
   exposedModels?: string[];
   userAgent?: string;
   [key: string]: unknown;
+}
+
+export function hasUpstreams(profile: ProviderProfile): boolean {
+  return Array.isArray(profile.upstreams) && profile.upstreams.length > 0;
+}
+
+export function resolvedUpstreams(profile: ProviderProfile): Upstream[] {
+  if (hasUpstreams(profile)) return profile.upstreams!;
+  if (profile.baseUrl || profile.apiKey || profile.headers) {
+    return [{ baseUrl: profile.baseUrl, apiKey: profile.apiKey, headers: profile.headers }];
+  }
+  return [];
 }
 
 export interface CircuitBreakerSettings {
@@ -71,10 +99,11 @@ export interface WebSettings {
 export interface Settings {
   providerPrefix: string;
   writeMode: string;
+  injectOpenCodeAttribution: boolean;
+  gatewayApi: string;
   language?: string | null;
   proxy: ProxySettings;
   web: WebSettings;
-  conversationSource: "proxy" | "sessionScan" | "off";
 }
 
 export interface AppState {
@@ -121,6 +150,13 @@ export interface TestResult {
   responseTimeMs?: number;
 }
 
+export interface EnrichStats {
+  enriched: number;
+  skipped: number;
+  failed: number;
+  warning?: string | null;
+}
+
 export interface ProfileDetail {
   name: string;
   profile: ProviderProfile;
@@ -147,6 +183,8 @@ export interface ProviderStats {
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
+  cost?: number | null;
+  cacheRate?: string;
 }
 
 export interface ConversationStats {
@@ -190,6 +228,18 @@ export interface RecentRequest {
   conversationName?: string | null;
 }
 
+export interface ModelStats {
+  total: number;
+  ok: number;
+  failed?: number;
+  promptTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  reasoningTokens?: number;
+  cost?: number | null;
+  cacheRate?: string;
+}
+
 export interface UsageStats {
   totalRequests: number;
   okRequests: number;
@@ -197,7 +247,7 @@ export interface UsageStats {
   successRate: string;
   avgLatencyMs?: number;
   byProvider: Record<string, ProviderStats>;
-  byModel?: Record<string, { total: number; ok: number; failed: number }>;
+  byModel?: Record<string, ModelStats>;
   totalTokens?: TokenTotals;
   cacheHitRate?: string;
   totalCost?: number | null;

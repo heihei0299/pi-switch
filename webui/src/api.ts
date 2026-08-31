@@ -6,6 +6,7 @@ import type {
   ConversationsPage,
   DaemonResult,
   DoctorCheck,
+  EnrichStats,
   ModelEntry,
   PackageEntry,
   PresetInfo,
@@ -16,6 +17,7 @@ import type {
   ValidationIssue,
 } from "./types";
 import type { ConversationRange, StatsRange } from "./lib/statsWindow";
+import type { NormalizedCredits } from "./lib/credits";
 
 // Single point of coupling to the backend. Every call maps to one REST route in
 // src-rust/web.rs, which in turn delegates to the shared ops/service layer.
@@ -101,13 +103,15 @@ export const api = {
   testProfile: (name: string) =>
     req<TestResult>("POST", `/profiles/${enc(name)}/test`),
   fetchModels: (name: string) =>
-    req<{ models: string[] }>("POST", `/profiles/${enc(name)}/fetch-models`),
+    req<{ models: string[]; enrich?: EnrichStats }>("POST", `/profiles/${enc(name)}/fetch-models`),
   updateModels: (name: string, models: ModelEntry[]) =>
-    req("PUT", `/profiles/${enc(name)}/models`, { models }),
+    req<{ ok: boolean; backup?: string; enrich?: EnrichStats }>("PUT", `/profiles/${enc(name)}/models`, { models }),
   expose: (name: string, modelIds: string[]) =>
     req("PUT", `/profiles/${enc(name)}/expose`, { modelIds }),
   setSpoof: (name: string, spoof: string | null) =>
     req("PUT", `/profiles/${enc(name)}/spoof`, { spoof }),
+  getCredits: (name: string) =>
+    req<NormalizedCredits>("GET", `/profiles/${enc(name)}/credits`),
 
   // proxy + settings + config
   proxyStart: (host?: string, port?: number) =>
@@ -115,6 +119,11 @@ export const api = {
   proxyStop: () => req<DaemonResult>("POST", "/proxy/stop"),
   setFailover: (failover: string[]) => req("PUT", "/proxy/failover", { failover }),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
+  getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
+  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number }>("GET", "/models/gateway/preview"),
+  applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
+  getGatewayHealth: () => req<{ running: boolean; mode: string; gateway_id: string; has_models_file: boolean; last_notify: string | null; upstreams_total: number; message: string }>("GET", "/gateway/health"),
+  startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start"),
   exportConfig: (passphrase: string) =>
     req<{ path: string }>("POST", "/config/export", { passphrase }),
   importConfig: (filePath: string, passphrase: string) =>

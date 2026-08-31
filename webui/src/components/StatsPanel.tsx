@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { AppState, ConversationRequestsPage, ConversationStats, ConversationsPage, RecentRequest, UsageStats } from "../types";
 import { api, logsExportUrl } from "../api";
-import { Button, Card, Input, SectionTitle } from "./ui";
-import { formatCost, formatRequestTime, formatRequestToken, formatTokenCount, formatTokenDimension, formatTotalTokens, isLowCacheRate, shortConversationId } from "../lib/format";
+import { Button, Card, cx, Input, SectionTitle } from "./ui";
+import { decodeConversationName, formatCost, formatRequestTime, formatRequestToken, formatTokenCount, formatTokenDimension, formatTotalTokens, isLowCacheRate, shortConversationId } from "../lib/format";
 import { computeConversationWindow, computeStatsWindow, todayString } from "../lib/statsWindow";
 import type { ConversationRange, StatsRange } from "../lib/statsWindow";
 import { useI18n } from "../i18n";
@@ -27,7 +27,7 @@ const REFRESH_TIERS: { label: string; ms: number | null }[] = [
   { label: "5min", ms: 300_000 },
 ];
 
-export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<void> }) {
+export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> }) {
   const { t } = useI18n();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [range, setRange] = useState<StatsRange>("today");
@@ -273,6 +273,7 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
   ];
 
   const byProvider = stats?.byProvider ? Object.entries(stats.byProvider) : [];
+  const byModel = stats?.byModel ? Object.entries(stats.byModel) : [];
   const totals = stats?.totalTokens;
   const totalRows = stats?.recentRequestTotal;
   const totalPages = totalRows != null && totalRows > 0 ? Math.ceil(totalRows / pageSize) : 0;
@@ -316,10 +317,10 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
           </Button>
         ))}
         {range === "custom" && (
-          <span className="flex items-center gap-2">
-            <Input type="date" aria-label={t("From")} value={customFrom} onChange={onCustomDate("from")} />
+          <span className="flex flex-wrap items-center gap-2">
+            <Input type="date" aria-label={t("From")} value={customFrom} onChange={onCustomDate("from")} className="!w-auto" />
             <span className="text-xs text-zinc-500">→</span>
-            <Input type="date" aria-label={t("To")} value={customTo} onChange={onCustomDate("to")} />
+            <Input type="date" aria-label={t("To")} value={customTo} onChange={onCustomDate("to")} className="!w-auto" />
             {customError && <span className="text-xs text-red-300">{customError}</span>}
           </span>
         )}
@@ -358,73 +359,148 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
         </Card>
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label={t("Total")} value={stats.totalRequests} />
-            <Metric label={t("OK")} value={stats.okRequests} tone="green" />
-            <Metric label={t("Failed")} value={stats.failedRequests} tone="red" />
-            <Metric label={t("Success")} value={stats.successRate} />
-            <Metric label={t("Cache rate")} value={stats.cacheHitRate ?? "-"} />
-          </div>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label={t("Input")} value={formatTokenDimension(totals?.input)} />
-            <Metric label={t("Output")} value={formatTokenDimension(totals?.output)} />
-            <Metric label={t("Cached")} value={formatTokenDimension(totals?.cached)} badge="⊆ Input" />
-            <Metric
-              label={t("Reasoning")}
-              value={formatTokenDimension(totals?.reasoning)}
-              badge="⊆ Output"
-            />
-            <Metric label={t("Total")} value={formatTotalTokens(totals)} />
-          </div>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <Metric label="Cost" value={formatCost(stats.totalCost)} />
-            {stats.costUnknown ? (
-              <div className="col-span-full text-xs text-zinc-500">
-                {stats.costUnknown} {t("unknown cost rows")}
-              </div>
-            ) : null}
-          </div>
-          {stats.avgLatencyMs != null && (
-            <div className="mb-4 text-sm text-zinc-400">
-              {t("Avg latency:")} <span className="text-zinc-200">{stats.avgLatencyMs} ms</span>
+          <div className="mb-4 rounded-xl border border-line bg-panel/50 p-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <HeroMetric label={t("Total")} value={String(stats.totalRequests)} accent />
+              <HeroMetric label={t("OK")} value={String(stats.okRequests)} tone="green" />
+              <HeroMetric label={t("Failed")} value={String(stats.failedRequests)} tone="red" />
+              <HeroMetric label={t("Success")} value={String(stats.successRate)} />
+              <HeroMetric label={t("Cache rate")} value={String(stats.cacheHitRate ?? "-")} />
             </div>
-          )}
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <HeroMetric label={t("Input")} value={String(formatTokenDimension(totals?.input))} mono />
+              <HeroMetric label={t("Output")} value={String(formatTokenDimension(totals?.output))} mono />
+              <HeroMetric label={t("Cached")} value={String(formatTokenDimension(totals?.cached))} mono badge="⊆ Input" />
+              <HeroMetric label={t("Reasoning")} value={String(formatTokenDimension(totals?.reasoning))} mono badge="⊆ Output" />
+              <HeroMetric label={t("Total")} value={String(formatTotalTokens(totals))} mono accent />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/5 pt-3">
+              <HeroMetric label="Cost" value={String(formatCost(stats.totalCost))} mono accent />
+              {stats.costUnknown ? (
+                <span className="text-xs tracking-wide text-zinc-500">
+                  {stats.costUnknown} {t("unknown cost rows")}
+                </span>
+              ) : null}
+              {stats.avgLatencyMs != null && (
+                <span className="text-xs text-zinc-500">
+                  {t("Avg latency:")} <span className="font-mono text-zinc-200">{stats.avgLatencyMs} ms</span>
+                </span>
+              )}
+            </div>
+          </div>
 
           {byProvider.length > 0 && (
-            <Card>
+            <Card className="overflow-hidden">
               <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By provider")}</div>
-              <table className="w-full text-sm">
-                <thead className="text-left text-xs text-zinc-500">
-                  <tr>
-                    <th className="pb-1">{t("Provider")}</th>
-                    <th className="pb-1 text-right">{t("Total")}</th>
-                    <th className="pb-1 text-right">{t("OK")}</th>
-                    <th className="pb-1 text-right">{t("Rate")}</th>
-                    <th className="pb-1 text-right">{t("Tokens")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byProvider.map(([name, ps]) => {
-                    const rate = ps.total > 0 ? Math.round((ps.ok / ps.total) * 100) : 0;
-                    return (
-                      <tr key={name} className="border-t border-white/5">
-                        <td className="py-1 text-zinc-200">{name}</td>
-                        <td className="py-1 text-right text-zinc-400">{ps.total}</td>
-                        <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
-                        <td className="py-1 text-right text-zinc-400">{rate}%</td>
-                        <td className="py-1 text-right text-zinc-400">
-                          {formatProviderTokens(ps.promptTokens + ps.outputTokens)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("By provider")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
+                  <thead className="text-left text-xs text-zinc-500">
+                    <tr>
+                      <th className="sticky left-0 z-10 bg-transparent pb-1 pr-2">{t("Provider")}</th>
+                      <th className="pb-1 text-right">{t("Requests")}</th>
+                      <th className="pb-1 text-right">{t("OK")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
+                      <th className="pb-1 text-right">{t("Input")}</th>
+                      <th className="pb-1 text-right">{t("Output")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cache rate")}</th>
+                      <th className="pb-1 text-right">{t("Cost")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byProvider.map(([name, ps]) => {
+                      const rate = ps.total > 0 ? Math.round((ps.ok / ps.total) * 100) : 0;
+                      return (
+                        <tr key={name} className="border-t border-white/5">
+                          <td className="sticky left-0 z-10 bg-transparent py-1 pr-2 text-zinc-200">{name}</td>
+                          <td className="py-1 text-right text-zinc-400">{ps.total}</td>
+                          <td className="py-1 text-right text-zinc-400">{ps.ok}</td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">{rate}%</td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.promptTokens)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(ps.outputTokens)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {formatRequestToken(ps.cachedTokens)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {formatRequestToken(ps.promptTokens + ps.outputTokens)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {ps.cacheRate ?? "-"}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{formatCost(ps.cost)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {byModel.length > 0 && (
+            <Card className="mt-4 overflow-hidden">
+              <div className="mb-2 text-sm font-semibold text-zinc-200">{t("By model")}</div>
+              <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("By model")} className="w-full min-w-[480px] text-sm sm:min-w-[640px]">
+                  <thead className="text-left text-xs text-zinc-500">
+                    <tr>
+                      <th className="sticky left-0 z-10 bg-transparent pb-1 pr-2">{t("Model")}</th>
+                      <th className="pb-1 text-right">{t("Requests")}</th>
+                      <th className="pb-1 text-right">{t("OK")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Rate")}</th>
+                      <th className="pb-1 text-right">{t("Input")}</th>
+                      <th className="pb-1 text-right">{t("Output")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Cache rate")}</th>
+                      <th className="pb-1 text-right">{t("Cost")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byModel.map(([name, ms]) => {
+                      const input = ms.promptTokens ?? 0;
+                      const output = ms.outputTokens ?? 0;
+                      const rate = ms.total > 0 ? Math.round((ms.ok / ms.total) * 100) : 0;
+                      return (
+                        <tr key={name} className="border-t border-white/5">
+                          <td className="sticky left-0 z-10 max-w-[10rem] truncate bg-transparent py-1 pr-2 text-zinc-200" title={name}>
+                            {name}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{ms.total}</td>
+                          <td className="py-1 text-right text-zinc-400">{ms.ok}</td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">{rate}%</td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(input)}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">
+                            {formatRequestToken(output)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {formatRequestToken(ms.cachedTokens ?? 0)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {formatRequestToken(input + output)}
+                          </td>
+                          <td className="hidden py-1 text-right text-zinc-400 sm:table-cell">
+                            {ms.cacheRate ?? "-"}
+                          </td>
+                          <td className="py-1 text-right text-zinc-400">{formatCost(ms.cost)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
 
           {stats.recentRequests?.length ? (
-            <Card className="mt-4">
+            <Card className="mt-4 overflow-hidden">
               <button
                 type="button"
                 aria-expanded={requestsOpen}
@@ -436,21 +512,21 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
               </button>
               {requestsOpen && (
                 <>
-                  <div className="overflow-x-auto">
-                <table aria-label={t("Request details")} className="w-full text-sm">
+                  <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <table aria-label={t("Request details")} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
                   <thead className="text-left text-xs text-zinc-500">
                     <tr>
-                      <th className="pb-1 pr-2">{t("Time")}</th>
+                      <th className="sticky left-0 z-10 bg-transparent pb-1 pr-2">{t("Time")}</th>
                       <th className="pb-1 pr-2">{t("Session")}</th>
                       <th className="pb-1 pr-2">{t("Provider")}</th>
                       <th className="pb-1 pr-2">{t("Model")}</th>
                       <th className="pb-1 pr-2">{t("Status")}</th>
                       <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                       <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                      <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                      <th className="pb-1 text-right">{t("Total")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                      <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                      <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
                       <th className="pb-1 text-right">{t("Cost")}</th>
                     </tr>
                   </thead>
@@ -526,11 +602,10 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
             </Card>
           ) : null}
 
-          {state.settings?.conversationSource !== "off" && (
-            <Card className="mt-4">
-              <button
-                type="button"
-                aria-expanded={conversationsOpen}
+          <Card className="mt-4 overflow-hidden">
+            <button
+              type="button"
+              aria-expanded={conversationsOpen}
               onClick={() => setConversationsOpen((v) => !v)}
               className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-zinc-200"
             >
@@ -551,10 +626,10 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                     </Button>
                   ))}
                   {convRange === "custom" && (
-                    <span className="flex items-center gap-2">
-                      <Input type="date" aria-label={t("Conversation from")} value={convFrom} onChange={onConvCustomDate("from")} />
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Input type="date" aria-label={t("Conversation from")} value={convFrom} onChange={onConvCustomDate("from")} className="!w-auto" />
                       <span className="text-xs text-zinc-500">→</span>
-                      <Input type="date" aria-label={t("Conversation to")} value={convTo} onChange={onConvCustomDate("to")} />
+                      <Input type="date" aria-label={t("Conversation to")} value={convTo} onChange={onConvCustomDate("to")} className="!w-auto" />
                       {convError && <span className="text-xs text-red-300">{convError}</span>}
                     </span>
                   )}
@@ -563,20 +638,20 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                   <div className="text-sm text-zinc-500">{t("No conversation data in this range.")}</div>
                 ) : (
                   <>
-                    <div className="overflow-x-auto">
-                      <table aria-label={t("By conversation")} className="w-full text-sm">
+                    <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                      <table aria-label={t("By conversation")} className="w-full min-w-[520px] text-sm sm:min-w-[760px]">
                         <thead className="text-left text-xs text-zinc-500">
                           <tr>
                             <th className="pb-1 pr-2"></th>
-                            <th className="pb-1 pr-2">{t("Time")}</th>
+                            <th className="sticky left-0 z-10 bg-transparent pb-1 pr-2">{t("Time")}</th>
                             <th className="pb-1 pr-2">{t("Session")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Requests")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                             <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                            <th className="pb-1 pr-2 text-right">{t("Total")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                            <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Total")}</th>
                             <th className="pb-1 text-right">{t("Cost")}</th>
                           </tr>
                         </thead>
@@ -595,7 +670,7 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                                     {expandedConvs.has(c.conversationId) ? "▾" : "▸"}
                                   </button>
                                 </td>
-                                <td className="py-1 pr-2 whitespace-nowrap text-zinc-500">
+                                <td className="sticky left-0 z-10 bg-transparent py-1 pr-2 whitespace-nowrap text-zinc-500">
                                   {formatRequestTime(c.lastActive)}
                                 </td>
                                 <td className="py-1 pr-2">
@@ -608,14 +683,14 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                                 <td className="py-1 pr-2 text-right text-zinc-400">
                                   {formatRequestToken(c.outputTokens)}
                                 </td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.cachedTokens)}
                                 </td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.reasoningTokens)}
                                 </td>
-                                <td className={`py-1 pr-2 text-right ${isLowCacheRate(c.cacheRate) ? "text-red-300" : "text-zinc-400"}`}>{c.cacheRate ?? "-"}</td>
-                                <td className="py-1 pr-2 text-right text-zinc-400">
+                                <td className={`hidden py-1 pr-2 text-right sm:table-cell ${isLowCacheRate(c.cacheRate) ? "text-red-300" : "text-zinc-400"}`}>{c.cacheRate ?? "-"}</td>
+                                <td className="hidden py-1 pr-2 text-right text-zinc-400 sm:table-cell">
                                   {formatRequestToken(c.inputTokens + c.outputTokens)}
                                 </td>
                                 <td className="py-1 text-right text-zinc-400">{formatCost(c.cost)}</td>
@@ -694,10 +769,36 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                 )}
               </div>
             )}
-            </Card>
-          )}
+          </Card>
         </>
       )}
+    </div>
+  );
+}
+
+function HeroMetric({
+  label,
+  value,
+  tone = "zinc",
+  badge,
+  mono,
+  accent,
+}: {
+  label: string;
+  value: string;
+  tone?: "zinc" | "green" | "red";
+  badge?: string;
+  mono?: boolean;
+  accent?: boolean;
+}) {
+  const color = tone === "green" ? "text-emerald-300" : tone === "red" ? "text-red-300" : accent ? "text-amber-200" : "text-zinc-100";
+  return (
+    <div className={cx("rounded-lg border bg-zinc-950/40 px-3 py-2.5", accent ? "border-amber-500/20 bg-amber-500/[0.06]" : "border-white/5")}>
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+        {label}
+        {badge && <span className="ml-1 text-[9px] normal-case tracking-normal text-zinc-600">{badge}</span>}
+      </div>
+      <div className={cx("mt-1 text-[17px] font-semibold leading-none tracking-tight", mono ? "font-mono tabular-nums" : "font-display", color)}>{value}</div>
     </div>
   );
 }
@@ -724,13 +825,6 @@ function Metric({
       <div className={"mt-1 text-xl font-semibold " + color}>{value}</div>
     </Card>
   );
-}
-
-function formatProviderTokens(tokens: number): string {
-  if (tokens === 0) {
-    return "-";
-  }
-  return formatTokenCount(tokens);
 }
 
 function pageNumbers(current: number, total: number): (number | "…")[] {
@@ -777,7 +871,7 @@ function RequestRow({ r, i }: { r: RecentRequest; i: number }) {
   ] as const;
   return (
     <tr className="border-t border-white/5">
-      <td className="py-1 pr-2 whitespace-nowrap text-zinc-500">
+      <td className="sticky left-0 z-10 bg-transparent py-1 pr-2 whitespace-nowrap text-zinc-500">
         {formatRequestTime(r.ts)}
       </td>
       <td className="py-1 pr-2">
@@ -790,11 +884,14 @@ function RequestRow({ r, i }: { r: RecentRequest; i: number }) {
           {status}
         </span>
       </td>
-      {tokenCols.map(([label, value, tone]) => (
-        <td key={label} className={`py-1 pr-2 text-right ${tone ?? "text-zinc-400"}`}>
-          {value}
-        </td>
-      ))}
+      {tokenCols.map(([label, value, tone]) => {
+        const hide = label === "Cached" || label === "Reasoning" || label === "Cache rate" || label === "Total" ? "hidden sm:table-cell" : "";
+        return (
+          <td key={label} className={`py-1 pr-2 text-right ${hide} ${tone ?? "text-zinc-400"}`}>
+            {value}
+          </td>
+        );
+      })}
     </tr>
   );
 }
@@ -813,7 +910,7 @@ function CopyableSessionCell({
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const display = name || (id ? shortConversationId(id) : "-");
+  const display = decodeConversationName(name ?? "") || (id ? shortConversationId(id) : "-");
   return (
     <button
       type="button"
@@ -885,7 +982,7 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
   return (
     <div>
       <div className="mb-1 text-xs text-zinc-500">
-        Requests in {conv.name || shortConversationId(conv.conversationId)}
+        Requests in {decodeConversationName(conv.name ?? "") || shortConversationId(conv.conversationId)}
       </div>
       {error ? (
         <div className="text-sm text-red-300">Failed to load conversation requests.</div>
@@ -895,21 +992,21 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
         <div className="text-sm text-zinc-500">No requests in this conversation.</div>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full text-sm">
+          <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
+            <table aria-label={`Requests of ${conv.conversationId}`} className="w-full min-w-[560px] text-sm sm:min-w-[760px]">
               <thead className="text-left text-xs text-zinc-500">
                 <tr>
-                  <th className="pb-1 pr-2">{t("Time")}</th>
+                  <th className="sticky left-0 z-10 bg-transparent pb-1 pr-2">{t("Time")}</th>
                   <th className="pb-1 pr-2">{t("Session")}</th>
                   <th className="pb-1 pr-2">{t("Provider")}</th>
                   <th className="pb-1 pr-2">{t("Model")}</th>
                   <th className="pb-1 pr-2">{t("Status")}</th>
                   <th className="pb-1 pr-2 text-right">{t("Input")}</th>
                   <th className="pb-1 pr-2 text-right">{t("Output")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Cached")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Reasoning")}</th>
-                  <th className="pb-1 pr-2 text-right">{t("Cache rate")}</th>
-                  <th className="pb-1 text-right">{t("Total")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cached")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Reasoning")}</th>
+                  <th className="hidden pb-1 pr-2 text-right sm:table-cell">{t("Cache rate")}</th>
+                  <th className="hidden pb-1 text-right sm:table-cell">{t("Total")}</th>
                   <th className="pb-1 text-right">{t("Cost")}</th>
                 </tr>
               </thead>

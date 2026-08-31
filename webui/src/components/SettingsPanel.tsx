@@ -1,9 +1,8 @@
 import { useState } from "react";
 import type { AppState, Settings } from "../types";
 import { api } from "../api";
-import { Button, Card, Field, Input, SectionTitle, Select, useAction } from "./ui";
+import { Button, Card, Field, Input, SectionTitle, Select, useAction, useToast } from "./ui";
 import { useI18n } from "../i18n";
-
 export function SettingsPanel({
   state,
   refresh,
@@ -12,13 +11,10 @@ export function SettingsPanel({
   refresh: () => Promise<void>;
 }) {
   const run = useAction();
+  const toast = useToast();
   const { t, lang, setLang } = useI18n();
   // Deep clone so edits don't mutate the shared state until saved.
-  const [s, setS] = useState<Settings>(() => {
-    const init = JSON.parse(JSON.stringify(state.settings));
-    if (!init.conversationSource) init.conversationSource = "sessionScan";
-    return init;
-  });
+  const [s, setS] = useState<Settings>(() => JSON.parse(JSON.stringify(state.settings)));
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
   const setProxy = (patch: Partial<Settings["proxy"]>) =>
@@ -30,6 +26,12 @@ export function SettingsPanel({
     }));
   const setWeb = (patch: Partial<Settings["web"]>) =>
     setS((prev) => ({ ...prev, web: { ...prev.web, ...patch } }));
+
+  async function save() {
+    await api.updateSettings(s);
+    toast("ok", "已保存到本地，需到网关发布");
+    await refresh();
+  }
 
   return (
     <div>
@@ -50,6 +52,15 @@ export function SettingsPanel({
               <option value="exclusive">exclusive</option>
             </Select>
           </Field>
+          <Field label={t("Gateway API (injected config)")}>
+            <Select value={s.gatewayApi ?? "openai-completions"} onChange={(e) => set({ gatewayApi: e.target.value })}>
+              <option value="openai-completions">OpenAI Chat Completions</option>
+              <option value="openai-responses">OpenAI Responses</option>
+              <option value="anthropic-messages">Anthropic Messages</option>
+              <option value="google-generative-ai">Google Gemini</option>
+            </Select>
+            <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the injected gateway config.")}</p>
+          </Field>
           <Field label={t("Language")}>
             <Select
               value={s.language ?? ""}
@@ -67,20 +78,23 @@ export function SettingsPanel({
               <option value="zh">zh</option>
             </Select>
           </Field>
-          <Field label={t("Conversation source")}>
-            <Select
-              aria-label={t("Conversation source")}
-              value={s.conversationSource ?? "sessionScan"}
-              onChange={(e) => set({ conversationSource: e.target.value as Settings["conversationSource"] })}
-            >
-              <option value="sessionScan">sessionScan</option>
-              <option value="proxy">proxy</option>
-              <option value="off">off</option>
-            </Select>
-          </Field>
           <Field label={t("Current UI language")}>
             <Input value={lang === "zh" ? "中文" : "English"} readOnly />
           </Field>
+        </div>
+
+        <div className="mt-2 rounded-lg border border-white/10 p-3">
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="checkbox"
+              checked={s.injectOpenCodeAttribution ?? true}
+              onChange={(e) => set({ injectOpenCodeAttribution: e.target.checked })}
+            />
+            {t("Inject opencode attribution headers (x-opencode-session / x-opencode-client)")}
+          </label>
+          <p className="mt-1 text-xs text-zinc-500">
+            {t("Send x-opencode-session (conversation id) and x-opencode-client=pi on provider requests. Requires a pi restart to take effect.")}
+          </p>
         </div>
       </Card>
 
@@ -164,11 +178,12 @@ export function SettingsPanel({
       <div className="flex justify-end">
         <Button
           variant="primary"
-          onClick={() => run(() => api.updateSettings(s), t("Settings saved"), refresh)}
+          onClick={() => run(save, undefined)}
         >
           {t("Save settings")}
         </Button>
       </div>
+
     </div>
   );
 }

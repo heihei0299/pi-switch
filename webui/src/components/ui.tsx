@@ -8,10 +8,10 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
 
 type BtnVariant = "primary" | "ghost" | "danger" | "subtle";
 const BTN: Record<BtnVariant, string> = {
-  primary: "bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500",
-  danger: "bg-red-600/90 hover:bg-red-500 text-white border-red-500",
-  ghost: "bg-transparent hover:bg-white/5 text-zinc-200 border-white/10",
-  subtle: "bg-white/5 hover:bg-white/10 text-zinc-200 border-white/10",
+  primary: "bg-signal hover:bg-signal-hover text-zinc-900 border-signal shadow-md shadow-amber-500/20",
+  danger: "bg-red-600 hover:bg-red-500 text-white border-red-500 shadow-md shadow-red-600/20",
+  ghost: "bg-transparent hover:bg-white/[0.06] text-zinc-300 border-white/10",
+  subtle: "bg-white/[0.06] hover:bg-white/[0.10] text-zinc-200 border-white/10",
 };
 
 export function Button({
@@ -23,8 +23,10 @@ export function Button({
     <button
       {...props}
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium",
-        "transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-[13px] font-medium leading-none tracking-wide",
+        "shadow-sm transition-all duration-150 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+        "min-h-[36px]",
         BTN[variant],
         className,
       )}
@@ -44,7 +46,7 @@ export function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div style={style} className={cx("rounded-xl border border-white/10 bg-zinc-900/50 p-4", className)}>
+    <div style={style} className={cx("rounded-xl border border-line bg-panel/70 p-4 shadow-sm backdrop-blur", className)}>
       {children}
     </div>
   );
@@ -52,9 +54,9 @@ export function Card({
 
 export function SectionTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <div className="mb-3 flex items-baseline justify-between">
-      <h2 className="text-lg font-semibold text-zinc-100">{children}</h2>
-      {hint && <span className="text-xs text-zinc-500">{hint}</span>}
+    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 className="font-display text-[15px] font-semibold tracking-tight text-zinc-100">{children}</h2>
+      {hint && <span className="text-[12px] font-normal tracking-wide text-zinc-500">{hint}</span>}
     </div>
   );
 }
@@ -62,12 +64,13 @@ export function SectionTitle({ children, hint }: { children: React.ReactNode; hi
 // ─── Form controls ────────────────────────────────────────
 
 export function Label({ children }: { children: React.ReactNode }) {
-  return <label className="mb-1 block text-xs font-medium text-zinc-400">{children}</label>;
+  return <label className="mb-1.5 block text-[11px] font-semibold tracking-widest uppercase text-zinc-400">{children}</label>;
 }
 
 const CTRL =
-  "w-full rounded-md border border-white/10 bg-zinc-950/60 px-3 py-1.5 text-sm text-zinc-100 " +
-  "outline-none focus:border-indigo-500/70 placeholder:text-zinc-600";
+  "w-full rounded-lg border border-line bg-zinc-950/70 px-3.5 py-2 text-[13px] leading-5 text-zinc-100 " +
+  "outline-none placeholder:text-zinc-600 focus:border-signal/50 focus:ring-2 focus:ring-signal/20";
+  "outline-none placeholder:text-zinc-600 focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20";
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(CTRL, props.className)} />;
@@ -93,14 +96,14 @@ export function Switch({
       aria-checked={checked}
       onClick={onChange}
       className={cx(
-        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",
-        "focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-950",
-        checked ? "bg-indigo-600" : "bg-zinc-700",
+        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150",
+        "focus:outline-none focus:ring-2 focus:ring-signal/40 focus:ring-offset-2 focus:ring-offset-zinc-950",
+        checked ? "bg-signal" : "bg-zinc-700",
       )}
     >
       <span
         className={cx(
-          "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition",
+          "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-150",
           checked ? "translate-x-5" : "translate-x-0",
         )}
       />
@@ -131,7 +134,7 @@ export function Badge({
   tone?: "zinc" | "green" | "red" | "indigo" | "amber";
 }) {
   const tones: Record<string, string> = {
-    zinc: "bg-white/5 text-zinc-300 border-white/10",
+    zinc: "bg-white/[0.06] text-zinc-300 border-white/10",
     green: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
     red: "bg-red-500/15 text-red-300 border-red-500/30",
     indigo: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
@@ -140,7 +143,7 @@ export function Badge({
   return (
     <span
       className={cx(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium tracking-wide",
         tones[tone],
       )}
     >
@@ -164,19 +167,20 @@ export function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 py-10"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-2 py-4 sm:p-4 sm:py-10"
       onMouseDown={onClose}
     >
       <div
         className={cx(
-          "w-full rounded-2xl border border-white/10 bg-zinc-900 p-5 shadow-2xl",
+          "my-auto w-full rounded-xl border border-white/10 bg-zinc-900 p-4 shadow-2xl sm:rounded-2xl sm:p-5",
+          "max-h-[92vh] overflow-y-auto overscroll-contain",
           wide ? "max-w-3xl" : "max-w-xl",
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-zinc-100">{title}</h3>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200" aria-label="Close">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="min-w-0 text-base font-semibold text-zinc-100">{title}</h3>
+          <button onClick={onClose} className="shrink-0 text-zinc-500 hover:text-zinc-200" aria-label="Close">
             ✕
           </button>
         </div>
@@ -204,7 +208,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2">
+      <div className="fixed bottom-4 left-2 right-2 z-[60] flex flex-col gap-2 sm:left-auto sm:right-4 sm:w-80">
         {toasts.map((t) => (
           <div
             key={t.id}

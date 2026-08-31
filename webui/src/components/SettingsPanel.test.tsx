@@ -1,113 +1,103 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
+import { LanguageProvider } from "../i18n";
+import { ToastProvider } from "./ui";
+import { api } from "../api";
 import type { AppState } from "../types";
 
-const updateSettingsMock = vi.fn();
-
-vi.mock("../api", () => ({
-  api: {
-    updateSettings: (...args: unknown[]) => updateSettingsMock(...args),
-  },
-}));
-
-vi.mock("./ui", async (importOriginal) => {
-  const actual = (await importOriginal()) as Record<string, unknown>;
+function stateWithSettings(overrides: Record<string, unknown> = {}) {
   return {
-    ...actual,
-    useAction: () => (fn: () => Promise<unknown>) => fn(),
-  };
-});
-
-vi.mock("../i18n", () => ({
-  useI18n: () => ({
-    t: (s: string) => s,
-    lang: "en",
-    setLang: () => {},
-  }),
-}));
-
-function makeState(overrides: Partial<AppState["settings"]> = {}): AppState {
-  return {
-    current: null,
+    current: "native",
     profiles: {},
     settings: {
       providerPrefix: "pi-switch",
       writeMode: "merge",
+      gatewayApi: "openai-completions",
       language: null,
+      injectOpenCodeAttribution: true,
       proxy: {
         host: "127.0.0.1",
         port: 43112,
+        target: null,
         failover: [],
+        userAgent: null,
         circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 },
       },
       web: { host: "127.0.0.1", port: 43110 },
-      conversationSource: "sessionScan",
       ...overrides,
-    } as AppState["settings"],
-  };
+    },
+  } as unknown as AppState;
 }
 
-describe("SettingsPanel conversationSource tri-state", () => {
+function renderPanel(state = stateWithSettings(), refresh = vi.fn(async () => {})) {
+  return render(
+    <LanguageProvider configLang="en">
+      <ToastProvider>
+        <SettingsPanel state={state} refresh={refresh} />
+      </ToastProvider>
+    </LanguageProvider>,
+  );
+}
+
+describe("SettingsPanel save decoupled from gateway (gateway-sep)", () => {
   beforeEach(() => {
-    updateSettingsMock.mockReset();
-    updateSettingsMock.mockResolvedValue({});
+    vi.restoreAllMocks();
   });
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
-  it("renders tri-state select with 3 mutually exclusive options", async () => {
-    render(<SettingsPanel state={makeState({ conversationSource: "sessionScan" })} refresh={async () => {}} />);
-    const select = screen.getByLabelText(/Conversation source/i) as HTMLSelectElement;
-    expect(select).toBeInTheDocument();
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.value);
-    expect(options).toEqual(expect.arrayContaining(["proxy", "sessionScan", "off"]));
-    expect(options).toHaveLength(3);
-    expect(select.value).toBe("sessionScan");
+  it("save does not trigger previewGateway/applyGateway, only updateSettings and toast", async () => {
+    const update = vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
+    const preview = vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: {}, conflicts: [] } as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    const refresh = vi.fn(async () => {});
+    renderPanel(stateWithSettings(), refresh);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(preview).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(screen.queryByText(/Current vs Proposed/i)).not.toBeInTheDocument();
   });
 
-  it("defaults to sessionScan when missing", async () => {
-    const state = makeState();
-    // @ts-expect-error missing field simulation
-    delete (state.settings as Record<string, unknown>).conversationSource;
-    render(<SettingsPanel state={state} refresh={async () => {}} />);
-    const select = screen.getByLabelText(/Conversation source/i) as HTMLSelectElement;
-    expect(select.value).toBe("sessionScan");
+  it("changing gatewayApi/providerPrefix/host/port still only triggers local save", async () => {
+    const update = vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
+    const preview = vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: {}, conflicts: [] } as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    const state = stateWithSettings({ gatewayApi: "openai-completions", providerPrefix: "pi-switch" });
+    renderPanel(state, vi.fn(async () => {}));
+
+    // change gatewayApi
+    const gatewaySelect = screen.getByDisplayValue("OpenAI Chat Completions") as HTMLSelectElement;
+    fireEvent.change(gatewaySelect, { target: { value: "openai-responses" } });
+    // change providerPrefix
+    const prefixInput = screen.getByDisplayValue("pi-switch") as HTMLInputElement;
+    fireEvent.change(prefixInput, { target: { value: "my-prefix" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    const calledWith = update.mock.calls[0][0] as any;
+    expect(calledWith.gatewayApi).toBe("openai-responses");
+    expect(calledWith.providerPrefix).toBe("my-prefix");
+    expect(preview).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());
   });
 
-  it("switches mutually exclusively between proxy/sessionScan/off", async () => {
-    render(<SettingsPanel state={makeState({ conversationSource: "sessionScan" })} refresh={async () => {}} />);
-    const select = screen.getByLabelText(/Conversation source/i) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "proxy" } });
-    expect(select.value).toBe("proxy");
-    fireEvent.change(select, { target: { value: "off" } });
-    expect(select.value).toBe("off");
-    fireEvent.change(select, { target: { value: "sessionScan" } });
-    expect(select.value).toBe("sessionScan");
-  });
-
-  it("saves selected conversationSource and does not include legacy field", async () => {
-    render(<SettingsPanel state={makeState({ conversationSource: "sessionScan" })} refresh={async () => {}} />);
-    const select = screen.getByLabelText(/Conversation source/i) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "off" } });
-    const saveBtn = screen.getByRole("button", { name: /Save settings/i });
-    fireEvent.click(saveBtn);
-    // wait for mock to be called
-    await vi.waitFor(() => expect(updateSettingsMock).toHaveBeenCalled());
-    const saved = updateSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(saved.conversationSource).toBe("off");
-    expect(saved).not.toHaveProperty("injectOpenCodeAttribution");
-  });
-
-  it("round-trip preserves conversationSource proxy", async () => {
-    render(<SettingsPanel state={makeState({ conversationSource: "proxy" })} refresh={async () => {}} />);
-    const select = screen.getByLabelText(/Conversation source/i) as HTMLSelectElement;
-    expect(select.value).toBe("proxy");
-    const saveBtn = screen.getByRole("button", { name: /Save settings/i });
-    fireEvent.click(saveBtn);
-    await vi.waitFor(() => expect(updateSettingsMock).toHaveBeenCalled());
-    const saved = updateSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(saved.conversationSource).toBe("proxy");
+  it("does not show gateway preview modal after save", async () => {
+    vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: {}, proposed: {}, conflicts: [] } as any);
+    vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());
+    expect(screen.queryByText(/Gateway preview/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/提议 JSON/)).not.toBeInTheDocument();
   });
 });
