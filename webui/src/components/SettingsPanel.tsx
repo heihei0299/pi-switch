@@ -14,7 +14,11 @@ export function SettingsPanel({
   const run = useAction();
   const { t, lang, setLang } = useI18n();
   // Deep clone so edits don't mutate the shared state until saved.
-  const [s, setS] = useState<Settings>(() => JSON.parse(JSON.stringify(state.settings)));
+  const [s, setS] = useState<Settings>(() => {
+    const init = JSON.parse(JSON.stringify(state.settings));
+    if (!init.conversationSource) init.conversationSource = "sessionScan";
+    return init;
+  });
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
   const setProxy = (patch: Partial<Settings["proxy"]>) =>
@@ -61,6 +65,17 @@ export function SettingsPanel({
               <option value="">{t("auto")}</option>
               <option value="en">en</option>
               <option value="zh">zh</option>
+            </Select>
+          </Field>
+          <Field label={t("Conversation source")}>
+            <Select
+              aria-label={t("Conversation source")}
+              value={s.conversationSource ?? "sessionScan"}
+              onChange={(e) => set({ conversationSource: e.target.value as Settings["conversationSource"] })}
+            >
+              <option value="sessionScan">sessionScan</option>
+              <option value="proxy">proxy</option>
+              <option value="off">off</option>
             </Select>
           </Field>
           <Field label={t("Current UI language")}>

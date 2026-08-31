@@ -27,7 +27,7 @@ const REFRESH_TIERS: { label: string; ms: number | null }[] = [
   { label: "5min", ms: 300_000 },
 ];
 
-export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> }) {
+export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<void> }) {
   const { t } = useI18n();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [range, setRange] = useState<StatsRange>("today");
@@ -526,10 +526,11 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             </Card>
           ) : null}
 
-          <Card className="mt-4">
-            <button
-              type="button"
-              aria-expanded={conversationsOpen}
+          {state.settings?.conversationSource !== "off" && (
+            <Card className="mt-4">
+              <button
+                type="button"
+                aria-expanded={conversationsOpen}
               onClick={() => setConversationsOpen((v) => !v)}
               className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-zinc-200"
             >
@@ -693,7 +694,8 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
                 )}
               </div>
             )}
-          </Card>
+            </Card>
+          )}
         </>
       )}
     </div>

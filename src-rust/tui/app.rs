@@ -101,6 +101,7 @@ pub struct App {
     pub settings_lang_idx: usize,
     pub settings_proxy_idx: usize,
     pub settings_user_agent_idx: usize, // 0=claude-code, 1=codex, 2=gemini
+    pub settings_conversation_idx: usize, // 0=sessionScan, 1=proxy, 2=off
     pub settings_editing_field: Option<usize>,
     pub settings_edit_input: TextInput,
     pub detail_scroll: u16,
@@ -149,6 +150,18 @@ pub fn user_agent_preset_value(idx: usize) -> Option<&'static str> {
     }
 }
 
+pub fn conversation_source_presets() -> [&'static str; 3] {
+    ["sessionScan", "proxy", "off"]
+}
+
+pub fn conversation_source_preset_value(idx: usize) -> crate::config::ConversationSource {
+    match idx {
+        1 => crate::config::ConversationSource::Proxy,
+        2 => crate::config::ConversationSource::Off,
+        _ => crate::config::ConversationSource::SessionScan,
+    }
+}
+
 /// Localized label for a stats time range (used in key-bar hint + toast).
 fn stats_range_label(range: StatsRange) -> &'static str {
     match range {
@@ -167,6 +180,11 @@ impl App {
             Some("codex") => 2,
             Some("gemini") => 3,
             _ => 0,
+        };
+        let conversation_idx = match data.config.settings.conversation_source {
+            crate::config::ConversationSource::Proxy => 1,
+            crate::config::ConversationSource::Off => 2,
+            crate::config::ConversationSource::SessionScan => 0,
         };
 
         Self {
@@ -187,6 +205,7 @@ impl App {
             settings_lang_idx: if i18n::is_zh() { 1 } else { 0 },
             settings_proxy_idx: 0,
             settings_user_agent_idx: user_agent_idx,
+            settings_conversation_idx: conversation_idx,
             settings_editing_field: None,
             settings_edit_input: TextInput::default(),
             detail_scroll: 0,
@@ -997,7 +1016,7 @@ impl App {
             return;
         }
 
-        let row_count = 5; // Language + host + port + user-agent + failover
+        let row_count = 6; // Language + host + port + user-agent + failover + conversationSource
         match key.code {
             KeyCode::Up => {
                 self.settings_proxy_idx = self.settings_proxy_idx.saturating_sub(1);
@@ -1047,6 +1066,30 @@ impl App {
                             self.push_toast(
                                 ToastKind::Success,
                                 format!("User-Agent: {}", preset_name),
+                            );
+                        }
+                    }
+                } else if self.settings_proxy_idx == 5 {
+                    // Cycle ConversationSource presets
+                    let presets = conversation_source_presets();
+                    let direction = if matches!(key.code, KeyCode::Left) {
+                        -1i32
+                    } else {
+                        1i32
+                    };
+                    let new_idx = ((self.settings_conversation_idx as i32 + direction)
+                        .rem_euclid(presets.len() as i32))
+                        as usize;
+                    self.settings_conversation_idx = new_idx;
+                    if let Ok(mut config) = crate::config::load_config() {
+                        config.settings.conversation_source =
+                            conversation_source_preset_value(new_idx);
+                        if let Ok(()) = crate::config::save_config(&config) {
+                            self.refresh();
+                            let preset_name = presets[new_idx];
+                            self.push_toast(
+                                ToastKind::Success,
+                                format!("Conversation: {}", preset_name),
                             );
                         }
                     }

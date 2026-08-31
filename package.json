@@ -48,8 +48,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/index.ts",
-      "./extensions/conversation-id-inject.ts"
+      "./extensions/index.ts"
     ]
   },
   "license": "MIT",

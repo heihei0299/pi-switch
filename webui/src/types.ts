@@ -74,6 +74,7 @@ export interface Settings {
   language?: string | null;
   proxy: ProxySettings;
   web: WebSettings;
+  conversationSource: "proxy" | "sessionScan" | "off";
 }
 
 export interface AppState {
