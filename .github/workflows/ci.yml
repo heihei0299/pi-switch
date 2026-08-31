@@ -2,20 +2,25 @@ name: CI
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     name: verify / rust and webui
-
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,11 +29,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: verify-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Install dependencies
         run: npm install
@@ -40,8 +55,20 @@ jobs:
         id: rust-files
         shell: bash
         run: |
-          git diff --name-only origin/main...HEAD -- '*.rs' > changed-rust-files.txt
-          if [[ -s changed-rust-files.txt ]]; then
+          # tag 事件下 origin/main...HEAD 为空，改用 HEAD~1...HEAD 兜底；非 tag 直接全量检查
+          if git rev-parse origin/main >/dev/null 2>&1; then
+            base="origin/main...HEAD"
+            if ! git diff --name-only $base -- '*.rs' > changed-rust-files.txt 2>/dev/null || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+              : > changed-rust-files.txt
+            fi
+          else
+            git diff --name-only HEAD~1...HEAD -- '*.rs' > changed-rust-files.txt 2>/dev/null || : > changed-rust-files.txt
+          fi
+          # tag 推送时 changed 文件为空则回退为全量校验（避免误跳过）
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            : > changed-rust-files.txt
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          elif [[ -s changed-rust-files.txt ]]; then
             echo "has_files=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_files=false" >> "$GITHUB_OUTPUT"
@@ -61,10 +88,15 @@ jobs:
           name: rustfmt-patch
           path: rustfmt.patch
 
-      - name: Check changed Rust formatting
-        if: github.event_name != 'workflow_dispatch' && steps.rust-files.outputs.has_files == 'true'
+      - name: Check Rust formatting (full when tag or no changed files)
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
-        run: xargs -r rustfmt --edition 2021 --config skip_children=true --check < changed-rust-files.txt
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "${{ steps.rust-files.outputs.has_files }}" == "false" ]]; then
+            cargo fmt --check
+          else
+            xargs -r rustfmt --edition 2021 --config skip_children=true --check < changed-rust-files.txt
+          fi
 
       - name: Lint Rust
         run: >-
@@ -75,6 +107,7 @@ jobs:
           -A clippy::collapsible_match
           -A clippy::unnecessary_sort_by
 
+      # TODO(ci-guard): 恢复 config.rs config_dir/pi_dir 测试隔离后去掉 --test-threads=1（当前 config.rs 未隔离，proxy.rs 已隔离，见 .scratch/research/ci-actions-调研.md）
       - name: Test Rust
         run: cargo test --release --lib -- --test-threads=1
 
@@ -97,13 +130,15 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: build / ${{ matrix.target }}
-
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -162,6 +197,10 @@ jobs:
     needs: [build, verify]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -169,6 +208,7 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+          cache: npm
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -176,6 +216,7 @@ jobs:
           pattern: native-*
           path: artifacts
           merge-multiple: true
+          if-no-files-found: error
 
       - name: Move artifacts to project root
         run: mv artifacts/*.node .
@@ -184,3 +225,26 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify publish
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          pkg=$(node -p "require('./package.json').name")
+          for i in 1 2 3 4 5 6; do
+            if npm view "$pkg@$ver" version 2>/dev/null | grep -q "$ver"; then
+              echo "verified $pkg@$ver on registry"
+              curl -fsSL "https://registry.npmjs.org/$pkg/$ver" | head -c 500
+              exit 0
+            fi
+            echo "retry $i/6 for $pkg@$ver"
+            sleep 5
+          done
+          echo "publish verification failed for $pkg@$ver"
+          exit 1
+
+      - name: Create issue on publish verification failure
+        if: failure()
+        run: |
+          gh issue create --title "chore(release): ${{ github.ref_name }} 发布后自检失败" --body "run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
