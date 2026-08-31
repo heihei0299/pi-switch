@@ -14,6 +14,25 @@ pub enum ResponsesMode {
     Convert,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversationSource {
+    #[default]
+    SessionScan,
+    Proxy,
+    Off,
+}
+
+impl ConversationSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConversationSource::SessionScan => "sessionScan",
+            ConversationSource::Proxy => "proxy",
+            ConversationSource::Off => "off",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
@@ -340,7 +359,7 @@ impl Default for WebSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Settings {
     #[serde(default = "default_prefix")]
     #[serde(rename = "providerPrefix")]
@@ -350,15 +369,107 @@ pub struct Settings {
     pub write_mode: String,
     #[serde(default)]
     pub language: Option<String>,
-    #[serde(default = "default_true")]
-    #[serde(rename = "injectOpenCodeAttribution")]
-    pub inject_opencode_attribution: bool,
     #[serde(default = "default_gateway_api", rename = "gatewayApi")]
     pub gateway_api: String,
     #[serde(default)]
     pub proxy: ProxySettings,
     #[serde(default)]
     pub web: WebSettings,
+    #[serde(default, rename = "conversationSource")]
+    pub conversation_source: ConversationSource,
+    #[serde(default, skip_serializing, rename = "injectOpenCodeAttribution")]
+    pub inject_open_code_attribution: Option<bool>,
+}
+impl<'de> serde::Deserialize<'de> for Settings {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("settings must be an object"))?;
+        let provider_prefix = obj
+            .get("providerPrefix")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_prefix);
+        let write_mode = obj
+            .get("writeMode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_write_mode);
+        let language = obj
+            .get("language")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let gateway_api = obj
+            .get("gatewayApi")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(default_gateway_api);
+        let proxy = obj
+            .get("proxy")
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .unwrap_or_default();
+        let web = obj
+            .get("web")
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .unwrap_or_default();
+        let explicit_cs = obj.get("conversationSource").and_then(|v| v.as_str());
+        let legacy = obj
+            .get("injectOpenCodeAttribution")
+            .and_then(|v| v.as_bool());
+        let conversation_source = if let Some(cs) = explicit_cs {
+            match cs {
+                "proxy" => ConversationSource::Proxy,
+                "off" => ConversationSource::Off,
+                "sessionScan" => ConversationSource::SessionScan,
+                _ => {
+                    return Err(serde::de::Error::unknown_variant(
+                        cs,
+                        &["proxy", "sessionScan", "off"],
+                    ))
+                }
+            }
+        } else if let Some(b) = legacy {
+            if b {
+                ConversationSource::Proxy
+            } else {
+                ConversationSource::Off
+            }
+        } else {
+            ConversationSource::default()
+        };
+        Ok(Settings {
+            provider_prefix,
+            write_mode,
+            language,
+            gateway_api,
+            proxy,
+            web,
+            conversation_source,
+            inject_open_code_attribution: None,
+        })
+    }
+}
+
+pub(crate) fn migrated_for_save(config: &PiSwitchConfig) -> PiSwitchConfig {
+    let mut out = config.clone();
+    if let Some(b) = out.settings.inject_open_code_attribution.take() {
+        let mapped = if b {
+            ConversationSource::Proxy
+        } else {
+            ConversationSource::Off
+        };
+        if out.settings.conversation_source == ConversationSource::SessionScan {
+            out.settings.conversation_source = mapped;
+        }
+    }
+    if out.version < 2 {
+        out.version = 2;
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,14 +536,13 @@ fn default_max_tokens() -> u32 {
 impl Default for PiSwitchConfig {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             current: None,
             profiles: Default::default(),
             settings: Settings {
                 provider_prefix: default_prefix(),
                 write_mode: default_write_mode(),
                 language: None,
-                inject_opencode_attribution: default_true(),
                 gateway_api: default_gateway_api(),
                 proxy: ProxySettings {
                     host: default_host(),
@@ -450,6 +560,8 @@ impl Default for PiSwitchConfig {
                     host: default_web_host(),
                     port: default_web_port(),
                 },
+                conversation_source: ConversationSource::default(),
+                inject_open_code_attribution: None,
             },
         }
     }
@@ -494,11 +606,12 @@ pub fn load_config() -> Result<PiSwitchConfig> {
 }
 
 pub fn save_config(config: &PiSwitchConfig) -> Result<()> {
+    let to_write = migrated_for_save(config);
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
     let path = config_path();
     let tmp = dir.join(format!("config.json.tmp-{}", std::process::id()));
-    let json = serde_json::to_string_pretty(config).map_err(|e| AppError::json(&path, e))?;
+    let json = serde_json::to_string_pretty(&to_write).map_err(|e| AppError::json(&path, e))?;
     std::fs::write(&tmp, json + "\n").map_err(|e| AppError::io(&tmp, e))?;
     std::fs::rename(&tmp, &path).map_err(|e| AppError::io(&path, e))?;
     Ok(())
@@ -1092,7 +1205,8 @@ pub fn resolve_env(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_provider_wrapper, parse_provider_wrapper, PiSwitchConfig, ResponsesMode, Settings,
+        format_provider_wrapper, parse_provider_wrapper, ConversationSource, PiSwitchConfig,
+        ResponsesMode, Settings,
     };
 
     #[test]
@@ -1248,8 +1362,7 @@ mod tests {
 
     #[test]
     fn settings_round_trips_inject_opencode_attribution() {
-        // 经 PiSwitchConfig 全量 round-trip：模拟 webui PUT /settings 整体替换
-        // settings 段后字段不被丢弃的真实场景（ticket 03 的防丢字段目标）
+        // 旧字段 injectOpenCodeAttribution 迁移到 conversationSource，序列化后仅保留 conversationSource
         let input = r#"{
           "version": 1,
           "current": null,
@@ -1261,16 +1374,22 @@ mod tests {
           }
         }"#;
         let config: PiSwitchConfig = serde_json::from_str(input).expect("valid config");
-        assert!(!config.settings.inject_opencode_attribution);
+        assert_eq!(config.settings.conversation_source, ConversationSource::Off);
+        assert!(config.settings.inject_open_code_attribution.is_none());
         let value = serde_json::to_value(&config).expect("serializable config");
-        assert_eq!(value["settings"]["injectOpenCodeAttribution"], false);
+        assert_eq!(value["settings"]["conversationSource"], "off");
+        assert!(value["settings"].get("injectOpenCodeAttribution").is_none());
     }
 
     #[test]
     fn settings_defaults_inject_opencode_attribution_to_true() {
         let settings: Settings =
             serde_json::from_str(r#"{"providerPrefix":"x"}"#).expect("valid settings");
-        assert!(settings.inject_opencode_attribution);
+        assert_eq!(
+            settings.conversation_source,
+            ConversationSource::SessionScan
+        );
+        assert!(settings.inject_open_code_attribution.is_none());
     }
 
     // ── Ticket 02: 模型目录映射字段 ─────────────────────────────────

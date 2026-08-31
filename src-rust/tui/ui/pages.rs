@@ -726,7 +726,10 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ("↑↓", i18n::key_move()),
             (
                 "←→/Space",
-                if app.settings_proxy_idx == 0 || app.settings_proxy_idx == 3 {
+                if app.settings_proxy_idx == 0
+                    || app.settings_proxy_idx == 3
+                    || app.settings_proxy_idx == 5
+                {
                     i18n::key_switch()
                 } else {
                     ""
@@ -769,6 +772,11 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .get(app.settings_user_agent_idx)
         .unwrap_or(&"?")
         .to_string();
+    let conversation_presets = crate::tui::app::conversation_source_presets();
+    let conversation_display = conversation_presets
+        .get(app.settings_conversation_idx)
+        .unwrap_or(&"?")
+        .to_string();
 
     let rows_data: Vec<(&str, String)> = vec![
         (
@@ -790,6 +798,14 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect) {
             user_agent_display,
         ),
         (i18n::settings_proxy_failover(), failover_str),
+        (
+            if i18n::is_zh() {
+                "对话来源"
+            } else {
+                "Conversation"
+            },
+            conversation_display,
+        ),
     ];
 
     let label_width = rows_data

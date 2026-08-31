@@ -4,8 +4,6 @@ import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useAction, useToast } from "./ui";
 import { ModelCard } from "./ModelCard";
-import { RequestHeadersEditor } from "./RequestHeadersEditor";
-import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import type { ModelEntry } from "../types";
@@ -36,8 +34,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<ModelDraft[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
-  const [headers, setHeaders] = useState<Record<string, string>>({});
-  const [compat, setCompat] = useState<Record<string, unknown>>({});
   const [apiType, setApiType] = useState("openai-completions");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -67,16 +63,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setApiType((rec.api as string) || "openai-completions");
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
-      setHeaders(
-        rec.headers && typeof rec.headers === "object" && !Array.isArray(rec.headers)
-          ? (rec.headers as Record<string, string>)
-          : {},
-      );
-      setCompat(
-        rec.compat && typeof rec.compat === "object" && !Array.isArray(rec.compat)
-          ? (rec.compat as Record<string, unknown>)
-          : {},
-      );
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
       // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
@@ -112,15 +98,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       api: apiType,
       baseUrl: baseUrl.trim(),
       ...(apiKey ? { apiKey } : {}),
-      ...(Object.keys(headers).length ? { headers } : { headers: undefined }),
-      ...(Object.keys(compat).length ? { compat } : { compat: undefined }),
       models: modelsPreview,
     };
-    if (!Object.keys(headers).length) delete (next as any).headers;
-    if (!Object.keys(compat).length) delete (next as any).compat;
     if (!apiKey) delete (next as any).apiKey;
     return JSON.stringify(next, null, 2);
-  }, [draft, drafts, apiType, baseUrl, apiKey, headers, compat]);
+  }, [draft, drafts, apiType, baseUrl, apiKey]);
 
   const validation = useMemo(() => validateGatewayJson(liveJson), [liveJson]);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
@@ -150,8 +132,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setApiType((rec.api as string) || "openai-completions");
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
-      setHeaders(rec.headers && typeof rec.headers === "object" && !Array.isArray(rec.headers) ? (rec.headers as Record<string, string>) : {});
-      setCompat(rec.compat && typeof rec.compat === "object" && !Array.isArray(rec.compat) ? (rec.compat as Record<string, unknown>) : {});
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
     }
@@ -287,46 +267,32 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       </SectionTitle>
 
       {/* Current vs Proposed 状态条 */}
-      <div className="mb-4 rounded-xl border border-line bg-panel/70 p-3.5 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-semibold text-zinc-100">Current vs Proposed</span>
-            <span className="text-zinc-600">·</span>
-            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[11px] text-emerald-300 border border-emerald-500/20">
-              +{statusDiff.added.length} added
-            </span>
-            <span className="rounded bg-red-500/10 px-1.5 py-0.5 font-mono text-[11px] text-red-300 border border-red-500/20">
-              -{statusDiff.removed.length} removed
-            </span>
-            <span className="rounded bg-zinc-500/10 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300 border border-white/10">
-              ~{statusDiff.changed.length} changed
-            </span>
-            <span className="text-zinc-600">·</span>
-            <span className="font-medium text-amber-300">待发布数: {pendingCount}</span>
-          </div>
-          <div className="text-xs text-zinc-400">
-            上次发布时间: {lastPublishLabel}
-          </div>
+      <div className="mb-3 rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-medium text-zinc-200">Current vs Proposed</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-emerald-300">+{statusDiff.added.length} added</span>
+          <span className="text-red-300">-{statusDiff.removed.length} removed</span>
+          <span className="text-zinc-300">~{statusDiff.changed.length} changed</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-zinc-200">待发布数: {pendingCount}</span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-zinc-400">上次发布时间: {lastPublishLabel}</span>
         </div>
         {conflicts.length > 0 && (
-          <div className="mt-2 rounded border border-red-500/30 bg-red-950/30 px-2.5 py-1.5 text-xs text-red-300">
-            冲突: {conflicts.join(", ")}
-          </div>
+          <div className="mt-1 text-xs text-amber-300">冲突: {conflicts.join(", ")}</div>
         )}
       </div>
 
       {/* 首次进入不一致提示，默认不自动写 */}
       {showMismatchBanner && previewDiff && (previewDiff.added.length + previewDiff.removed.length + previewDiff.changed.length > 0) && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 backdrop-blur glow-signal">
-          <div className="flex items-center gap-2">
-            <span className="text-amber-400">⚡</span>
-            <span className="text-sm font-medium text-amber-200">检测到本地与 Pi 网关不一致，是否立即同步</span>
-          </div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <span className="text-sm text-amber-200">检测到本地与 Pi 网关不一致，是否立即同步</span>
           <div className="flex gap-2">
-            <Button variant="primary" onClick={() => void run(() => handleApplyToPi(), undefined)} className="h-8 text-xs font-semibold">
+            <Button variant="primary" onClick={() => void run(() => handleApplyToPi(), undefined)} className="h-7 text-xs">
               立即同步
             </Button>
-            <Button onClick={() => setShowMismatchBanner(false)} className="h-8 text-xs">
+            <Button onClick={() => setShowMismatchBanner(false)} className="h-7 text-xs">
               稍后
             </Button>
           </div>
@@ -359,17 +325,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           </div>
         </div>
 
-        <div className="mt-4 space-y-4">
-          <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
-          <StructuredOptionsEditor
-            title={t("Compatibility")}
-            hint={t("Adjust compatibility for endpoints or local services.")}
-            emptyLabel={t("No compatibility options")}
-            addLabel={t("Add")}
-            options={compat}
-            onOptionsChange={setCompat}
-          />
-        </div>
 
         {/* Models section — cc-switch style */}
         <div className="mt-6 border-l border-white/10 pl-3">

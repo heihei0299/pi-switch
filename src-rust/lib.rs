@@ -12,6 +12,7 @@ mod package;
 mod package_ops;
 mod presets;
 mod proxy;
+mod scan_pi;
 mod service;
 mod stats;
 mod sync;

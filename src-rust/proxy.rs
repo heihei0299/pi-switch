@@ -1954,7 +1954,12 @@ fn is_context_overflow_400(status: u16, body: &[u8]) -> bool {
     }
     serde_json::from_slice::<Value>(body)
         .ok()
-        .and_then(|v| v.get("error").and_then(|e| e.get("type")).and_then(|t| t.as_str()).map(|s| s == "invalid_request_error"))
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("type"))
+                .and_then(|t| t.as_str())
+                .map(|s| s == "invalid_request_error")
+        })
         .unwrap_or(false)
 }
 
@@ -2192,7 +2197,9 @@ async fn forward_responses_mixed(
                     let usage = serde_json::from_slice::<Value>(&body_bytes)
                         .ok()
                         .and_then(|value| crate::usage::extract_usage(&value));
-                    if let Some(u) = usage.as_ref() { remember_prompt_tokens(real_model, u.prompt_tokens); }
+                    if let Some(u) = usage.as_ref() {
+                        remember_prompt_tokens(real_model, u.prompt_tokens);
+                    }
                     log_request(
                         name,
                         true,
@@ -2213,7 +2220,9 @@ async fn forward_responses_mixed(
                 match serde_json::from_slice::<Value>(&body_bytes) {
                     Ok(chat) => {
                         let usage = crate::usage::extract_usage(&chat);
-                        if let Some(u) = usage.as_ref() { remember_prompt_tokens(real_model, u.prompt_tokens); }
+                        if let Some(u) = usage.as_ref() {
+                            remember_prompt_tokens(real_model, u.prompt_tokens);
+                        }
                         match chat_response_to_responses(
                             chat,
                             real_model,
@@ -2313,7 +2322,11 @@ async fn forward_responses_mixed(
                     let mut out_body = body_bytes.clone();
                     if let Ok(mut v) = serde_json::from_slice::<Value>(&body_bytes) {
                         if let Some(err) = v.get_mut("error").and_then(|e| e.as_object_mut()) {
-                            if let Some(msg) = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()) {
+                            if let Some(msg) = err
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string())
+                            {
                                 let new_msg = format!("{} (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)", msg);
                                 err.insert("message".to_string(), json!(new_msg));
                             } else {
@@ -2558,7 +2571,11 @@ async fn forward_responses_mixed_stream(
                     let mut out_body = body_bytes.clone();
                     if let Ok(mut v) = serde_json::from_slice::<Value>(&body_bytes) {
                         if let Some(err) = v.get_mut("error").and_then(|e| e.as_object_mut()) {
-                            if let Some(msg) = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()) {
+                            if let Some(msg) = err
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string())
+                            {
                                 let new_msg = format!("{} (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)", msg);
                                 err.insert("message".to_string(), json!(new_msg));
                             } else {

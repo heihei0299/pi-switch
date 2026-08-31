@@ -99,11 +99,12 @@ export interface WebSettings {
 export interface Settings {
   providerPrefix: string;
   writeMode: string;
-  injectOpenCodeAttribution: boolean;
+  injectOpenCodeAttribution?: boolean;
   gatewayApi: string;
   language?: string | null;
   proxy: ProxySettings;
   web: WebSettings;
+  conversationSource: "proxy" | "sessionScan" | "off";
 }
 
 export interface AppState {

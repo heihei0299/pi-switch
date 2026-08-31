@@ -27,7 +27,7 @@ const REFRESH_TIERS: { label: string; ms: number | null }[] = [
   { label: "5min", ms: 300_000 },
 ];
 
-export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> }) {
+export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<void> }) {
   const { t } = useI18n();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [range, setRange] = useState<StatsRange>("today");
@@ -602,6 +602,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
             </Card>
           ) : null}
 
+          {state.settings?.conversationSource !== "off" && (
           <Card className="mt-4 overflow-hidden">
             <button
               type="button"
@@ -770,6 +771,7 @@ export function StatsPanel(_: { state: AppState; refresh: () => Promise<void> })
               </div>
             )}
           </Card>
+          )}
         </>
       )}
     </div>
