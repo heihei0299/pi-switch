@@ -2,8 +2,8 @@ node_modules/
 target/
 *.node
 *.tar.gz
+*.tgz
 .env
-.idea/
 .vscode/
 *.log
 pi-session-*.html
@@ -22,3 +22,5 @@ opencode.jsonc
 .codegraph/
 .cortexkit/
 .agents/
+.pi/
+.scratch/
