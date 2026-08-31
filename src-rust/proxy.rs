@@ -1932,7 +1932,7 @@ fn buffered_response(
 }
 
 // ─── Max output clamping (prevents 400 when input+max exceeds context window) ─────
-const MAX_OUTPUT_SAFETY_TOKENS: u64 = 8192;
+const MAX_OUTPUT_SAFETY_TOKENS: u64 = 16384;
 const MAX_OUTPUT_MIN_TOKENS: u64 = 16;
 
 // ─── Last prompt tokens cache (b: true-value closed loop) ─────
@@ -2307,87 +2307,34 @@ async fn forward_responses_mixed(
                 let response_headers = upstream.headers().clone();
                 let body_bytes = upstream.bytes().await.unwrap_or_default().to_vec();
                 if is_context_overflow_400(status.as_u16(), &body_bytes) {
-                    let mut retry_body = candidate_body.clone();
-                    retry_body["max_output_tokens"] = serde_json::json!(MAX_OUTPUT_MIN_TOKENS);
-                    let retry_send = if is_native {
-                        retry_body.clone()
-                    } else {
-                        match responses_to_chat(&retry_body) {
-                            Ok(mut c) => {
-                                clamp_chat_max_tokens(&mut c, &profile, real_model);
-                                c
-                            }
-                            Err(_) => {
-                                log_failed_attempt(
-                                    name,
-                                    None,
-                                    Some(status.as_u16()),
-                                    Some(&url),
-                                    body.get("model").and_then(|v| v.as_str()),
-                                    conversation_id,
-                                    conversation_name.as_deref(),
-                                )
-                                .await;
-                                return Ok(buffered_response(status, &response_headers, body_bytes));
+                    // Surface as a detectable overflow error instead of hiding behind a 16-token retry.
+                    // pi's isContextOverflow matches “exceeds the context window”, so inject it here
+                    // and let the client drive compaction (recoverable via /compact).
+                    let mut out_body = body_bytes.clone();
+                    if let Ok(mut v) = serde_json::from_slice::<Value>(&body_bytes) {
+                        if let Some(err) = v.get_mut("error").and_then(|e| e.as_object_mut()) {
+                            if let Some(msg) = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()) {
+                                let new_msg = format!("{} (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)", msg);
+                                err.insert("message".to_string(), json!(new_msg));
+                            } else {
+                                err.insert("message".to_string(), json!("exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context"));
                             }
                         }
-                    };
-                    let retry_headers = build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
-                    let retry_url = if is_native {
-                        format!("{base}/responses")
-                    } else {
-                        format!("{base}/chat/completions")
-                    };
-                    if let Ok(retry_up) = client.post(&retry_url).headers(retry_headers).json(&retry_send).send().await {
-                        if retry_up.status().is_success() {
-                            let r_status = retry_up.status();
-                            let r_headers = retry_up.headers().clone();
-                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
-                            record_success(name, is_half_open).await;
-                            if is_native {
-                                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&r_bytes) {
-                                    if let Some(u) = crate::usage::extract_usage(&v) {
-                                        remember_prompt_tokens(real_model, u.prompt_tokens);
-                                    }
-                                }
-                                let r_usage = serde_json::from_slice::<serde_json::Value>(&r_bytes).ok().and_then(|v| crate::usage::extract_usage(&v));
-                                log_request(
-                                    name,
-                                    true,
-                                    None,
-                                    Some(r_status.as_u16()),
-                                    Some(&retry_url),
-                                    None,
-                                    body.get("model").and_then(|v| v.as_str()),
-                                    r_usage,
-                                    conversation_id,
-                                    conversation_name.as_deref(),
-                                    lookup_model_cost(&profile, real_model),
-                                )
-                                .await;
-                                return Ok(buffered_response(r_status, &r_headers, r_bytes));
-                            } else {
-                                if let Ok(chat) = serde_json::from_slice::<serde_json::Value>(&r_bytes) {
-                                    let ru = crate::usage::extract_usage(&chat);
-                                    if let Some(u) = ru.as_ref() {
-                                        remember_prompt_tokens(real_model, u.prompt_tokens);
-                                    }
-                                    if let Ok(rb) = chat_response_to_responses(chat.clone(), real_model, Some(chrono::Utc::now().timestamp() as u64)) {
-                                        log_request(name, true, None, Some(200), Some(&retry_url), None, body.get("model").and_then(|v| v.as_str()), ru, conversation_id, conversation_name.as_deref(), lookup_model_cost(&profile, real_model)).await;
-                                        let s = serde_json::to_string(&rb).unwrap_or_default();
-                                        return Ok(axum::response::Response::builder().status(200).header("content-type", "application/json").body(axum::body::Body::from(s)).unwrap());
-                                    }
-                                }
-                                return Ok(buffered_response(r_status, &r_headers, r_bytes));
-                            }
-                        } else {
-                            let r_status = retry_up.status();
-                            let r_headers = retry_up.headers().clone();
-                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
-                            log_failed_attempt(name, None, Some(r_status.as_u16()), Some(&retry_url), body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref()).await;
-                            return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                        if let Ok(s) = serde_json::to_vec(&v) {
+                            out_body = s;
                         }
                     }
+                    log_failed_attempt(
+                        name,
+                        Some("context_overflow_400"),
+                        Some(status.as_u16()),
+                        Some(&url),
+                        body.get("model").and_then(|v| v.as_str()),
+                        conversation_id,
+                        conversation_name.as_deref(),
+                    )
+                    .await;
+                    return Ok(buffered_response(status, &response_headers, out_body));
                 }
                 log_failed_attempt(
                     name,
@@ -2608,72 +2555,31 @@ async fn forward_responses_mixed_stream(
                 let response_headers = upstream.headers().clone();
                 let body_bytes = upstream.bytes().await.unwrap_or_default().to_vec();
                 if is_context_overflow_400(status.as_u16(), &body_bytes) {
-                    let mut retry_body = candidate_body.clone();
-                    retry_body["max_output_tokens"] = serde_json::json!(MAX_OUTPUT_MIN_TOKENS);
-                    let retry_send = if is_native {
-                        retry_body.clone()
-                    } else {
-                        match responses_to_chat(&retry_body) {
-                            Ok(mut c) => {
-                                clamp_chat_max_tokens(&mut c, &profile, real_model);
-                                c
-                            }
-                            Err(_) => {
-                                log_failed_attempt(
-                                    name,
-                                    None,
-                                    Some(status.as_u16()),
-                                    Some(&url),
-                                    body.get("model").and_then(|v| v.as_str()),
-                                    conversation_id,
-                                    conversation_name.as_deref(),
-                                )
-                                .await;
-                                return Ok(buffered_response(status, &response_headers, body_bytes));
+                    let mut out_body = body_bytes.clone();
+                    if let Ok(mut v) = serde_json::from_slice::<Value>(&body_bytes) {
+                        if let Some(err) = v.get_mut("error").and_then(|e| e.as_object_mut()) {
+                            if let Some(msg) = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()) {
+                                let new_msg = format!("{} (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)", msg);
+                                err.insert("message".to_string(), json!(new_msg));
+                            } else {
+                                err.insert("message".to_string(), json!("exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context"));
                             }
                         }
-                    };
-                    let retry_headers = build_upstream_headers(headers, &profile, &api_key, user_agent.as_ref(), &disguise);
-                    let retry_url = if is_native {
-                        format!("{base}/responses")
-                    } else {
-                        format!("{base}/chat/completions")
-                    };
-                    if let Ok(retry_up) = client.post(&retry_url).headers(retry_headers).json(&retry_send).send().await {
-                        if retry_up.status().is_success() {
-                            if is_native {
-                                record_success(name, is_half_open).await;
-                                let mut fields = StreamLogFields::for_success(name, retry_up.status().as_u16(), &retry_url, body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref());
-                                fields.cost = lookup_model_cost(&profile, real_model);
-                                return Ok(stream_response(retry_up, Some(fields)));
-                            } else {
-                                let is_sse = retry_up.headers().get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|t| t.contains("event-stream"));
-                                if !is_sse {
-                                    let r_status2 = retry_up.status();
-                                    let r_headers2 = retry_up.headers().clone();
-                                    let r_bytes2 = retry_up.bytes().await.unwrap_or_default().to_vec();
-                                    return Ok(buffered_response(r_status2, &r_headers2, r_bytes2));
-                                }
-                                record_success(name, is_half_open).await;
-                                let mut builder = axum::response::Response::builder().status(200);
-                                for (hn, hv) in forward_headers(retry_up.headers()) {
-                                    builder = builder.header(hn, hv);
-                                }
-                                builder = builder.header("content-type", "text/event-stream");
-                                let mut fields = StreamLogFields::for_success(name, 200, &retry_url, body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref());
-                                fields.cost = lookup_model_cost(&profile, real_model);
-                                let converter = ChatSseToResponses::new(real_model);
-                                let transform = ResponsesStreamTransform::new(retry_up.bytes_stream(), converter, fields);
-                                return Ok(builder.body(axum::body::Body::from_stream(transform)).unwrap());
-                            }
-                        } else {
-                            let r_status = retry_up.status();
-                            let r_headers = retry_up.headers().clone();
-                            let r_bytes = retry_up.bytes().await.unwrap_or_default().to_vec();
-                            log_failed_attempt(name, None, Some(r_status.as_u16()), Some(&retry_url), body.get("model").and_then(|v| v.as_str()), conversation_id, conversation_name.as_deref()).await;
-                            return Ok(buffered_response(r_status, &r_headers, r_bytes));
+                        if let Ok(s) = serde_json::to_vec(&v) {
+                            out_body = s;
                         }
                     }
+                    log_failed_attempt(
+                        name,
+                        Some("context_overflow_400"),
+                        Some(status.as_u16()),
+                        Some(&url),
+                        body.get("model").and_then(|v| v.as_str()),
+                        conversation_id,
+                        conversation_name.as_deref(),
+                    )
+                    .await;
+                    return Ok(buffered_response(status, &response_headers, out_body));
                 }
                 log_failed_attempt(
                     name,
@@ -3468,7 +3374,7 @@ mod tests {
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"]["type"], "invalid_request_error");
-        assert_eq!(value["error"]["message"], "invalid request");
+        assert_eq!(value["error"]["message"], "invalid request (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)");
         server.abort();
     }
 
@@ -4252,7 +4158,7 @@ mod tests {
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"]["type"], "invalid_request_error");
-        assert_eq!(value["error"]["message"], "bad");
+        assert_eq!(value["error"]["message"], "bad (exceeds the context window: input + max_output_tokens > contextWindow; try /compact or reduce context)");
         server.abort();
     }
 
