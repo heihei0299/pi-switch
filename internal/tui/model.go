@@ -30,7 +30,7 @@ type profileItem struct {
 
 func (i profileItem) Title() string {
 	if i.current {
-		return "● " + i.name + "  (current)"
+		return "● " + i.name + " (current)"
 	}
 	return "  " + i.name
 }
@@ -161,6 +161,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "stats refreshed"
 			return m, nil
 		case "enter":
+			if m.list.FilterState() == list.Filtering {
+				break
+			}
 			if m.tab == 0 {
 				if it, ok := m.list.SelectedItem().(profileItem); ok && it.name != "(no profiles)" {
 					cfgPath := configPath()

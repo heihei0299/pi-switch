@@ -21,7 +21,6 @@ function resolveBin() {
     join(dir, `pi-switch-${goos}-${goarch}${ext}`),
     join(dir, `pi-switch-${process.platform}-${process.arch}${ext}`),
     join(projectRoot, `pi-switch${ext}`),
-    join(projectRoot, `pi-switch-go${ext}`),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;

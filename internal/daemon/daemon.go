@@ -167,14 +167,21 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	if err := cmd.Start(); err != nil {
 		return DaemonResult{}, fmt.Errorf("Failed to spawn daemon: %w", err)
 	}
+	_ = cmd.Process.Release()
 	pid := uint32(cmd.Process.Pid)
 	now := uint64(time.Now().UnixMilli())
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now}
 	_ = writePidFile(s, info)
 
-	if !checkHealth(host, port, 25) {
+	if !checkHealth(host, port, 15) {
 		removePidFile(s)
 		_ = cmd.Process.Kill()
+		// Check log tail for EADDRINUSE
+		if data, err := os.ReadFile(lp); err == nil {
+			if strings.Contains(strings.ToLower(string(data)), "address already in use") {
+				return DaemonResult{}, fmt.Errorf("port already in use — use ss -tlnp to locate (address already in use on %s:%d)", host, port)
+			}
+		}
 		return DaemonResult{}, fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
 	}
 	msg := fmt.Sprintf("%s daemon started (PID %d) on http://%s:%d", s.Label, pid, host, port)
