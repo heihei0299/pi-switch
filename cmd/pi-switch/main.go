@@ -13,7 +13,15 @@ import (
 	"github.com/heihei0299/pi-switch/internal/tui"
 )
 
-const version = "20260831.1.0-go"
+var (
+	version   = "20260831.1.0-go"
+	buildTime = "unknown"
+)
+
+func init() {
+	server.Version = version
+	server.BuildTime = buildTime
+}
 
 func printHelp() {
 	fmt.Printf(`pi-switch %s — Lightweight profile switcher for pi (Go rewrite)
