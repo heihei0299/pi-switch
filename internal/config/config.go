@@ -40,7 +40,8 @@ type ProviderProfile struct {
 	ExposedModels []string               `json:"exposedModels,omitempty"`
 	ModelMap      map[string]interface{} `json:"modelMap,omitempty"`
 	UserAgent     *string                `json:"userAgent,omitempty"`
-	Preset        *string                `json:"preset,omitempty"`
+	Preset             *string                `json:"preset,omitempty"`
+	ModelsDevProvider *string                `json:"modelsDevProvider,omitempty"`
 	Proxy         *bool                  `json:"proxy,omitempty"`
 }
 
