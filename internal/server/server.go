@@ -647,6 +647,10 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	if err := validateProviderProfile(prof); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]config.ProviderProfile{}
@@ -722,6 +726,10 @@ func handlePutProfile(c *gin.Context) {
 		return
 	}
 	if err := validateResponsesMode(prof); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := validateProviderProfile(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -881,7 +889,7 @@ func handleFetchModels(c *gin.Context) {
 		c.JSON(200, gin.H{"models": ids, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
 		return
 	}
-	c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 1, "warning": lastErr}})
+	c.JSON(500, gin.H{"error": lastErr})
 }
 
 func handlePutModels(c *gin.Context) {
@@ -1020,13 +1028,31 @@ func validateResponsesMode(p config.ProviderProfile) error {
 	}
 	api := p.API
 	if mode == "passthrough" && api != "openai-responses" {
-		return fmt.Errorf("responsesMode passthrough only allows api=openai-responses")
+		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
 	}
 	if mode == "convert" && api != "openai-completions" {
-		return fmt.Errorf("responsesMode convert only allows api=openai-completions")
+		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
 	}
 	return nil
 }
+func validateProviderProfile(p config.ProviderProfile) error {
+	seen := map[string]bool{}
+	for _, m := range p.Models {
+		if seen[m.ID] {
+			return fmt.Errorf("duplicate model id %q", m.ID)
+		}
+		seen[m.ID] = true
+	}
+	if len(p.ExposedModels) > 0 {
+		for _, eid := range p.ExposedModels {
+			if !seen[eid] {
+				return fmt.Errorf("exposedModels references unknown model %q", eid)
+			}
+		}
+	}
+	return nil
+}
+
 
 func handleValidate(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -1043,6 +1069,12 @@ func handleValidate(c *gin.Context) {
 		}
 		if len(prof.Models) == 0 {
 			issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.models", name), "message": "no models"})
+		}
+		if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
+			known := map[string]bool{"openai": true, "anthropic": true, "google": true, "deepseek": true, "xai": true, "moonshot": true, "qwen": true, "cohere": true, "mistral": true, "azure": true, "custom": true}
+			if !known[*prof.ModelsDevProvider] {
+				issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.modelsDevProvider", name), "message": fmt.Sprintf("modelsDevProvider unknown: %s", *prof.ModelsDevProvider)})
+			}
 		}
 		if err := validateResponsesMode(prof); err != nil {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.responsesMode", name), "message": err.Error()})

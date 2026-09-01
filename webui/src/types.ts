@@ -1,6 +1,6 @@
-// Type mirror of the Rust config and stats structs in `src-rust/`.
-// `src-rust/config.rs` and `src-rust/stats.rs` are the source of truth —
-// keep these in sync when they change.
+// Type mirror of Go config structs in `internal/config/config.go`.
+// `internal/config/config.go` is the source of truth —
+// keep these in sync when they change (manual sync, no OpenAPI generation; gateway publish diff guards drift indirectly).
 // (Future option noted in WEBUI_GUIDE.md: auto-generate via typeshare/ts-rs.)
 
 export interface ModelCost {
