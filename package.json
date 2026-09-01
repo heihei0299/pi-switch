@@ -7,39 +7,24 @@
     "pi-switch": "./bin/pi-switch.js"
   },
   "main": "./index.js",
-  "napi": {
-    "name": "pi-switch-native",
-    "targets": [
-      "x86_64-apple-darwin",
-      "aarch64-apple-darwin",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-linux-musl",
-      "x86_64-pc-windows-msvc"
-    ]
-  },
   "files": [
-    "bin",
-    "src",
+    "bin/",
+    "webui/dist/",
     "index.js",
     "index.d.ts",
-    "pi-switch-native.cjs",
-    "pi-switch-native.darwin-arm64.node",
-    "pi-switch-native.darwin-x64.node",
-    "pi-switch-native.linux-x64-gnu.node",
-    "pi-switch-native.linux-x64-musl.node",
-    "pi-switch-native.win32-x64-msvc.node",
-    "extensions/index.ts",
-    "extensions/conversation-id-inject.ts"
+    "README.md",
+    "README_ZH.md"
   ],
   "scripts": {
-    "artifacts": "napi artifacts",
-    "build": "npm run build:webui && npm run build:native",
+    "build": "npm run build:webui && npm run build:go",
     "build:webui": "npm --prefix webui install && npm --prefix webui run build",
-    "build:native": "napi build --platform --release",
-    "build:native:debug": "napi build --platform",
+    "build:go": "go build -ldflags \"-s -w\" -o bin/pi-switch ./cmd/pi-switch",
+    "build:all": "bash scripts/build-all.sh",
+    "build:go:current": "go build -ldflags \"-s -w\" -o bin/pi-switch-$(go env GOOS)-$(go env GOARCH) ./cmd/pi-switch",
     "dev:webui": "npm --prefix webui run dev",
     "doctor": "node ./bin/pi-switch.js doctor",
-    "test": "node --test \"extensions/**/*.test.ts\""
+    "test": "go test ./...",
+    "test:webui": "NODE_ENV=test npx --prefix webui vitest run"
   },
   "keywords": [
     "pi",
@@ -55,8 +40,5 @@
   "license": "MIT",
   "engines": {
     "node": ">=23.6"
-  },
-  "devDependencies": {
-    "@napi-rs/cli": "^3.7.1"
   }
 }

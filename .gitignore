@@ -9,7 +9,13 @@ target/
 pi-session-*.html
 *claude*cli*.txt
 
-# webui build artifacts (dist is embedded into the .node at build time)
+# Go binaries (built via go build, cross-compile) - only top-level and bin
+/bin/pi-switch
+/bin/pi-switch.exe
+bin/pi-switch
+bin/pi-switch-*
+
+# webui build artifacts (dist is embedded into the Go binary at build time)
 webui/node_modules/
 webui/dist/*
 !webui/dist/.gitkeep

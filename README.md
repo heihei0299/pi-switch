@@ -4,12 +4,12 @@
 
 [![Version](https://img.shields.io/badge/version-20260831.1.0-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
-[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **WebUI-first control plane for pi agent**
 
-Manage provider profiles and run a local model-name routing gateway — via a browser-first WebUI, with CLI and TUI on the same Rust core.
+Manage provider profiles and run a local model-name routing gateway — via a browser-first WebUI, with CLI and TUI on the same Go core (gin + bubbletea).
 
 [English](#) | [中文](README_ZH.md)
 
@@ -43,16 +43,16 @@ npm install -g @heihei0299/pi-switch
 pi install npm:@heihei0299/pi-switch
 ```
 
-**Build from source** (requires Node.js >= 20, Rust 1.80+):
+**Build from source** (requires Node.js >= 20, Go 1.23+):
 
 ```bash
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
 npm install
-npm run build              # builds webui/dist + embeds into the .node
+npm run build              # builds webui/dist + go build (embeds webui via embed.FS)
 # or step by step:
 # npm run build:webui      # vite build → webui/dist
-# npm run build:native     # napi build --release (embeds webui/dist)
+# npm run build:go         # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch (embeds webui/dist)
 node bin/pi-switch.js webui start --daemon
 # open http://127.0.0.1:43110
 ```
@@ -64,12 +64,12 @@ node bin/pi-switch.js webui start --daemon
 - ✅ macOS (Intel & Apple Silicon)
 - ✅ Linux (x64) - glibc & musl
 
-**Linux users:** This package includes prebuilt binaries for both glibc and musl systems. If you encounter a GLIBC version error, the package will automatically fallback to the musl binary which has broader compatibility.
+**Linux users:** Go build uses `modernc.org/sqlite` (pure Go, no CGO) — single static binary, no glibc/musl distinction needed.
 
-**Troubleshooting GLIBC errors:**
+**Cross-compile (no CGO):**
 ```bash
-# If you see "GLIBC_X.XX not found", build from source:
-npm install -g @heihei0299/pi-switch --build-from-source
+npm run build:all  # GOOS=linux/darwin/windows × GOARCH=amd64/arm64 → bin/pi-switch-*
+# Wrapper bin/pi-switch.js selects correct binary via process.platform/arch
 ```
 
 ---
@@ -145,7 +145,7 @@ pi-switch stats                                     # View request statistics
 | 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
 | 🗂️ **Model Catalog** | Auto-enrich model metadata (cost/limit/reasoning/input) from https://models.dev with 24h cache, per-profile `modelsDevProvider` mapping & global fallback |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
-| 🖥️ **TUI (secondary)** | ratatui-powered, Dracula theme, mouse support, vim keys (`hjkl`) — full parity with WebUI/CLI for terminal-first workflows |
+| 🖥️ **TUI (secondary)** | charmbracelet/bubbletea + lipgloss + bubbles — profile list/switch, gateway publish, stats (totalCost ` - ` / `$0.00` / `$1.2K`), full parity with WebUI/CLI |
 | 🌐 **Bilingual** | English / 中文, persisted to config, toggle in Settings |
 | 📊 **Usage Stats** | Per-provider, per-model request metrics & latency; four-dimension token totals (input/output/cached/reasoning), cache hit rate, time-window queries (today/24h/7d/custom), per-conversation breakdown — see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for the data model |
 | 💾 **Backup & Sync** | Auto-backup on mutation, AES-256-CBC encrypted export/import |
@@ -276,42 +276,31 @@ Requests are routed by the model name in the request body — no out-of-band sta
 
 ```
 pi-switch/
-├── bin/pi-switch.js         # CLI entry point
-├── index.js                 # ESM wrapper for native addon
-├── pi-switch-native.cjs     # NAPI loader (auto platform detection)
-├── webui/                   # React frontend (Vite + Tailwind, embedded via rust-embed)
+├── bin/pi-switch.js         # Node wrapper — selects Go binary by platform/arch → bin/pi-switch-<goos>-<goarch>
+├── bin/pi-switch-*          # Go binaries (linux/darwin/windows × amd64/arm64, pure Go)
+├── cmd/pi-switch/main.go    # Go entry (gin + proxy/mgmt routers, daemon, tui)
+├── internal/
+│   ├── config/              # Config load/save, types, per-request hot reload, v1→v2 migration
+│   ├── gateway/             # Gateway publish (models.json:providers[pi-switch])
+│   ├── proxy/               # Proxy helpers (cost, limit clamp)
+│   ├── limit/               # contextWindow/maxTokens clamp (est=ceil(jsonLen/4), reserve 4096)
+│   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses conversion (native/convert via responsesMode)
+│   ├── server/              # gin routers (proxy :43112, mgmt :43110, /api/*, embed.FS)
+│   ├── store/               # SQLite (modernc.org/sqlite, pure Go) + requests log
+│   ├── scan/                # sessionScan (offline ~/.pi/agent/sessions JSONL correlation)
+│   ├── daemon/              # Daemon lifecycle (pid files ~/.pi-switch/*.pid, ss multi-instance hint)
+│   ├── tui/                 # Terminal UI (charmbracelet/bubbletea + bubbles + lipgloss)
+│   └── usage/               # SSE usage parser (StreamTee)
+├── webui/                   # React frontend (Vite + Tailwind, embedded via embed.FS)
 │   ├── src/components/      # Home, Profiles, Gateway, Proxy, Stats, etc.
-│   └── dist/                # vite build output (baked into .node in release)
-├── src-rust/                # Rust native core (napi-rs)
-│   ├── lib.rs               # NAPI function exports
-│   ├── config.rs            # Config load/save, types (ProviderProfile + Upstream)
-│   ├── ops.rs               # Core operations (provider CRUD)
-│   ├── gateway.rs           # Independent gateway (models.json sync, preview/apply, atomic write)
-│   ├── presets.rs           # Built-in provider presets
-│   ├── proxy.rs             # Proxy server (gateway routing, failover, circuit breaker)
-│   ├── daemon.rs            # Daemon lifecycle
-│   ├── ccswitch.rs          # cc-switch provider import
-│   ├── database.rs          # SQLite persistence
-│   ├── package_ops.rs       # Package management
-│   ├── service.rs           # Shared service layer
-│   ├── web.rs               # WebUI HTTP server (profiles/gateway split routers)
-│   ├── credits.rs           # 供应商余量代理与归一化（CreditsFetcher/OpencodeGoFetcher，5s 超时，主上游，不写盘）
-│   ├── stats.rs             # Request log aggregation + token usage stats
-│   ├── usage.rs             # Token usage extraction & SSE stream parsing
-│   ├── sync.rs              # Encrypted export/import
-│   └── tui/                 # Interactive terminal UI (ratatui) — secondary interface
-│       ├── app.rs           # State machine + key handler
-│       ├── form.rs          # Provider form state
-│       ├── i18n.rs          # Bilingual (EN/ZH)
-│       └── ui/              # Rendering (chrome, pages, overlays)
-├── src/                     # JavaScript layer (pi extension support)
-├── extensions/index.ts      # Pi agent extension (/piswitch)
-└── Cargo.toml
+│   └── dist/                # vite build (embedded into Go binary via webui/embed.go)
+├── scripts/build-all.sh     # Cross-compile matrix GOOS×GOARCH (no CGO)
+└── go.mod
 ```
 
 **Config files:**
 - `~/.pi-switch/config.json` — profiles, proxy settings, failover chain
-- `~/.pi-switch/requests.log` — per-request JSON log (status, latency, token usage, conversation id)
+- `~/.pi-switch/requests.db` — SQLite (modernc) per-request log (status, latency, token usage, cost, conversation) — zero-migration from old requests.log + .db
 - `~/.pi-switch/backups/` — timestamped auto-backups on every mutation
 - `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes a single gateway provider)
 
@@ -485,17 +474,16 @@ Everything under `~/.pi-switch/`. Pi's own registry is `~/.pi/agent/models.json`
 ## 🛠️ Development
 
 ```bash
-npm run build                    # one-shot: webui/dist + native .node (embeds webui)
+npm run build                    # one-shot: webui/dist + go build (embed.FS)
 npm run build:webui              # vite build → webui/dist
-npm run build:native             # napi build --release (embeds webui/dist)
-npm run build:native:debug       # Build Rust addon (debug)
-cargo build                      # Rust-only build
-cargo clippy                     # Lint
-cargo fmt                        # Format
-cargo test --release --lib       # Run unit tests
+npm run build:go                 # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch (embeds webui/dist)
+npm run build:all                # cross-compile linux/darwin/windows × amd64/arm64 → bin/pi-switch-*
+go test ./...                    # Go integration tests (48+)
+NODE_ENV=test npx --prefix webui vitest run  # WebUI tests (199)
+go vet ./...                     # Lint
 ```
 
-**Note:** Stop the TUI/daemon before `npm run build:native` to avoid file-lock errors on Windows.
+**Note:** Stop the TUI/daemon (`pi-switch proxy stop && pi-switch webui stop`) before `go build` to avoid pid/file lock on Windows. `~/.pi-switch/*.pid` is per-service (proxy.pid/webui.pid) with `ss -tlnp` multi-instance hint.
 
 ---
 
