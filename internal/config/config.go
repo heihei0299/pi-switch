@@ -5,27 +5,39 @@ import (
 	"os"
 )
 
-// ModelEntry mirrors Rust ModelEntry subset for 09
+type ModelCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite,omitempty"`
+}
+
 type ModelEntry struct {
-	ID            string  `json:"id"`
-	ContextWindow uint32  `json:"contextWindow"`
-	MaxTokens     uint32  `json:"maxTokens"`
-	Name          *string `json:"name,omitempty"`
+	ID            string     `json:"id"`
+	ContextWindow uint32     `json:"contextWindow"`
+	MaxTokens     uint32     `json:"maxTokens"`
+	Name          *string    `json:"name,omitempty"`
+	Cost          *ModelCost `json:"cost,omitempty"`
+	Input         []string   `json:"input,omitempty"`
 }
 
 type Upstream struct {
-	BaseURL string  `json:"baseUrl"`
-	APIKey  string  `json:"apiKey"`
-	Name    *string `json:"name,omitempty"`
+	BaseURL string            `json:"baseUrl"`
+	APIKey  string            `json:"apiKey"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Weight  *uint32           `json:"weight,omitempty"`
+	Name    *string           `json:"name,omitempty"`
 }
 
 type ProviderProfile struct {
-	API           string       `json:"api"`
-	ResponsesMode string       `json:"responsesMode"`
-	BaseURL       string       `json:"baseUrl"`
-	APIKey        string       `json:"apiKey"`
-	Upstreams     []Upstream   `json:"upstreams,omitempty"`
-	Models        []ModelEntry `json:"models"`
+	API           string            `json:"api"`
+	ResponsesMode string            `json:"responsesMode"`
+	BaseURL       string            `json:"baseUrl"`
+	APIKey        string            `json:"apiKey"`
+	Upstreams     []Upstream        `json:"upstreams,omitempty"`
+	Models        []ModelEntry      `json:"models"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	ExposedModels []string          `json:"exposedModels,omitempty"`
 }
 
 type Settings struct {
@@ -34,8 +46,9 @@ type Settings struct {
 	GatewayAPI         string `json:"gatewayApi"`
 	ConversationSource string `json:"conversationSource"`
 	Proxy              struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
+		Host     string   `json:"host"`
+		Port     int      `json:"port"`
+		Failover []string `json:"failover,omitempty"`
 	} `json:"proxy"`
 	Web struct {
 		Host string `json:"host"`
@@ -62,7 +75,7 @@ func DefaultConfig() PiSwitchConfig {
 				BaseURL:       "https://api.openai.com/v1",
 				APIKey:        "sk-prototype-not-real",
 				Models: []ModelEntry{
-					{ID: "gpt-4o-mini", ContextWindow: 128000, MaxTokens: 16384},
+					{ID: "gpt-4o-mini", ContextWindow: 128000, MaxTokens: 16384, Cost: &ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075}},
 				},
 			},
 		},
@@ -72,8 +85,9 @@ func DefaultConfig() PiSwitchConfig {
 			GatewayAPI:         "openai-completions",
 			ConversationSource: "sessionScan",
 			Proxy: struct {
-				Host string `json:"host"`
-				Port int    `json:"port"`
+				Host     string   `json:"host"`
+				Port     int      `json:"port"`
+				Failover []string `json:"failover,omitempty"`
 			}{Host: "127.0.0.1", Port: 43112},
 			Web: struct {
 				Host string `json:"host"`
@@ -83,19 +97,16 @@ func DefaultConfig() PiSwitchConfig {
 	}
 }
 
-// LoadConfigAtPath is per-request hot reload entry for 09
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return DefaultConfig(), "default (no file)", nil
 	}
-	// Use raw map to handle legacy injectOpenCodeAttribution
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return DefaultConfig(), "default (bad json)", nil
 	}
 	cfg := DefaultConfig()
-	// Start from default, then override with file values where present
 	if v, ok := raw["version"]; ok {
 		_ = json.Unmarshal(v, &cfg.Version)
 	}
@@ -111,7 +122,6 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	if v, ok := raw["settings"]; ok {
 		var sRaw map[string]json.RawMessage
 		if err := json.Unmarshal(v, &sRaw); err == nil {
-			// providerPrefix
 			if vv, ok := sRaw["providerPrefix"]; ok {
 				_ = json.Unmarshal(vv, &cfg.Settings.ProviderPrefix)
 			}
@@ -141,7 +151,6 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 			}
 		}
 	}
-	// defaults for empty
 	if cfg.Settings.ProviderPrefix == "" {
 		cfg.Settings.ProviderPrefix = "pi-switch"
 	}
@@ -170,4 +179,49 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 		cfg.Version = 2
 	}
 	return cfg, path, nil
+}
+
+func (p ProviderProfile) PrimaryBaseURL() string {
+	if len(p.Upstreams) > 0 && p.Upstreams[0].BaseURL != "" {
+		return p.Upstreams[0].BaseURL
+	}
+	return p.BaseURL
+}
+
+func (p ProviderProfile) PrimaryAPIKey() string {
+	if len(p.Upstreams) > 0 && p.Upstreams[0].APIKey != "" {
+		return p.Upstreams[0].APIKey
+	}
+	return p.APIKey
+}
+
+func (p ProviderProfile) PrimaryHeaders() map[string]string {
+	if len(p.Upstreams) > 0 && p.Upstreams[0].Headers != nil {
+		return p.Upstreams[0].Headers
+	}
+	return p.Headers
+}
+
+func (p ProviderProfile) ResolvedUpstreams() []Upstream {
+	if len(p.Upstreams) > 0 {
+		return p.Upstreams
+	}
+	if p.BaseURL != "" || p.APIKey != "" || p.Headers != nil {
+		return []Upstream{{BaseURL: p.BaseURL, APIKey: p.APIKey, Headers: p.Headers}}
+	}
+	return nil
+}
+
+func (m ModelEntry) EffectiveContextWindow() uint32 {
+	if m.ContextWindow == 0 {
+		return 128000
+	}
+	return m.ContextWindow
+}
+
+func (m ModelEntry) EffectiveMaxTokens() uint32 {
+	if m.MaxTokens == 0 {
+		return 16384
+	}
+	return m.MaxTokens
 }
