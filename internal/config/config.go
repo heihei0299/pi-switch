@@ -114,6 +114,7 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 		_ = json.Unmarshal(v, &cfg.Current)
 	}
 	if v, ok := raw["profiles"]; ok {
+		cfg.Profiles = map[string]ProviderProfile{}
 		_ = json.Unmarshal(v, &cfg.Profiles)
 		if cfg.Profiles == nil {
 			cfg.Profiles = map[string]ProviderProfile{}
