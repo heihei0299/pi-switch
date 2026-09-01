@@ -38,7 +38,7 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
 	dbPath := filepath.Join(dir, "requests.db")
-	initial := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
+	initial := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","preset":"openai","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
 	_ = os.WriteFile(cfgPath, []byte(initial), 0644)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", dbPath)
@@ -61,7 +61,7 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 		}
 	}
 	_ = profMap
-	newProf := `{"name":"new-provider","profile":{"api":"openai-completions","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o"],"proxy":false,"headers":{"X-Custom":"1"},"userAgent":"test-agent"}}`
+	newProf := `{"name":"new-provider","profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o"],"proxy":false,"headers":{"X-Custom":"1"},"userAgent":"test-agent"}}`
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(newProf))
 	req2.Header.Set("Content-Type", "application/json")
@@ -99,7 +99,7 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 	} else {
 		t.Fatalf("exposedModels not array: %v", profObj["exposedModels"])
 	}
-	updateBody := `{"profile":{"api":"openai-completions","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"],"modelMap":{"gpt-4o-mini":"mapped"},"proxy":false}}`
+	updateBody := `{"profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"],"modelMap":{"gpt-4o-mini":"mapped"},"proxy":false}}`
 	w4 := httptest.NewRecorder()
 	req4, _ := http.NewRequest("PUT", "/api/profiles/new-provider", strings.NewReader(updateBody))
 	req4.Header.Set("Content-Type", "application/json")
@@ -144,7 +144,7 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.json")
 	modelsPath := filepath.Join(dir, "models.json")
 	dbPath := filepath.Join(dir, "requests.db")
-	cfgContent := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384,"cost":{"input":0.15,"output":0.6,"cacheRead":0.075}}],"exposedModels":["gpt-4o-mini"],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
+	cfgContent := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","preset":"openai","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384,"cost":{"input":0.15,"output":0.6,"cacheRead":0.075}}],"exposedModels":["gpt-4o-mini"],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
 	_ = os.WriteFile(cfgPath, []byte(cfgContent), 0644)
 	_ = os.WriteFile(modelsPath, []byte(`{"providers":{}}`), 0644)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)

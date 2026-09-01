@@ -19,6 +19,7 @@ type ModelEntry struct {
 	Name          *string    `json:"name,omitempty"`
 	Cost          *ModelCost `json:"cost,omitempty"`
 	Input         []string   `json:"input,omitempty"`
+	Reasoning     *bool      `json:"reasoning,omitempty"`
 }
 
 type Upstream struct {
@@ -30,19 +31,19 @@ type Upstream struct {
 }
 
 type ProviderProfile struct {
-	API           string                 `json:"api"`
-	ResponsesMode string                 `json:"responsesMode"`
-	BaseURL       string                 `json:"baseUrl"`
-	APIKey        string                 `json:"apiKey"`
-	Upstreams     []Upstream             `json:"upstreams,omitempty"`
-	Models        []ModelEntry           `json:"models"`
-	Headers       map[string]string      `json:"headers,omitempty"`
-	ExposedModels []string               `json:"exposedModels,omitempty"`
-	ModelMap      map[string]interface{} `json:"modelMap,omitempty"`
-	UserAgent     *string                `json:"userAgent,omitempty"`
-	Preset             *string                `json:"preset,omitempty"`
+	API               string                 `json:"api"`
+	ResponsesMode     string                 `json:"responsesMode"`
+	BaseURL           string                 `json:"baseUrl"`
+	APIKey            string                 `json:"apiKey"`
+	Upstreams         []Upstream             `json:"upstreams,omitempty"`
+	Models            []ModelEntry           `json:"models"`
+	Headers           map[string]string      `json:"headers,omitempty"`
+	ExposedModels     []string               `json:"exposedModels,omitempty"`
+	ModelMap          map[string]interface{} `json:"modelMap,omitempty"`
+	UserAgent         *string                `json:"userAgent,omitempty"`
+	Preset            *string                `json:"preset,omitempty"`
 	ModelsDevProvider *string                `json:"modelsDevProvider,omitempty"`
-	Proxy         *bool                  `json:"proxy,omitempty"`
+	Proxy             *bool                  `json:"proxy,omitempty"`
 }
 
 type Settings struct {
@@ -51,9 +52,10 @@ type Settings struct {
 	GatewayAPI         string `json:"gatewayApi"`
 	ConversationSource string `json:"conversationSource"`
 	Proxy              struct {
-		Host     string   `json:"host"`
-		Port     int      `json:"port"`
-		Failover []string `json:"failover,omitempty"`
+		Host      string   `json:"host"`
+		Port      int      `json:"port"`
+		Failover  []string `json:"failover,omitempty"`
+		UserAgent *string  `json:"userAgent,omitempty"`
 	} `json:"proxy"`
 	Web struct {
 		Host string `json:"host"`
@@ -90,9 +92,10 @@ func DefaultConfig() PiSwitchConfig {
 			GatewayAPI:         "openai-completions",
 			ConversationSource: "sessionScan",
 			Proxy: struct {
-				Host     string   `json:"host"`
-				Port     int      `json:"port"`
-				Failover []string `json:"failover,omitempty"`
+				Host      string   `json:"host"`
+				Port      int      `json:"port"`
+				Failover  []string `json:"failover,omitempty"`
+				UserAgent *string  `json:"userAgent,omitempty"`
 			}{Host: "127.0.0.1", Port: 43112},
 			Web: struct {
 				Host string `json:"host"`
