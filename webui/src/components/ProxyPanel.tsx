@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AppState, DaemonResult } from "../types";
 import { api } from "../api";
+import { mutateAfterFailover } from "../store/swr";
 import { Badge, Button, Card, Field, Input, SectionTitle } from "./ui";
 import { useAction } from "./ui";
 import { useI18n } from "../i18n";
@@ -112,6 +113,7 @@ function FailoverEditor({
 
   async function save() {
     await api.setFailover(chain);
+    await mutateAfterFailover();
     await refresh();
   }
 
