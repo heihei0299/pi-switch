@@ -37,7 +37,8 @@ export function SupplierCreditsPanel({ name, profile }: { name: string; profile:
 
   const renderWindow = (label: string, win?: { percent: number; status: string; resetsAt?: string | null } | null) => {
     if (!win) return null;
-    const pct = Math.max(0, Math.min(100, win.percent));
+    const raw = typeof win.percent === "number" ? win.percent : 0;
+    const pct = Math.max(0, Math.min(100, raw));
     const isLimited = win.status === "rate-limited";
     const barColor = isLimited ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-emerald-500";
     return (
@@ -45,7 +46,7 @@ export function SupplierCreditsPanel({ name, profile }: { name: string; profile:
         <div className="flex items-center justify-between">
           <span className="text-zinc-400">{label}</span>
           <span className="flex items-center gap-1 text-zinc-300">
-            <span className="font-medium">{win.percent.toFixed(1)}%</span>
+            <span className="font-medium">{(typeof win.percent === "number" ? win.percent : 0).toFixed(1)}%</span>
             <span className={isLimited ? "text-red-400" : "text-zinc-500"}>· {win.status}</span>
           </span>
         </div>
@@ -137,10 +138,10 @@ export function SupplierCreditsPanel({ name, profile }: { name: string; profile:
               <div
                 data-testid="credits-progress-bar"
                 className="h-1.5 rounded-full bg-amber-500 transition-all"
-                style={{ width: `${Math.max(0, Math.min(100, data.percent))}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, typeof data.percent === "number" ? data.percent : 0))}%` }}
               />
             </div>
-            <div className="mt-1 text-right text-[11px] text-zinc-500">{data.percent.toFixed(1)}%</div>
+            <div className="mt-1 text-right text-[11px] text-zinc-500">{(typeof data.percent === "number" ? data.percent : 0).toFixed(1)}%</div>
           </>
         )
       ) : null}
