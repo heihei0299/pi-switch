@@ -2,9 +2,11 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +34,126 @@ import (
 )
 
 var webUIFS = webuiFS.FS
+
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
+var (
+	webuiEmbedded   bool
+	webuiIndexHash  string
+	webuiScript     string
+	webuiAssetCount int
+	webuiOnce       sync.Once
+)
+
+func init() {
+	computeBuildInfo()
+}
+
+func computeBuildInfo() {
+	webuiOnce.Do(func() {
+		// index hash
+		if data, err := webUIFS.ReadFile("dist/index.html"); err == nil && len(data) > 0 {
+			webuiEmbedded = true
+			h := sha256.Sum256(data)
+			webuiIndexHash = hex.EncodeToString(h[:])
+		} else if data, err := fs.ReadFile(webUIFS, "dist/index.html"); err == nil && len(data) > 0 {
+			webuiEmbedded = true
+			h := sha256.Sum256(data)
+			webuiIndexHash = hex.EncodeToString(h[:])
+		} else {
+			// placeholder hash (so indexHash non-empty even without embed)
+			placeholder := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>`)
+			h := sha256.Sum256(placeholder)
+			webuiIndexHash = hex.EncodeToString(h[:])
+			webuiEmbedded = false
+		}
+		// assets
+		var assetsFS fs.FS = webUIFS
+		if sub, err := fs.Sub(webUIFS, "dist/assets"); err == nil {
+			assetsFS = sub
+			if entries, err := fs.ReadDir(assetsFS, "."); err == nil {
+				webuiAssetCount = len(entries)
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
+					}
+					name := e.Name()
+					if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
+						webuiScript = "/assets/" + name
+					}
+				}
+				// if no index-*.js but has any js, fallback
+				if webuiScript == "" {
+					for _, e := range entries {
+						if !e.IsDir() && len(e.Name()) > 3 && e.Name()[len(e.Name())-3:] == ".js" {
+							webuiScript = "/assets/" + e.Name()
+							break
+						}
+					}
+				}
+			} else {
+				webuiAssetCount = 0
+			}
+		} else {
+			// try listing dist/assets via ReadDir on webUIFS
+			if entries, err := fs.ReadDir(webUIFS, "dist/assets"); err == nil {
+				webuiAssetCount = len(entries)
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
+					}
+					name := e.Name()
+					if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
+						webuiScript = "/assets/" + name
+					}
+				}
+			} else {
+				webuiAssetCount = 0
+				// also try to find script via glob of dist/assets in webUIFS directly
+			}
+		}
+		// if still no script but embedded, try to parse index.html for script src
+		if webuiScript == "" && webuiEmbedded {
+			if data, err := webUIFS.ReadFile("dist/index.html"); err == nil {
+				s := string(data)
+				// naive search for /assets/index-*.js
+				idx := 0
+				for {
+					pos := indexOf(s[idx:], "/assets/")
+					if pos < 0 {
+						break
+					}
+					pos += idx
+					end := pos
+					for end < len(s) && s[end] != 34 && s[end] != 39 && s[end] != 32 && s[end] != 62 {
+						end++
+					}
+					candidate := s[pos:end]
+					if len(candidate) > 4 && candidate[len(candidate)-3:] == ".js" {
+						webuiScript = candidate
+						break
+					}
+					idx = end
+					if idx >= len(s) {
+						break
+					}
+				}
+			}
+		}
+	})
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i < len(s)-len(substr)+1; i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
 
 func configPath() string {
 	if p := os.Getenv("PI_SWITCH_CONFIG"); p != "" {
@@ -118,15 +241,11 @@ func NewMgmtRouter() *gin.Engine {
 		api.POST("/config/export", handleConfigExportStub)
 		api.POST("/config/import", handleConfigImportStub)
 		api.POST("/config/restore", handleConfigRestoreStub)
+		api.GET("/buildInfo", handleBuildInfo)
 	}
 	// static webui
 	r.GET("/", handleWebUIIndex)
-	// assets
-	if sub, err := fs.Sub(webUIFS, "dist"); err == nil {
-		r.StaticFS("/assets", http.FS(sub))
-		// also serve any file under dist via NoRoute fallback will handle
-		_ = sub
-	}
+	r.GET("/assets/*filepath", handleAssets)
 	r.NoRoute(handleWebUIFallback)
 	return r
 }
@@ -218,6 +337,7 @@ func authMiddleware() gin.HandlerFunc {
 
 // --- static handlers ---
 func handleWebUIIndex(c *gin.Context) {
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	// try embed
 	if data, err := webUIFS.ReadFile("dist/index.html"); err == nil && len(data) > 0 {
 		c.Data(200, "text/html; charset=utf-8", data)
@@ -232,19 +352,25 @@ func handleWebUIIndex(c *gin.Context) {
 }
 
 func handleWebUIFallback(c *gin.Context) {
-	path := strings.TrimPrefix(c.Request.URL.Path, "/")
+	rawPath := c.Request.URL.Path
+	// prevent directory traversal - check raw path contains ..
+	if strings.Contains(rawPath, "..") {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	path := strings.TrimPrefix(rawPath, "/")
 	if path == "" {
 		handleWebUIIndex(c)
 		return
 	}
 	// API already handled via group NoRoute? But gin NoRoute catches all not matched. For /api/* unknown, return 404 json.
-	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+	if strings.HasPrefix(rawPath, "/api/") {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
 	// try serve file from embed
 	clean := filepath.Clean(path)
-	// prevent directory traversal
+	// prevent directory traversal after clean as well
 	if strings.Contains(clean, "..") {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -269,12 +395,99 @@ func handleWebUIFallback(c *gin.Context) {
 			} else if strings.HasSuffix(tp, ".svg") {
 				ct = "image/svg+xml"
 			}
+			// cache header
+			if strings.HasPrefix(clean, "assets/") || strings.HasPrefix(tp, "dist/assets/") {
+				c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			} else if strings.HasSuffix(tp, ".html") {
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			}
 			c.Data(200, ct, data)
 			return
 		}
 	}
 	// SPA fallback: serve index.html
 	handleWebUIIndex(c)
+}
+
+func handleAssets(c *gin.Context) {
+	rawPath := c.Request.URL.Path
+	if strings.Contains(rawPath, "..") {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	filepathParam := c.Param("filepath")
+	// gin wildcard includes leading slash
+	clean := strings.TrimPrefix(filepathParam, "/")
+	clean = filepath.Clean(clean)
+	if clean == "." {
+		clean = ""
+	}
+	if strings.Contains(clean, "..") {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	if clean == "" {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	// try from dist/assets via sub FS
+	if sub, err := fs.Sub(webUIFS, "dist/assets"); err == nil {
+		if data, err := fs.ReadFile(sub, clean); err == nil {
+			ct := "application/octet-stream"
+			if strings.HasSuffix(clean, ".js") {
+				ct = "application/javascript"
+			} else if strings.HasSuffix(clean, ".css") {
+				ct = "text/css"
+			} else if strings.HasSuffix(clean, ".json") {
+				ct = "application/json"
+			} else if strings.HasSuffix(clean, ".svg") {
+				ct = "image/svg+xml"
+			} else if strings.HasSuffix(clean, ".html") {
+				ct = "text/html; charset=utf-8"
+			}
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			c.Data(200, ct, data)
+			return
+		}
+	}
+	// fallback try direct read
+	tryPaths := []string{
+		"dist/assets/" + clean,
+		"assets/" + clean,
+	}
+	for _, tp := range tryPaths {
+		if data, err := webUIFS.ReadFile(tp); err == nil {
+			ct := "application/octet-stream"
+			if strings.HasSuffix(tp, ".js") {
+				ct = "application/javascript"
+			} else if strings.HasSuffix(tp, ".css") {
+				ct = "text/css"
+			} else if strings.HasSuffix(tp, ".json") {
+				ct = "application/json"
+			} else if strings.HasSuffix(tp, ".svg") {
+				ct = "image/svg+xml"
+			}
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			c.Data(200, ct, data)
+			return
+		}
+	}
+	c.JSON(404, gin.H{"error": "not found"})
+}
+
+func handleBuildInfo(c *gin.Context) {
+	computeBuildInfo()
+	c.JSON(200, gin.H{
+		"status":    "ok",
+		"version":   Version,
+		"buildTime": BuildTime,
+		"webui": gin.H{
+			"embedded":   webuiEmbedded,
+			"indexHash":  webuiIndexHash,
+			"script":     webuiScript,
+			"assetCount": webuiAssetCount,
+		},
+	})
 }
 
 // --- basic config handlers ---
