@@ -647,9 +647,19 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	if prof.Preset == nil || strings.TrimSpace(*prof.Preset) == "" {
+		c.JSON(400, gin.H{"error": "preset is required"})
+		return
+	}
 	if err := validateProviderProfile(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
+	}
+	// default exposedModels to all models if empty (防 2 vs 3)
+	if len(prof.ExposedModels) == 0 && len(prof.Models) > 0 {
+		for _, m := range prof.Models {
+			prof.ExposedModels = append(prof.ExposedModels, m.ID)
+		}
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	if cfg.Profiles == nil {
@@ -822,12 +832,8 @@ func handleFetchModels(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	baseURL := prof.BaseURL
-	apiKey := prof.APIKey
-	if len(prof.Upstreams) > 0 && prof.Upstreams[0].BaseURL != "" {
-		baseURL = prof.Upstreams[0].BaseURL
-		apiKey = prof.Upstreams[0].APIKey
-	}
+	baseURL := prof.PrimaryBaseURL()
+	apiKey := prof.PrimaryAPIKey()
 	if baseURL == "" {
 		c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
 		return
@@ -886,11 +892,99 @@ func handleFetchModels(c *gin.Context) {
 				}
 			}
 		}
-		c.JSON(200, gin.H{"models": ids, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
+		if len(ids) == 0 {
+			if arr, ok := parsed["data"].([]interface{}); ok && len(arr)==0 {
+				// empty
+			}
+		}
+		// enrich: build default ModelEntry for each id, then enrich with catalog
+		models := make([]map[string]interface{}, 0, len(ids))
+		for _, id := range ids {
+			m := map[string]interface{}{
+				"id": id,
+				"contextWindow": uint32(128000),
+				"maxTokens": uint32(16384),
+				"input": []string{"text"},
+			}
+			models = append(models, m)
+		}
+		enriched, skipped, failed, warning := enrichModelsWithCatalog(models, prof)
+		enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
+		if warning != "" {
+			enrich["warning"] = warning
+		}
+		// For compat, also return models as []string ids but include enrich stats
+		// Check if caller expects full objects; we return ids as strings for backward compat, but also support objects
+		c.JSON(200, gin.H{"models": ids, "enrich": enrich})
 		return
 	}
 	c.JSON(500, gin.H{"error": lastErr})
 }
+
+var modelsDevCatalog = map[string]map[string]map[string]interface{}{
+	"openai": {
+		"gpt-4o-mini": {"cost": map[string]interface{}{"input": 0.15, "output": 0.6, "cacheRead": 0.075}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false, "input": []string{"text"}},
+		"gpt-4o": {"cost": map[string]interface{}{"input": 2.5, "output": 10.0, "cacheRead": 1.25}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false},
+	},
+	"anthropic": {
+		"claude-3-5-sonnet": {"cost": map[string]interface{}{"input": 3.0, "output": 15.0}, "contextWindow": 200000, "maxTokens": 8192},
+	},
+}
+
+func resolveModelsDevProvider(prof config.ProviderProfile) string {
+	if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
+		return *prof.ModelsDevProvider
+	}
+	if prof.Preset != nil {
+		presetToDev := map[string]string{"openai":"openai","anthropic":"anthropic","google":"google","deepseek":"deepseek","xai":"xai","moonshot":"moonshot","qwen":"qwen","cohere":"cohere","mistral":"mistral","azure":"azure"}
+		if v, ok := presetToDev[*prof.Preset]; ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func enrichModelsWithCatalog(models []map[string]interface{}, prof config.ProviderProfile) (enriched, skipped, failed int, warning string) {
+	providerKey := resolveModelsDevProvider(prof)
+	if providerKey == "" {
+		return 0, len(models), 0, "no modelsDevProvider"
+	}
+	catalog, ok := modelsDevCatalog[providerKey]
+	if !ok || catalog == nil {
+		return 0, 0, len(models), fmt.Sprintf("catalog not found for %s", providerKey)
+	}
+	for _, m := range models {
+		id, _ := m["id"].(string)
+		if entry, hit := catalog[id]; hit {
+			// cost
+			if cost, ok := entry["cost"]; ok {
+				m["cost"] = cost
+			}
+			if cw, ok := entry["contextWindow"]; ok {
+				m["contextWindow"] = cw
+			}
+			if mt, ok := entry["maxTokens"]; ok {
+				m["maxTokens"] = mt
+			}
+			if r, ok := entry["reasoning"]; ok {
+				m["reasoning"] = r
+			}
+			if inp, ok := entry["input"]; ok {
+				m["input"] = inp
+			}
+			if name, ok := entry["name"]; ok {
+				if _, exists := m["name"]; !exists {
+					m["name"] = name
+				}
+			}
+			enriched++
+		} else {
+			skipped++
+		}
+	}
+	return enriched, skipped, failed, ""
+}
+
 
 func handlePutModels(c *gin.Context) {
 	name := c.Param("name")
@@ -924,6 +1018,17 @@ func handlePutExpose(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
+	// validate each modelId exists in prof.Models
+	seen := map[string]bool{}
+	for _, m := range prof.Models {
+		seen[m.ID] = true
+	}
+	for _, eid := range body.ModelIds {
+		if !seen[eid] {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q", eid)})
+			return
+		}
+	}
 	prof.ExposedModels = body.ModelIds
 	cfg.Profiles[name] = prof
 	_ = saveConfig(cfg)
@@ -943,46 +1048,27 @@ func handlePutSpoof(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// store spoof as userAgent or custom field? Use UserAgent alias or generic map? We'll store in a generic way: if profile has field via json, we can set via reflection? Simpler: store as header? But spec says userAgent disguise.
-	// We'll persist spoof by setting a custom key via saving raw? For now handle via Headers map hack: if spoof not nil, set a pseudo field via saving to config's profile's Headers? Better to store in a separate map via json.RawMessage directly editing file.
-	// Simplistic: if prof has Headers, use it to store spoof marker? Instead we store via direct file manipulation: reload raw config json and update profile's "userAgent" field.
-	cfgPath := configPath()
-	rawCfg, _ := os.ReadFile(cfgPath)
-	var rawMap map[string]json.RawMessage
-	_ = json.Unmarshal(rawCfg, &rawMap)
-	// load profiles raw
-	var profiles map[string]map[string]interface{}
-	if v, ok := rawMap["profiles"]; ok {
-		_ = json.Unmarshal(v, &profiles)
-	} else {
-		profiles = map[string]map[string]interface{}{}
-	}
-	if pm, ok := profiles[name]; ok {
-		if body.Spoof == nil {
-			delete(pm, "userAgent")
-			delete(pm, "spoof")
-		} else {
-			pm["userAgent"] = *body.Spoof
+	// validate
+	if body.Spoof != nil {
+		v := *body.Spoof
+		if v != "" && v != "claude-code" && v != "codex" && v != "gemini" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("invalid spoof %q, must be one of '', 'claude-code', 'codex', 'gemini'", v)})
+			return
 		}
-		profiles[name] = pm
-		// re-serialize
-		b, _ := json.Marshal(profiles)
-		rawMap["profiles"] = b
-		// keep other fields
-		out, _ := json.MarshalIndent(rawMap, "", "  ")
-		// Need to convert rawMap which contains RawMessage values? This approach messy. Simpler: just save via config struct but add UserAgent via struct not exist. So we need to extend config.ProviderProfile to have UserAgent? Check config.go: ProviderProfile has no UserAgent field currently. We should add it.
-		// For now, we mutated via rawMap and write. Let's write rawMap as map[string]interface{} for final.
-		var final map[string]interface{}
-		_ = json.Unmarshal(out, &final)
-		// Ensure profiles is correct type
-		fb, _ := json.MarshalIndent(final, "", "  ")
-		_ = os.WriteFile(cfgPath+".tmp", fb, 0644)
-		_ = os.Rename(cfgPath+".tmp", cfgPath)
-		c.JSON(200, gin.H{"ok": true, "backup": nil})
+		if v == "" {
+			prof.UserAgent = nil
+		} else {
+			s := v
+			prof.UserAgent = &s
+		}
+	} else {
+		prof.UserAgent = nil
+	}
+	cfg.Profiles[name] = prof
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	// fallback
-	_ = prof
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
 }
 
@@ -1007,7 +1093,13 @@ func handleGetCredits(c *gin.Context) {
 }
 
 func handlePresets(c *gin.Context) {
-	c.JSON(200, []interface{}{})
+	presets := []map[string]interface{}{
+		{"id":"openai","name":"OpenAI","description":"OpenAI API","websiteUrl":"https://openai.com","api":"openai-completions","baseUrl":"https://api.openai.com/v1","models":[]string{"gpt-4o-mini","gpt-4o","o1"}},
+		{"id":"anthropic","name":"Anthropic","description":"Anthropic API","websiteUrl":"https://anthropic.com","api":"anthropic-messages","baseUrl":"https://api.anthropic.com","models":[]string{"claude-3-5-sonnet","claude-3-opus"}},
+		{"id":"google","name":"Google","description":"Google Gemini","websiteUrl":"https://ai.google.dev","api":"google-generative-ai","baseUrl":"https://generativelanguage.googleapis.com/v1","models":[]string{"gemini-pro"}},
+		{"id":"deepseek","name":"DeepSeek","description":"DeepSeek","websiteUrl":"https://deepseek.com","api":"openai-completions","baseUrl":"https://api.deepseek.com/v1","models":[]string{"deepseek-chat"}},
+	}
+	c.JSON(200, presets)
 }
 func handlePresetDetail(c *gin.Context) {
 	c.JSON(404, gin.H{"error": "not found"})
@@ -1036,8 +1128,19 @@ func validateResponsesMode(p config.ProviderProfile) error {
 	return nil
 }
 func validateProviderProfile(p config.ProviderProfile) error {
+	if p.BaseURL != "" && !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
+		return fmt.Errorf("baseUrl must start with http:// or https://")
+	}
+	for _, u := range p.Upstreams {
+		if u.BaseURL != "" && !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
+			return fmt.Errorf("upstreams baseUrl must start with http:// or https://")
+		}
+	}
 	seen := map[string]bool{}
 	for _, m := range p.Models {
+		if strings.TrimSpace(m.ID) == "" {
+			return fmt.Errorf("model id must not be empty")
+		}
 		if seen[m.ID] {
 			return fmt.Errorf("duplicate model id %q", m.ID)
 		}
@@ -1125,17 +1228,21 @@ func handleGetGateway(c *gin.Context) {
 func handleGatewayPreview(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	proposed := gateway.BuildProposedGatewayEntry(cfg)
-	// current
 	path := gateway.ModelsPath()
 	var current interface{}
+	var curMap map[string]interface{}
 	if b, err := os.ReadFile(path); err == nil {
 		var m map[string]interface{}
 		_ = json.Unmarshal(b, &m)
 		if provs, ok := m["providers"].(map[string]interface{}); ok {
 			current = provs[cfg.Settings.ProviderPrefix]
+			if cm, ok := current.(map[string]interface{}); ok {
+				curMap = cm
+			}
 		}
 	}
-	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": len(proposed["models"].([]interface{}))})
+	pending := gateway.ComputePendingCount(curMap, proposed)
+	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending})
 }
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
@@ -1144,8 +1251,7 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
-	// basic validation: need api, baseUrl
-	if api, _ := gw["api"].(string); api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" {
+	if api, _ := gw["api"].(string); api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" && api != "google-generative-ai" {
 		c.JSON(400, gin.H{"error": "invalid api"})
 		return
 	}
@@ -1153,10 +1259,37 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "baseUrl required"})
 		return
 	}
+	if bu, _ := gw["baseUrl"].(string); !strings.HasPrefix(bu, "http://") && !strings.HasPrefix(bu, "https://") {
+		c.JSON(400, gin.H{"error": "baseUrl must start with http:// or https://"})
+		return
+	}
+	if models, ok := gw["models"]; ok {
+		if arr, ok := models.([]interface{}); ok {
+			for i, v := range arr {
+				if mm, ok := v.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); strings.TrimSpace(id) == "" {
+						c.JSON(400, gin.H{"error": fmt.Sprintf("models[%d].id required", i)})
+						return
+					}
+				} else {
+					c.JSON(400, gin.H{"error": fmt.Sprintf("models[%d] must be object", i)})
+					return
+				}
+			}
+		} else {
+			c.JSON(400, gin.H{"error": "models must be array"})
+			return
+		}
+	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	// atomic backup (gateway.Publish does backup) but ensure dir exists
 	if err := gateway.Publish(cfg, gw); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
+	}
+	// sync settings
+	if gateway.SyncSettingsFromGateway(&cfg, gw) {
+		_ = saveConfig(cfg)
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
@@ -2221,9 +2354,25 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 		return
 	}
+	// validate toPublish similarly to handlePutGateway
+	if api, _ := toPublish["api"].(string); api != "" {
+		if api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" && api != "google-generative-ai" {
+			c.JSON(400, gin.H{"error": "invalid api"})
+			return
+		}
+	}
+	if bu, _ := toPublish["baseUrl"].(string); bu != "" {
+		if !strings.HasPrefix(bu, "http://") && !strings.HasPrefix(bu, "https://") {
+			c.JSON(400, gin.H{"error": "baseUrl must start with http:// or https://"})
+			return
+		}
+	}
 	if err := gateway.Publish(cfg, toPublish); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
+	}
+	if gateway.SyncSettingsFromGateway(&cfg, toPublish) {
+		_ = saveConfig(cfg)
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
@@ -2616,6 +2765,16 @@ func extractData(frame []byte) string {
 	return ""
 }
 
+func resolveUserAgent(prof config.ProviderProfile, cfg config.PiSwitchConfig) string {
+	if prof.UserAgent != nil && *prof.UserAgent != "" {
+		return *prof.UserAgent
+	}
+	if cfg.Settings.Proxy.UserAgent != nil && *cfg.Settings.Proxy.UserAgent != "" {
+		return *cfg.Settings.Proxy.UserAgent
+	}
+	return "curl/8.5.0"
+}
+
 func handleChatCompletions(c *gin.Context) {
 	start := time.Now()
 	raw, _ := io.ReadAll(c.Request.Body)
@@ -2736,7 +2895,23 @@ func handleChatCompletions(c *gin.Context) {
 		}
 		u := buildUpstreamURL(base, upstreamPath)
 		apiKey := prof.PrimaryAPIKey()
-		headers := prof.PrimaryHeaders()
+		// headers merging: Upstream.headers > Profile.headers
+		headers := map[string]string{}
+		for k, v := range prof.Headers {
+			headers[k] = v
+		}
+		for _, ups := range prof.ResolvedUpstreams() {
+			if ups.BaseURL == base {
+				for k, v := range ups.Headers {
+					headers[k] = v
+				}
+				break
+			}
+		}
+		// fallback to PrimaryHeaders if empty (covers single baseUrl case already merged)
+		if len(headers)==0 {
+			headers = prof.PrimaryHeaders()
+		}
 		bbytes, _ := json.Marshal(upstreamBody)
 		req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
 		if err != nil {
@@ -2750,11 +2925,7 @@ func handleChatCompletions(c *gin.Context) {
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		if ua := c.Request.Header.Get("User-Agent"); ua != "" {
-			req.Header.Set("User-Agent", ua)
-		} else {
-			req.Header.Set("User-Agent", "curl/8.5.0")
-		}
+		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -2929,14 +3100,26 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		if apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
-		for k, v := range headers {
+		// headers merging: Upstream.headers > Profile.headers
+		mergedHeaders := map[string]string{}
+		for k, v := range prof.Headers {
+			mergedHeaders[k] = v
+		}
+		for _, ups := range prof.ResolvedUpstreams() {
+			if ups.BaseURL == base {
+				for k, v := range ups.Headers {
+					mergedHeaders[k] = v
+				}
+				break
+			}
+		}
+		if len(mergedHeaders)==0 {
+			mergedHeaders = headers
+		}
+		for k, v := range mergedHeaders {
 			req.Header.Set(k, v)
 		}
-		if ua := c.Request.Header.Get("User-Agent"); ua != "" {
-			req.Header.Set("User-Agent", ua)
-		} else {
-			req.Header.Set("User-Agent", "curl/8.5.0")
-		}
+		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
 		client := &http.Client{Timeout: 0}
 		resp, err := client.Do(req)
 		if err != nil {

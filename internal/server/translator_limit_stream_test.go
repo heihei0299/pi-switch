@@ -58,7 +58,7 @@ func TestResponsesMode_Validation(t *testing.T) {
 	r := NewMgmtRouter()
 	// incompatible: openai-responses with convert should 400
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad1","profile":{"api":"openai-responses","responsesMode":"convert","baseUrl":"http://a","apiKey":"k","models":[]}}`))
+	req, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad1","profile":{"api":"openai-responses","responsesMode":"convert","preset":"openai","baseUrl":"http://a","apiKey":"k","models":[]}}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	if w.Code != 400 {
@@ -66,7 +66,7 @@ func TestResponsesMode_Validation(t *testing.T) {
 	}
 	// incompatible: openai-completions with passthrough should 400
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad2","profile":{"api":"openai-completions","responsesMode":"passthrough","baseUrl":"http://a","apiKey":"k","models":[]}}`))
+	req2, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad2","profile":{"api":"openai-completions","responsesMode":"passthrough","preset":"openai","baseUrl":"http://a","apiKey":"k","models":[]}}`))
 	req2.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w2, req2)
 	if w2.Code != 400 {
@@ -74,7 +74,7 @@ func TestResponsesMode_Validation(t *testing.T) {
 	}
 	// anthropic with passthrough should 400
 	w3 := httptest.NewRecorder()
-	req3, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad3","profile":{"api":"anthropic-messages","responsesMode":"passthrough","baseUrl":"http://a","apiKey":"k","models":[]}}`))
+	req3, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"bad3","profile":{"api":"anthropic-messages","responsesMode":"passthrough","preset":"anthropic","baseUrl":"http://a","apiKey":"k","models":[]}}`))
 	req3.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w3, req3)
 	if w3.Code != 400 {
@@ -82,14 +82,14 @@ func TestResponsesMode_Validation(t *testing.T) {
 	}
 	// auto should always pass
 	w4 := httptest.NewRecorder()
-	req4, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"good","profile":{"api":"openai-responses","responsesMode":"auto","baseUrl":"http://a","apiKey":"k","models":[]}}`))
+	req4, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"good","profile":{"api":"openai-responses","responsesMode":"auto","preset":"openai","baseUrl":"http://a","apiKey":"k","models":[]}}`))
 	req4.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w4, req4)
 	if w4.Code != 200 {
 		t.Fatalf("auto should pass, got %d body %s", w4.Code, w4.Body.String())
 	}
 	// PUT /api/config with profiles containing bad combo should also 400
-	badCfg := `{"version":2,"profiles":{"bad":{"api":"openai-responses","responsesMode":"convert","baseUrl":"http://a","apiKey":"k","models":[]}},"settings":{"providerPrefix":"pi-switch"}}`
+	badCfg := `{"version":2,"profiles":{"bad":{"api":"openai-responses","responsesMode":"convert","preset":"openai","baseUrl":"http://a","apiKey":"k","models":[]}},"settings":{"providerPrefix":"pi-switch"}}`
 	w5 := httptest.NewRecorder()
 	req5, _ := http.NewRequest("PUT", "/api/config", strings.NewReader(badCfg))
 	req5.Header.Set("Content-Type", "application/json")
