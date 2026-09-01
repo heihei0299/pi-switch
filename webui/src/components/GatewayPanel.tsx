@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useAction, useToast } from "./ui";
 import { ModelCard } from "./ModelCard";
+import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import type { ModelEntry } from "../types";
@@ -240,6 +241,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setLastPublishAt(now);
       setShowMismatchBanner(false);
       toast("ok", t("Saved") || "Saved");
+      await mutateAfterGatewayPublish();
       await load();
       await refresh();
     } catch (e) {

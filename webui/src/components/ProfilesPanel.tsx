@@ -24,6 +24,9 @@ import { ModelCard } from "./ModelCard";
 import { SupplierCreditsPanel } from "./SupplierCreditsPanel";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
+import { useDebounce } from "../hooks/useDebounce";
+import { mergePreviewHeaders } from "../lib/previewHeaders";
+import { mutateAfterProfilePut } from "../store/swr";
 const API_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "openai-responses", label: "OpenAI Responses" },
@@ -265,6 +268,14 @@ function ProfileForm({
   const [modelIds, setModelIds] = useState(
     (existing?.models ?? []).map((m) => m.id).join("\n"),
   );
+  const debouncedSpoof = useDebounce(spoof, 300);
+  const debouncedHeaders = useDebounce(headers, 300);
+  const previewHeaders = useMemo(() => mergePreviewHeaders(debouncedHeaders, upstreams[0]?.headers as Record<string, string> | undefined), [debouncedHeaders, upstreams]);
+  const previewUpstreamAggregated = useMemo(() => {
+    const ups = upstreams.length > 0 ? upstreams : [{ baseUrl, apiKey, headers } as any];
+    const firstHeaders = ups[0]?.headers as Record<string, string> | undefined;
+    return mergePreviewHeaders(headers, firstHeaders);
+  }, [headers, upstreams, baseUrl, apiKey]);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const [text, setText] = useState<string>(() => {
     const preview: Record<string, unknown> = {
@@ -438,6 +449,8 @@ function ProfileForm({
       } else {
         await api.addProfile(trimmed, profile);
       }
+      try { await api.getState(); } catch {}
+      await mutateAfterProfilePut();
       toast("ok", "已保存到本地，需到网关发布");
       await onSaved();
       return;
@@ -450,6 +463,8 @@ function ProfileForm({
     } else {
       await api.addProfile(trimmed, profile);
     }
+    try { await api.getState(); } catch {}
+    await mutateAfterProfilePut();
     toast("ok", "已保存到本地，需到网关发布");
     await onSaved();
   }
@@ -526,6 +541,12 @@ function ProfileForm({
                 </div>
                 <div className="sm:col-span-2">
                   <RequestHeadersEditor headers={headers} onHeadersChange={setHeaders} />
+                  <div data-testid="preview-headers" className="mt-2 rounded border border-white/10 bg-zinc-900/30 p-2 text-xs">
+                    <div className="text-zinc-500">Preview headers (debounced 300ms, X-Custom merged, Upstream &gt; Profile, not auto-saved):</div>
+                    <pre className="mt-1 whitespace-pre-wrap break-words text-zinc-300">{JSON.stringify(previewHeaders, null, 2)}</pre>
+                    <div className="mt-1 text-zinc-500">Upstream aggregated: {JSON.stringify(previewUpstreamAggregated)}</div>
+                    <div className="text-zinc-500">UserAgent preview: {debouncedSpoof || "(none)"}</div>
+                  </div>
                 </div>
               </>
             ) : null}

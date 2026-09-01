@@ -23,11 +23,12 @@ function makeState(source: "proxy" | "sessionScan" | "off"): AppState {
     settings: {
       providerPrefix: "pi-switch",
       writeMode: "merge",
+      gatewayApi: "openai-completions",
       language: null,
       proxy: { host: "127.0.0.1", port: 43112, failover: [], circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } },
       web: { host: "127.0.0.1", port: 43110 },
       conversationSource: source,
-    } as AppState["settings"],
+    } as unknown as AppState["settings"],
   };
 }
 
