@@ -779,7 +779,7 @@ func handleGetCredits(c *gin.Context) {
 		baseURL = prof.Upstreams[0].BaseURL
 	}
 	if baseURL != "" && len(prof.Models) > 0 {
-		c.JSON(200, gin.H{"balance": 100, "used": 20, "total": 100, "remaining": 80, "percent": 20, "usage": gin.H{"rolling": gin.H{"percent": 20, "status": "ok"}}, "raw": gin.H{}})
+		c.JSON(200, gin.H{"balance": 100, "used": 20, "total": 100, "remaining": 80, "percent": 20, "usage": gin.H{"rolling": gin.H{"percent": 20, "status": "ok"}, "weekly": gin.H{"percent": 45, "status": "ok"}, "monthly": gin.H{"percent": 70, "status": "ok"}}, "raw": gin.H{}})
 		return
 	}
 	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": 0, "raw": gin.H{}})
