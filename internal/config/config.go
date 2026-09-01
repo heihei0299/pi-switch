@@ -30,14 +30,18 @@ type Upstream struct {
 }
 
 type ProviderProfile struct {
-	API           string            `json:"api"`
-	ResponsesMode string            `json:"responsesMode"`
-	BaseURL       string            `json:"baseUrl"`
-	APIKey        string            `json:"apiKey"`
-	Upstreams     []Upstream        `json:"upstreams,omitempty"`
-	Models        []ModelEntry      `json:"models"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	ExposedModels []string          `json:"exposedModels,omitempty"`
+	API           string                 `json:"api"`
+	ResponsesMode string                 `json:"responsesMode"`
+	BaseURL       string                 `json:"baseUrl"`
+	APIKey        string                 `json:"apiKey"`
+	Upstreams     []Upstream             `json:"upstreams,omitempty"`
+	Models        []ModelEntry           `json:"models"`
+	Headers       map[string]string      `json:"headers,omitempty"`
+	ExposedModels []string               `json:"exposedModels,omitempty"`
+	ModelMap      map[string]interface{} `json:"modelMap,omitempty"`
+	UserAgent     *string                `json:"userAgent,omitempty"`
+	Preset        *string                `json:"preset,omitempty"`
+	Proxy         *bool                  `json:"proxy,omitempty"`
 }
 
 type Settings struct {
