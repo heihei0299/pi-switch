@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"unicode/utf8"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,6 +26,8 @@ import (
 	"github.com/heihei0299/pi-switch/internal/scan"
 	"github.com/heihei0299/pi-switch/internal/store"
 	webuiFS "github.com/heihei0299/pi-switch/webui"
+	"github.com/heihei0299/pi-switch/internal/translator"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 var webUIFS = webuiFS.FS
@@ -293,6 +296,23 @@ func handlePutConfig(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
+	// validate responsesMode
+	if m, ok := v.(map[string]interface{}); ok {
+		if profiles, ok := m["profiles"].(map[string]interface{}); ok {
+			for name, pv := range profiles {
+				if pm, ok := pv.(map[string]interface{}); ok {
+					if api, _ := pm["api"].(string); api != "" {
+						if mode, _ := pm["responsesMode"].(string); mode != "" {
+							if err := validateProfileResponsesMode(api, mode); err != nil {
+								c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0644); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -328,12 +348,74 @@ func handleGetProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": pid})
 }
 
+
+func validateProfileResponsesMode(api, mode string) error {
+	if mode == "" {
+		mode = "auto"
+	}
+	if mode == "auto" {
+		return nil
+	}
+	if mode == "passthrough" && api != "openai-responses" {
+		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
+	}
+	if mode == "convert" && api != "openai-completions" {
+		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
+	}
+	if mode != "passthrough" && mode != "convert" {
+		return fmt.Errorf("invalid responsesMode %q", mode)
+	}
+	return nil
+}
+
 func handlePostProfile(c *gin.Context) {
 	var body struct {
 		Name    string          `json:"name"`
 		Profile json.RawMessage `json:"profile"`
 	}
 	raw, _ := c.GetRawData()
+
+	// quick validation for responsesMode in raw json
+	{
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(raw, &rawMap); err == nil {
+			// check profile wrapper
+			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
+				if api, _ := prof["api"].(string); api != "" {
+					if mode, _ := prof["responsesMode"].(string); mode != "" {
+						if err := validateProfileResponsesMode(api, mode); err != nil {
+							c.JSON(400, gin.H{"error": err.Error()})
+							return
+						}
+					}
+				}
+			}
+			// direct api field (for PUT /api/config profiles)
+			if profiles, ok := rawMap["profiles"].(map[string]interface{}); ok {
+				for _, pv := range profiles {
+					if pm, ok := pv.(map[string]interface{}); ok {
+						if api, _ := pm["api"].(string); api != "" {
+							if mode, _ := pm["responsesMode"].(string); mode != "" {
+								if err := validateProfileResponsesMode(api, mode); err != nil {
+									c.JSON(400, gin.H{"error": err.Error()})
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+			// single profile case
+			if api, ok := rawMap["api"].(string); ok {
+				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
+					if err := validateProfileResponsesMode(api, mode); err != nil {
+						c.JSON(400, gin.H{"error": err.Error()})
+						return
+					}
+				}
+			}
+		}
+	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
@@ -375,6 +457,48 @@ func handlePutProfile(c *gin.Context) {
 		RenameFrom *string         `json:"renameFrom"`
 	}
 	raw, _ := c.GetRawData()
+
+	// quick validation for responsesMode in raw json
+	{
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(raw, &rawMap); err == nil {
+			// check profile wrapper
+			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
+				if api, _ := prof["api"].(string); api != "" {
+					if mode, _ := prof["responsesMode"].(string); mode != "" {
+						if err := validateProfileResponsesMode(api, mode); err != nil {
+							c.JSON(400, gin.H{"error": err.Error()})
+							return
+						}
+					}
+				}
+			}
+			// direct api field (for PUT /api/config profiles)
+			if profiles, ok := rawMap["profiles"].(map[string]interface{}); ok {
+				for _, pv := range profiles {
+					if pm, ok := pv.(map[string]interface{}); ok {
+						if api, _ := pm["api"].(string); api != "" {
+							if mode, _ := pm["responsesMode"].(string); mode != "" {
+								if err := validateProfileResponsesMode(api, mode); err != nil {
+									c.JSON(400, gin.H{"error": err.Error()})
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+			// single profile case
+			if api, ok := rawMap["api"].(string); ok {
+				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
+					if err := validateProfileResponsesMode(api, mode); err != nil {
+						c.JSON(400, gin.H{"error": err.Error()})
+						return
+					}
+				}
+			}
+		}
+	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
@@ -1873,7 +1997,7 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 	}
 	if v := headers.Get("x-conversation-name"); v != "" {
 		if dec, err := url.PathUnescape(v); err == nil {
-			if strings.Contains(dec, string('\uFFFD')) {
+			if !utf8.ValidString(dec) {
 				name = v
 			} else {
 				name = strings.ReplaceAll(dec, "\r", " ")
@@ -1978,6 +2102,191 @@ func findModelEntry(prof config.ProviderProfile, realModel string) *config.Model
 	return nil
 }
 
+
+func incomingProtocol(path string) string {
+	switch path {
+	case "/v1/responses":
+		return "responses"
+	case "/v1/messages":
+		return "messages"
+	default:
+		return "chat"
+	}
+}
+
+func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLen int) {
+	for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
+		if v, ok := body[key]; ok {
+			var req int
+			switch vv := v.(type) {
+			case float64:
+				req = int(vv)
+			case int:
+				req = vv
+			default:
+				continue
+			}
+			reqCopy := req
+			clamped := limit.ClampMaxTokens(modelEntry.ContextWindow, modelEntry.MaxTokens, rawLen, &reqCopy)
+			if clamped != req {
+				body[key] = float64(clamped)
+			}
+		}
+	}
+}
+
+func buildUpstreamURL(base, path string) string {
+	u := strings.TrimRight(base, "/")
+	if strings.HasSuffix(u, "/v1") {
+		return u + strings.TrimPrefix(path, "/v1")
+	}
+	return u + path
+}
+
+func chatToResponses(body map[string]interface{}) map[string]interface{} {
+	var input []interface{}
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		for _, m := range msgs {
+			if pm, ok := m.(map[string]interface{}); ok {
+				role, _ := pm["role"].(string)
+				content := pm["content"]
+				if role == "system" {
+					continue
+				}
+				input = append(input, map[string]interface{}{"role": role, "content": content})
+			}
+		}
+	}
+	out := map[string]interface{}{
+		"model": body["model"],
+		"input": input,
+	}
+	if v, ok := body["max_tokens"]; ok {
+		out["max_output_tokens"] = v
+	}
+	for _, k := range []string{"temperature", "top_p", "stream", "stop"} {
+		if v, ok := body[k]; ok {
+			out[k] = v
+		}
+	}
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		for _, m := range msgs {
+			if pm, ok := m.(map[string]interface{}); ok {
+				if pm["role"] == "system" {
+					if t, ok := pm["content"].(string); ok && t != "" {
+						out["instructions"] = t
+						break
+					}
+				}
+			}
+		}
+	}
+	if tools, ok := body["tools"]; ok {
+		out["tools"] = tools
+	}
+	return out
+}
+
+func anthropicToChat(body map[string]interface{}) map[string]interface{} {
+	model, _ := body["model"].(string)
+	anthMsgs, _ := body["messages"].([]interface{})
+	var chatMsgs []interface{}
+	if system, ok := body["system"]; ok {
+		var text string
+		switch v := system.(type) {
+		case string:
+			text = v
+		case []interface{}:
+			for _, p := range v {
+				if pm, ok := p.(map[string]interface{}); ok {
+					if t, ok := pm["text"].(string); ok {
+						if text != "" {
+							text += "\n"
+						}
+						text += t
+					}
+				}
+			}
+		}
+		if text != "" {
+			chatMsgs = append(chatMsgs, map[string]interface{}{"role": "system", "content": text})
+		}
+	}
+	for _, m := range anthMsgs {
+		if pm, ok := m.(map[string]interface{}); ok {
+			role, _ := pm["role"].(string)
+			content := pm["content"]
+			var text string
+			switch c := content.(type) {
+			case string:
+				text = c
+			case []interface{}:
+				for _, part := range c {
+					if pmm, ok := part.(map[string]interface{}); ok {
+						if t, ok := pmm["text"].(string); ok {
+							if text != "" {
+								text += "\n"
+							}
+							text += t
+						}
+					}
+				}
+			default:
+				text = fmt.Sprintf("%v", content)
+			}
+			chatMsgs = append(chatMsgs, map[string]interface{}{"role": role, "content": text})
+		}
+	}
+	out := map[string]interface{}{
+		"model":    model,
+		"messages": chatMsgs,
+	}
+	if v, ok := body["max_tokens"]; ok {
+		out["max_tokens"] = v
+	}
+	if v, ok := body["temperature"]; ok {
+		out["temperature"] = v
+	}
+	if v, ok := body["stream"]; ok {
+		out["stream"] = v
+	}
+	if v, ok := body["stop_sequences"]; ok {
+		out["stop"] = v
+	}
+	if chatMsgs == nil {
+		out["messages"] = []interface{}{}
+	}
+	return out
+}
+
+func findFrameEnd(buf []byte) (int, int) {
+	for i := 0; i+3 < len(buf); i++ {
+		if buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n' {
+			return i, 4
+		}
+	}
+	for i := 0; i+1 < len(buf); i++ {
+		if buf[i] == '\n' && buf[i+1] == '\n' {
+			return i, 2
+		}
+	}
+	return -1, 0
+}
+
+func extractData(frame []byte) string {
+	lines := strings.Split(string(frame), "\n")
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "data:") {
+			d := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if d != "" {
+				return d
+			}
+		}
+	}
+	return ""
+}
+
 func handleChatCompletions(c *gin.Context) {
 	start := time.Now()
 	raw, _ := io.ReadAll(c.Request.Body)
@@ -1994,7 +2303,7 @@ func handleChatCompletions(c *gin.Context) {
 	candidates, realModel := resolveRoute(cfg, requestedModel)
 	if len(candidates) == 0 {
 		if cfg.Current != nil {
-			if prof, ok := cfg.Profiles[*cfg.Current]; ok {
+			if _, ok := cfg.Profiles[*cfg.Current]; ok {
 				candidates = []string{*cfg.Current}
 				realModel = requestedModel
 				if strings.Contains(requestedModel, "/") {
@@ -2003,7 +2312,6 @@ func handleChatCompletions(c *gin.Context) {
 						realModel = parts[1]
 					}
 				}
-				_ = prof
 			}
 		}
 	}
@@ -2012,6 +2320,15 @@ func handleChatCompletions(c *gin.Context) {
 		return
 	}
 	convID, convName := conversationIDFrom(c.Request.Header, body, cfg.Settings.ConversationSource)
+	proto := incomingProtocol(c.Request.URL.Path)
+	isStream := false
+	if v, ok := body["stream"].(bool); ok && v {
+		isStream = true
+	}
+	if isStream {
+		handleStream(c, cfg, candidates, body, realModel, convID, convName, proto, rawLen, start)
+		return
+	}
 	var lastErr string
 	var lastStatus int = 502
 	var successResp []byte
@@ -2035,37 +2352,63 @@ func handleChatCompletions(c *gin.Context) {
 		successModelEntry = modelEntry
 		bcopy := cloneMap(body)
 		bcopy["model"] = realModel
-		for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
-			if v, ok := bcopy[key]; ok {
-				var req int
-				switch vv := v.(type) {
-				case float64:
-					req = int(vv)
-				case int:
-					req = vv
-				default:
+		clampBody(bcopy, modelEntry, rawLen)
+		var upstreamBody map[string]interface{}
+		var upstreamPath string
+		var needRespToChat bool
+		var needChatToAnthropic bool
+		switch proto {
+		case "responses":
+			if translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/responses"
+			} else if translator.IsChatConvert(prof.API, prof.ResponsesMode) {
+				convBody, err := translator.ResponsesToChat(bcopy)
+				if err != nil {
+					lastErr = err.Error()
 					continue
 				}
-				reqCopy := req
-				clamped := limit.ClampMaxTokens(modelEntry.ContextWindow, modelEntry.MaxTokens, rawLen, &reqCopy)
-				if clamped != req {
-					bcopy[key] = float64(clamped)
-				}
+				clampBody(convBody, modelEntry, rawLen)
+				upstreamBody = convBody
+				upstreamPath = "/v1/chat/completions"
+				needRespToChat = true
+			} else {
+				lastErr = fmt.Sprintf("profile %s api %s does not support responses", name, prof.API)
+				continue
+			}
+		case "messages":
+			if prof.API == "anthropic-messages" {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/messages"
+			} else if prof.API == "openai-completions" {
+				conv := anthropicToChat(bcopy)
+				clampBody(conv, modelEntry, rawLen)
+				upstreamBody = conv
+				upstreamPath = "/v1/chat/completions"
+			} else {
+				lastErr = fmt.Sprintf("profile %s api %s does not support messages", name, prof.API)
+				continue
+			}
+		default:
+			if prof.API == "anthropic-messages" {
+				upstreamBody = translator.OpenAIToAnthropic(bcopy)
+				clampBody(upstreamBody, modelEntry, rawLen)
+				upstreamPath = "/v1/messages"
+				needChatToAnthropic = true
+			} else if prof.API == "openai-responses" && translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
+				conv := chatToResponses(bcopy)
+				clampBody(conv, modelEntry, rawLen)
+				upstreamBody = conv
+				upstreamPath = "/v1/responses"
+			} else {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/chat/completions"
 			}
 		}
-		u := strings.TrimRight(base, "/")
-		origPath := c.Request.URL.Path
-		if origPath == "" {
-			origPath = "/v1/chat/completions"
-		}
-		if strings.HasSuffix(u, "/v1") {
-			u = u + strings.TrimPrefix(origPath, "/v1")
-		} else {
-			u = u + origPath
-		}
+		u := buildUpstreamURL(base, upstreamPath)
 		apiKey := prof.PrimaryAPIKey()
 		headers := prof.PrimaryHeaders()
-		bbytes, _ := json.Marshal(bcopy)
+		bbytes, _ := json.Marshal(upstreamBody)
 		req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
 		if err != nil {
 			lastErr = err.Error()
@@ -2083,7 +2426,7 @@ func handleChatCompletions(c *gin.Context) {
 		} else {
 			req.Header.Set("User-Agent", "curl/8.5.0")
 		}
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err.Error()
@@ -2110,8 +2453,29 @@ func handleChatCompletions(c *gin.Context) {
 			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody))
 			return
 		}
-		successResp = respBody
-		successHeaders = resp.Header
+		finalBody := respBody
+		finalHeaders := resp.Header
+		if needRespToChat {
+			var chatResp map[string]interface{}
+			if err := json.Unmarshal(respBody, &chatResp); err == nil {
+				if conv, err := translator.ChatResponseToResponses(chatResp, realModel, nil); err == nil {
+					b, _ := json.Marshal(conv)
+					finalBody = b
+					finalHeaders = http.Header{}
+					finalHeaders.Set("Content-Type", "application/json")
+				}
+			}
+		} else if needChatToAnthropic {
+			var anth map[string]interface{}
+			_ = json.Unmarshal(respBody, &anth)
+			converted := translator.AnthropicToOpenAIResponse(anth)
+			b, _ := json.Marshal(converted)
+			finalBody = b
+			finalHeaders = http.Header{}
+			finalHeaders.Set("Content-Type", "application/json")
+		}
+		successResp = finalBody
+		successHeaders = finalHeaders
 		successProvider = name
 		lastStatus = resp.StatusCode
 		break
@@ -2126,6 +2490,14 @@ func handleChatCompletions(c *gin.Context) {
 	var respObj map[string]interface{}
 	_ = json.Unmarshal(successResp, &respObj)
 	usagePrompt, usageCompletion, usageCached, usageReasoning := extractUsage(respObj)
+	if usagePrompt == 0 && usageCompletion == 0 {
+		if s := usage.ExtractUsage(respObj); s != nil {
+			usagePrompt = int(s.PromptTokens)
+			usageCompletion = int(s.CompletionTokens)
+			usageCached = int(s.CachedTokens)
+			usageReasoning = int(s.ReasoningTokens)
+		}
+	}
 	cost := computeCost(successModelEntry, usagePrompt, usageCompletion, usageCached)
 	latMs := time.Since(start).Milliseconds()
 	logRequest(successProvider, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, lastStatus, "")
@@ -2143,6 +2515,293 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	c.Data(lastStatus, ct, successResp)
 }
+
+func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, convID, convName, proto string, rawLen int, start time.Time) {
+	var lastErr string
+	var lastStatus int = 502
+	for _, name := range candidates {
+		prof, ok := cfg.Profiles[name]
+		if !ok {
+			continue
+		}
+		base := prof.PrimaryBaseURL()
+		if base == "" {
+			lastErr = "missing baseUrl"
+			continue
+		}
+		modelEntry := findModelEntry(prof, realModel)
+		if modelEntry == nil {
+			modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
+		}
+		bcopy := cloneMap(body)
+		bcopy["model"] = realModel
+		bcopy["stream"] = true
+		clampBody(bcopy, modelEntry, rawLen)
+		var upstreamBody map[string]interface{}
+		var upstreamPath string
+		switch proto {
+		case "responses":
+			if translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/responses"
+			} else if translator.IsChatConvert(prof.API, prof.ResponsesMode) {
+				convBody, err := translator.ResponsesToChat(bcopy)
+				if err != nil {
+					lastErr = err.Error()
+					continue
+				}
+				convBody["stream"] = true
+				clampBody(convBody, modelEntry, rawLen)
+				upstreamBody = convBody
+				upstreamPath = "/v1/chat/completions"
+			} else {
+				lastErr = fmt.Sprintf("no support for responses on %s", prof.API)
+				continue
+			}
+		case "messages":
+			if prof.API == "anthropic-messages" {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/messages"
+			} else {
+				conv := anthropicToChat(bcopy)
+				conv["stream"] = true
+				clampBody(conv, modelEntry, rawLen)
+				upstreamBody = conv
+				upstreamPath = "/v1/chat/completions"
+			}
+		default:
+			if prof.API == "anthropic-messages" {
+				upstreamBody = translator.OpenAIToAnthropic(bcopy)
+				clampBody(upstreamBody, modelEntry, rawLen)
+				upstreamBody["stream"] = true
+				upstreamPath = "/v1/messages"
+			} else if prof.API == "openai-responses" && translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
+				conv := chatToResponses(bcopy)
+				conv["stream"] = true
+				clampBody(conv, modelEntry, rawLen)
+				upstreamBody = conv
+				upstreamPath = "/v1/responses"
+			} else {
+				upstreamBody = bcopy
+				upstreamPath = "/v1/chat/completions"
+			}
+		}
+		u := buildUpstreamURL(base, upstreamPath)
+		apiKey := prof.PrimaryAPIKey()
+		headers := prof.PrimaryHeaders()
+		bbytes, _ := json.Marshal(upstreamBody)
+		req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		if ua := c.Request.Header.Get("User-Agent"); ua != "" {
+			req.Header.Set("User-Agent", ua)
+		} else {
+			req.Header.Set("User-Agent", "curl/8.5.0")
+		}
+		client := &http.Client{Timeout: 0}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			lastStatus = 502
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr)
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			lastStatus = resp.StatusCode
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+			_ = bodyBytes
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			if resp.StatusCode == 429 {
+				resp.Body.Close()
+				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
+				lastStatus = resp.StatusCode
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+				continue
+			}
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			for k, vv := range resp.Header {
+				for _, v := range vv {
+					c.Header(k, v)
+				}
+			}
+			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
+			return
+		}
+		if proto == "responses" && upstreamPath == "/v1/chat/completions" {
+			streamConvertChatToResponses(c, resp, name, realModel, modelEntry, convID, convName, start)
+			return
+		}
+		streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
+		return
+	}
+	if lastErr == "" {
+		lastErr = "All upstream attempts failed"
+	}
+	c.JSON(lastStatus, gin.H{"error": gin.H{"message": lastErr, "type": "failover_exhausted"}})
+}
+
+func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+	defer resp.Body.Close()
+	parser := usage.NewSseUsageParser()
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+				continue
+			}
+			c.Header(k, v)
+		}
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Status(resp.StatusCode)
+	flusher, _ := c.Writer.(http.Flusher)
+	buf := make([]byte, 4096)
+	var totalBytes bytes.Buffer
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			parser.Push(chunk)
+			totalBytes.Write(chunk)
+			_, _ = c.Writer.Write(chunk)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	usageSum := parser.Finish()
+	var prompt, completion, cached, reasoning int
+	var cost *float64
+	if usageSum != nil {
+		prompt = int(usageSum.PromptTokens)
+		completion = int(usageSum.CompletionTokens)
+		cached = int(usageSum.CachedTokens)
+		reasoning = int(usageSum.ReasoningTokens)
+		cost = computeCost(modelEntry, prompt, completion, cached)
+	} else {
+		var respObj map[string]interface{}
+		_ = json.Unmarshal(totalBytes.Bytes(), &respObj)
+		prompt, completion, cached, reasoning = extractUsage(respObj)
+		cost = computeCost(modelEntry, prompt, completion, cached)
+	}
+	latMs := time.Since(start).Milliseconds()
+	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
+}
+
+func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+	defer resp.Body.Close()
+	converter := translator.NewChatSseToResponses(realModel)
+	parser := usage.NewSseUsageParser()
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+				continue
+			}
+			c.Header(k, v)
+		}
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Status(resp.StatusCode)
+	flusher, _ := c.Writer.(http.Flusher)
+	var buf bytes.Buffer
+	tmp := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(tmp)
+		if n > 0 {
+			chunk := tmp[:n]
+			parser.Push(chunk)
+			buf.Write(chunk)
+			for {
+				raw := buf.Bytes()
+				end, sep := findFrameEnd(raw)
+				if end < 0 {
+					break
+				}
+				frame := make([]byte, end)
+				copy(frame, raw[:end])
+				newBuf := make([]byte, len(raw)-end-sep)
+				copy(newBuf, raw[end+sep:])
+				buf.Reset()
+				buf.Write(newBuf)
+				data := extractData(frame)
+				if data == "" || data == "[DONE]" {
+					continue
+				}
+				var v map[string]interface{}
+				if err := json.Unmarshal([]byte(data), &v); err != nil {
+					continue
+				}
+				events, _ := converter.PushFrame(v)
+				for _, ev := range events {
+					b, _ := json.Marshal(ev)
+					typ, _ := ev["type"].(string)
+					line := fmt.Sprintf("event: %s\ndata: %s\n\n", typ, string(b))
+					_, _ = c.Writer.Write([]byte(line))
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	for _, ev := range converter.Finish() {
+		b, _ := json.Marshal(ev)
+		typ, _ := ev["type"].(string)
+		line := fmt.Sprintf("event: %s\ndata: %s\n\n", typ, string(b))
+		_, _ = c.Writer.Write([]byte(line))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	usageSum := parser.Finish()
+	var prompt, completion, cached, reasoning int
+	var cost *float64
+	if usageSum != nil {
+		prompt = int(usageSum.PromptTokens)
+		completion = int(usageSum.CompletionTokens)
+		cached = int(usageSum.CachedTokens)
+		reasoning = int(usageSum.ReasoningTokens)
+		cost = computeCost(modelEntry, prompt, completion, cached)
+	} else if converter.Usage != nil {
+		if m, ok := converter.Usage.(map[string]interface{}); ok {
+			if s := usage.ExtractUsage(map[string]interface{}{"usage": m}); s != nil {
+				prompt = int(s.PromptTokens)
+				completion = int(s.CompletionTokens)
+				cached = int(s.CachedTokens)
+				reasoning = int(s.ReasoningTokens)
+				cost = computeCost(modelEntry, prompt, completion, cached)
+			}
+		}
+	}
+	latMs := time.Since(start).Milliseconds()
+	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
+}
+
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {
 	b, _ := json.Marshal(m)
