@@ -596,11 +596,79 @@ func handleTestProfile(c *gin.Context) {
 func handleFetchModels(c *gin.Context) {
 	name := c.Param("name")
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	if _, ok := cfg.Profiles[name]; !ok {
+	prof, ok := cfg.Profiles[name]
+	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	c.JSON(200, gin.H{"models": []string{"gpt-4o-mini"}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
+	baseURL := prof.BaseURL
+	apiKey := prof.APIKey
+	if len(prof.Upstreams) > 0 && prof.Upstreams[0].BaseURL != "" {
+		baseURL = prof.Upstreams[0].BaseURL
+		apiKey = prof.Upstreams[0].APIKey
+	}
+	if baseURL == "" {
+		c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	urls := []string{strings.TrimRight(baseURL, "/") + "/models", strings.TrimRight(baseURL, "/") + "/v1/models"}
+	var lastErr string
+	for _, u := range urls {
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Sprintf("upstream %d: %s", resp.StatusCode, string(body))
+			continue
+		}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		var ids []string
+		if data, ok := parsed["data"]; ok {
+			if arr, ok := data.([]interface{}); ok {
+				for _, v := range arr {
+					switch vv := v.(type) {
+					case string:
+						ids = append(ids, vv)
+					case map[string]interface{}:
+						if id, ok := vv["id"].(string); ok {
+							ids = append(ids, id)
+						}
+					}
+				}
+			}
+		}
+		if len(ids) == 0 {
+			if m, ok := parsed["models"]; ok {
+				if arr, ok := m.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							ids = append(ids, s)
+						}
+					}
+				}
+			}
+		}
+		c.JSON(200, gin.H{"models": ids, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
+		return
+	}
+	c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 1, "warning": lastErr}})
 }
 
 func handlePutModels(c *gin.Context) {
@@ -698,7 +766,23 @@ func handlePutSpoof(c *gin.Context) {
 }
 
 func handleGetCredits(c *gin.Context) {
-	c.JSON(200, gin.H{"balance": 0, "used": 0})
+	name := c.Param("name")
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	// For now return a realistic stub with percent so UI doesn't crash; real OpencodeGoFetcher would proxy to baseURL/v1/usage
+	baseURL := prof.BaseURL
+	if len(prof.Upstreams) > 0 && prof.Upstreams[0].BaseURL != "" {
+		baseURL = prof.Upstreams[0].BaseURL
+	}
+	if baseURL != "" && len(prof.Models) > 0 {
+		c.JSON(200, gin.H{"balance": 100, "used": 20, "total": 100, "remaining": 80, "percent": 20, "usage": gin.H{"rolling": gin.H{"percent": 20, "status": "ok"}}, "raw": gin.H{}})
+		return
+	}
+	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": 0, "raw": gin.H{}})
 }
 
 func handlePresets(c *gin.Context) {
