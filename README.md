@@ -83,7 +83,7 @@ pi-switch doctor                # Run environment diagnostics
 ```
 
 > **WebUI is the primary interface.** CLI, TUI, and WebUI are thin adapters over the same
-> Rust core. The WebUI covers Profiles, Gateway, Proxy, Stats and Settings in the browser;
+> Go core (gin + bubbletea). The WebUI covers Profiles, Gateway, Proxy, Stats and Settings in the browser;
 > TUI and CLI expose the same operations for terminal workflows.
 > See [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for architecture, the 4-step recipe for adding operations, and the full REST ↔ core map.
 

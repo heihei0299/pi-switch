@@ -4,12 +4,12 @@
 
 [![版本](https://img.shields.io/badge/version-20260831.1.0-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
-[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![许可证](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **WebUI 优先的 pi agent 控制面板**
 
-通过浏览器优先的 WebUI 管理 provider 配置、运行本地模型名路由网关 — CLI 与 TUI 复用同一套 Rust 核心。
+通过浏览器优先的 WebUI 管理 provider 配置、运行本地模型名路由网关 — CLI 与 TUI 复用同一套 Go 核心（gin + bubbletea）。
 
 [English](README.md) | [中文](#)
 
@@ -43,16 +43,16 @@ npm install -g @heihei0299/pi-switch
 pi install npm:@heihei0299/pi-switch
 ```
 
-**从源码构建**（需要 Node.js >= 20, Rust 1.80+）：
+**从源码构建**（需要 Node.js >= 20, Go 1.23+）：
 
 ```bash
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
 npm install
-npm run build              # 构建 webui/dist 并嵌入到 .node
+npm run build              # 构建 webui/dist + go build（通过 embed.FS 嵌入 webui）
 # 或分步：
 # npm run build:webui      # vite 构建 → webui/dist
-# npm run build:native     # napi build --release（嵌入 webui/dist）
+# npm run build:go         # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch（嵌入 webui/dist）
 node bin/pi-switch.js webui start --daemon
 # 打开 http://127.0.0.1:43110
 ```
@@ -62,14 +62,14 @@ node bin/pi-switch.js webui start --daemon
 **支持的平台：**
 - ✅ Windows (x64)
 - ✅ macOS (Intel 与 Apple Silicon)
-- ✅ Linux (x64) - glibc 和 musl
+- ✅ Linux (x64) - glibc 与 musl
 
-**Linux 用户：** 本包包含了 glibc 和 musl 两种预编译二进制文件。如果遇到 GLIBC 版本错误，包会自动回退到兼容性更广的 musl 版本。
+**Linux 用户：** Go 构建使用 `modernc.org/sqlite`（纯 Go，无 CGO）— 单一静态二进制，无 glibc/musl 区分。
 
-**GLIBC 错误排查：**
+**交叉编译（无 CGO）：**
 ```bash
-# 如果看到 "GLIBC_X.XX not found" 错误，可从源码构建：
-npm install -g @heihei0299/pi-switch --build-from-source
+npm run build:all  # GOOS=linux/darwin/windows × GOARCH=amd64/arm64 → bin/pi-switch-*
+# Wrapper bin/pi-switch.js 通过 process.platform/arch 选择正确二进制
 ```
 
 ---
@@ -82,7 +82,7 @@ pi-switch tui                   # 交互式 TUI（备选）
 pi-switch doctor                # 运行环境诊断
 ```
 
-> **WebUI 是主界面。** CLI、TUI、WebUI 都是同一套 Rust 核心之上的薄适配层。
+> **WebUI 是主界面。** CLI、TUI、WebUI 都是同一套 Go 核心（gin + bubbletea）之上的薄适配层。
 > WebUI 在浏览器中覆盖 Profiles、Gateway、Proxy、Stats、Settings 等全部能力；
 > TUI 与 CLI 为终端工作流提供同等操作。
 > 架构、新增操作的 4 步 recipe 与完整 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md)。
@@ -145,7 +145,7 @@ pi-switch stats                                     # 查看请求统计
 | 🌉 **模型名网关** | 无状态按 `profile/model` 路由、SSE 流式、User-Agent 伪装、请求体过滤、OpenAI ↔ Anthropic 转换、Responses ↔ Chat Completions 转换（含 function tools）、原生 OpenAI Responses 透传、故障转移、断路器 |
 | 🗂️ **模型目录** | 从 https://models.dev 自动补齐模型元数据（cost/limit/reasoning/input），24h 缓存、按 profile 的 `modelsDevProvider` 映射与全局回退 |
 | 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |
-| 🖥️ **TUI（次要）** | ratatui 驱动、Dracula 主题、鼠标支持、vim 键位 (`hjkl`) — 与 WebUI/CLI 全量对齐的终端备选 |
+| 🖥️ **TUI（次要）** | charmbracelet/bubbletea + lipgloss + bubbles — profile 列表/切换、网关发布、统计（totalCost `-` / `$0.00` / `$1.2K`），与 WebUI/CLI 全量对齐 |
 | 🌐 **双语支持** | English / 中文，持久化到配置，Settings 中切换 |
 | 📊 **使用统计** | 按 provider、按模型的请求指标与延迟；四维度 token 总量（输入/输出/缓存/推理）、缓存命中率、时间窗口查询（当天/24h/7 天/自定义）、按对话统计 — 数据模型见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) |
 | 💾 **备份与同步** | 每次修改自动备份、AES-256-CBC 加密导出/导入 |
@@ -269,41 +269,31 @@ _WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）_
 
 ```
 pi-switch/
-├── bin/pi-switch.js         # CLI 入口
-├── index.js                 # ESM 包装器，用于原生插件
-├── pi-switch-native.cjs     # NAPI 加载器（自动平台检测）
-├── webui/                   # React 前端（Vite + Tailwind，通过 rust-embed 嵌入）
-│   ├── src/components/      # Home, Profiles, Gateway, Proxy, Stats 等
-│   └── dist/                # vite 构建产物（release 时烘焙进 .node）
-├── src-rust/                # Rust 原生核心（napi-rs）
-│   ├── lib.rs               # NAPI 函数导出
-│   ├── config.rs            # 配置加载/保存、类型
-│   ├── ops.rs               # 核心操作
-│   ├── presets.rs           # 内置 provider 预设
-│   ├── proxy.rs             # 代理服务器（网关路由、故障转移、断路器）
-│   ├── daemon.rs            # 守护进程管理
-│   ├── ccswitch.rs          # cc-switch provider 导入
-│   ├── database.rs          # SQLite 持久化
-│   ├── package_ops.rs       # 包管理
-│   ├── service.rs           # 共享服务层
-│   ├── web.rs               # WebUI HTTP 服务
-│   ├── credits.rs           # 供应商余量代理与归一化（CreditsFetcher/OpencodeGoFetcher，5s 超时，主上游，不写盘）
-│   ├── stats.rs             # 请求日志聚合 + token 统计
-│   ├── usage.rs             # Token 使用量提取 & SSE 流解析
-│   ├── sync.rs              # 加密导出/导入
-│   └── tui/                 # 交互式终端 UI（ratatui）— 次要界面
-│       ├── app.rs           # 状态机 + 按键处理
-│       ├── form.rs          # Provider 表单
-│       ├── i18n.rs          # 双语（EN/ZH）
-│       └── ui/              # 渲染（chrome, pages, overlays）
-├── src/                     # JavaScript 层（pi 扩展支持）
-├── extensions/index.ts      # Pi agent 扩展（/piswitch）
-└── Cargo.toml
+├── bin/pi-switch.js         # CLI 入口 — 按平台选择 Go 二进制 → bin/pi-switch-<goos>-<goarch>
+├── bin/pi-switch-*          # Go 二进制（linux/darwin/windows × amd64/arm64，纯 Go）
+├── cmd/pi-switch/main.go    # Go 入口（gin + proxy/mgmt 路由、daemon、tui）
+├── internal/
+│   ├── config/              # 配置加载/保存、类型、per-request 热重载、v1→v2 迁移
+│   ├── gateway/             # 网关发布（models.json:providers[pi-switch]）
+│   ├── proxy/               # 代理辅助（cost、limit 钳制）
+│   ├── limit/               # contextWindow/maxTokens 钳制（估算=ceil(jsonLen/4)，预留 4096）
+│   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses 转换（native/convert via responsesMode）
+│   ├── server/              # gin 路由（proxy :43112、mgmt :43110、/api/*、embed.FS）
+│   ├── store/               # SQLite（modernc.org/sqlite，纯 Go）+ 请求日志
+│   ├── scan/                # sessionScan（离线 ~/.pi/agent/sessions JSONL 关联）
+│   ├── daemon/              # Daemon 生命周期（pid 文件 ~/.pi-switch/*.pid，多实例 ss 提示）
+│   ├── tui/                 # 终端 UI（charmbracelet/bubbletea + bubbles + lipgloss）
+│   └── usage/               # SSE 使用量解析（StreamTee）
+├── webui/                   # React 前端（Vite + Tailwind，通过 embed.FS 嵌入）
+│   ├── src/components/      # Home、Profiles、Gateway、Proxy、Stats 等
+│   └── dist/                # vite 构建产物（通过 webui/embed.go 嵌入 Go 二进制）
+├── scripts/build-all.sh     # 交叉编译矩阵 GOOS×GOARCH（无 CGO）
+└── go.mod
 ```
 
 **配置文件：**
 - `~/.pi-switch/config.json` — profiles、代理设置、故障转移链
-- `~/.pi-switch/requests.log` — 每次请求的 JSON 日志（状态、延迟、token 使用量、对话标识）
+- `~/.pi-switch/requests.db` — SQLite（modernc）按请求日志（状态、延迟、token 使用量、消费、对话）— 从旧 requests.log + .db 零迁移
 - `~/.pi-switch/backups/` — 每次修改自动生成带时间戳的备份
 - `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 写入单个网关 provider）
 
@@ -477,17 +467,15 @@ pi-switch proxy start --daemon
 ## 🛠️ 开发
 
 ```bash
-npm run build                    # 一次性：构建 webui/dist 并嵌入到 .node
+npm run build                    # 一次性：构建 webui/dist + go build（通过 embed.FS 嵌入）
 npm run build:webui              # vite 构建 → webui/dist
-npm run build:native             # napi build --release（嵌入 webui/dist）
-npm run build:native:debug       # 构建 Rust 扩展（debug）
-cargo build                      # 仅 Rust 构建
-cargo clippy                     # Lint
-cargo fmt                        # 格式化
-cargo test --release --lib       # 运行单元测试
+npm run build:go                 # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch（嵌入 webui/dist）
+go test ./...                    # Go 集成测试
+go vet ./...                     # Vet
+NODE_ENV=test npx --prefix webui vitest run  # WebUI 测试
 ```
 
-**注意：** 在 Windows 上执行 `npm run build:native` 前请停掉 TUI/daemon，避免文件锁定错误。
+**注意：** 在 Windows 上执行 `npm run build` 前请停掉 TUI/daemon，避免文件锁定错误。
 
 ---
 
