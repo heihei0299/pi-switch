@@ -30,3 +30,5 @@ opencode.jsonc
 .agents/
 .pi/
 .scratch/
+# template-sync backups (e.g. AGENTS.md.bak)
+*.bak
