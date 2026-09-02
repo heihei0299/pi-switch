@@ -376,7 +376,10 @@ function ProfileForm({
     // Preserve existing model metadata by id; default for new ids.
     const prevById = new Map((existing?.models ?? []).map((m) => [m.id, m]));
     const models = ids.map((id) => prevById.get(id) ?? defaultModel(id));
-    const exposedModels = (existing?.exposedModels ?? []).filter((id) => ids.includes(id));
+    const prevIds = new Set((existing?.models ?? []).map((m) => m.id));
+    const filteredOld = (existing?.exposedModels ?? []).filter((id) => ids.includes(id));
+    const newIds = ids.filter((id) => !prevIds.has(id));
+    const exposedModels = [...new Set([...filteredOld, ...newIds])];
     // Upstream 回退：有 upstreams 时持久化多上游，否则回退单字段（兼容旧配置）
     let upstreamPayload: Upstream[] | undefined;
     let effectiveBaseUrl = baseUrl.trim();
@@ -747,6 +750,13 @@ function ModelsModal({
             ns.add(newId);
             return ns;
           });
+        } else if (!oldId.trim() && newId.trim()) {
+          // 新模型空 ID 填入后自动暴露，符合“供应商新增模型默认同步到网关”的预期
+          setExposed((s) => {
+            const ns = new Set(s);
+            ns.add(newId);
+            return ns;
+          });
         }
       }
       return prev.map((d) => (d.key === key ? next : d));
@@ -852,6 +862,14 @@ function ModelsModal({
         });
         return [...prev, ...added];
       });
+      // 新增模型默认暴露到网关，符合“供应商新增模型自动同步到网关”预期
+      {
+        const prevIds = new Set(drafts.map((d) => d.id));
+        const newIds = ids.filter((id) => !prevIds.has(id));
+        if (newIds.length) {
+          setExposed((prev) => new Set([...prev, ...newIds]));
+        }
+      }
       if (enrich) {
         const isZh = (lang as string) === "zh";
         const base = t("Fetch from provider");
