@@ -750,14 +750,9 @@ function ModelsModal({
             ns.add(newId);
             return ns;
           });
-        } else if (!oldId.trim() && newId.trim()) {
-          // 新模型空 ID 填入后自动暴露，符合“供应商新增模型默认同步到网关”的预期
-          setExposed((s) => {
-            const ns = new Set(s);
-            ns.add(newId);
-            return ns;
-          });
         }
+        // 新模型默认不暴露：此处不自动勾选暴露，需用户显式暴露
+        //（与后端“空 exposed = 不暴露”一致）。
       }
       return prev.map((d) => (d.key === key ? next : d));
     });
@@ -862,14 +857,8 @@ function ModelsModal({
         });
         return [...prev, ...added];
       });
-      // 新增模型默认暴露到网关，符合“供应商新增模型自动同步到网关”预期
-      {
-        const prevIds = new Set(drafts.map((d) => d.id));
-        const newIds = ids.filter((id) => !prevIds.has(id));
-        if (newIds.length) {
-          setExposed((prev) => new Set([...prev, ...newIds]));
-        }
-      }
+      // 新拉取的模型默认不暴露：保持暴露集不变，需用户显式勾选暴露
+      //（与后端“空 exposed = 不暴露”一致）。
       if (enrich) {
         const isZh = (lang as string) === "zh";
         const base = t("Fetch from provider");

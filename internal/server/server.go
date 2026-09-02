@@ -656,12 +656,8 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	// default exposedModels to all models if empty (防 2 vs 3)
-	if len(prof.ExposedModels) == 0 && len(prof.Models) > 0 {
-		for _, m := range prof.Models {
-			prof.ExposedModels = append(prof.ExposedModels, m.ID)
-		}
-	}
+	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
+	// 与“空 exposed = 不暴露”一致。
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]config.ProviderProfile{}
@@ -2528,12 +2524,8 @@ func handleModels(c *gin.Context) {
 	data := []interface{}{}
 	seen := map[string]bool{}
 	for name, prof := range cfg.Profiles {
+		// 空 exposed = 不暴露（与网关发布一致），不回退到全部 Models。
 		exposed := prof.ExposedModels
-		if len(exposed) == 0 {
-			for _, m := range prof.Models {
-				exposed = append(exposed, m.ID)
-			}
-		}
 		for _, mid := range exposed {
 			id := name + "/" + mid
 			if seen[id] {
@@ -2564,11 +2556,7 @@ func exposes(cfg config.PiSwitchConfig, name, model string) bool {
 		}
 		return false
 	}
-	for _, m := range prof.Models {
-		if m.ID == model {
-			return true
-		}
-	}
+	// 空 exposed = 不暴露：新模型默认不经代理提供，需显式 expose。
 	return false
 }
 func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string) {

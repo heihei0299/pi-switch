@@ -43,15 +43,12 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 	port := cfg.Settings.Proxy.Port
 	models := []interface{}{}
 	for name, prof := range cfg.Profiles {
-		if len(prof.ExposedModels) == 0 && len(prof.Models) == 0 {
+		// 空 exposed = 不暴露：新拉取的模型默认不进网关，需显式 expose。
+		// 不要在这里回退到全部 Models，否则供应商界面“未暴露”与网关实际提供不一致。
+		if len(prof.ExposedModels) == 0 {
 			continue
 		}
 		exposed := prof.ExposedModels
-		if len(exposed) == 0 {
-			for _, m := range prof.Models {
-				exposed = append(exposed, m.ID)
-			}
-		}
 		for _, exposedID := range exposed {
 			var entry map[string]interface{}
 			found := false

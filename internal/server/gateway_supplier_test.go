@@ -450,7 +450,7 @@ func TestGatewaySupplier_09_S5_SpoofDisguise(t *testing.T) {
 	cfg2 := fmt.Sprintf(`{
 		"version":2,
 		"profiles":{
-			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"headers":{"X-Custom":"from-profile"},"userAgent":"codex"}
+			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m1"],"headers":{"X-Custom":"from-profile"},"userAgent":"codex"}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112,"userAgent":"global-agent"},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
 	}`, mock.URL)
@@ -472,7 +472,7 @@ func TestGatewaySupplier_09_S5_SpoofDisguise(t *testing.T) {
 	cfg3 := fmt.Sprintf(`{
 		"version":2,
 		"profiles":{
-			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://backup.invalid/v1","apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"headers":{"X-Custom":"from-profile"},"upstreams":[{"baseUrl":%q,"apiKey":"sk-a","headers":{"X-Custom":"from-upstream"}}]}
+			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://backup.invalid/v1","apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m1"],"headers":{"X-Custom":"from-profile"},"upstreams":[{"baseUrl":%q,"apiKey":"sk-a","headers":{"X-Custom":"from-upstream"}}]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
 	}`, mock.URL)
@@ -490,7 +490,7 @@ func TestGatewaySupplier_09_S5_SpoofDisguise(t *testing.T) {
 	cfg4 := fmt.Sprintf(`{
 		"version":2,
 		"profiles":{
-			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}]}
+			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m1"]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
 	}`, mock.URL)
@@ -507,7 +507,7 @@ func TestGatewaySupplier_09_S5_SpoofDisguise(t *testing.T) {
 	cfg5 := fmt.Sprintf(`{
 		"version":2,
 		"profiles":{
-			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}]}
+			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m1"]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112,"userAgent":"global-ua"},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
 	}`, mock.URL)
@@ -658,19 +658,16 @@ func TestGatewaySupplier_09_S7_AddFullSelect(t *testing.T) {
 	if len(presets) == 0 {
 		t.Fatalf("presets should not be empty for +Add")
 	}
-	// +Add without preset should be 400
-	bodyNoPreset := `{"name":"new-provider","profile":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://new.example.com/v1","apiKey":"sk-new","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384},{"id":"m2","contextWindow":128000,"maxTokens":16384}],"proxy":false}}`
-	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(bodyNoPreset))
-	req2.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w2, req2)
-	if w2.Code != 400 {
-		t.Fatalf("without preset should be 400, got %d body %s", w2.Code, w2.Body.String())
+	// +Add without preset should be 200 with empty exposedModels (manual-test-bugs/04+05: preset optional, new models not exposed by default)
+	bodyNoPreset := `{"name":"new-provider-nopreset","profile":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://new.example.com/v1","apiKey":"sk-new","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384},{"id":"m2","contextWindow":128000,"maxTokens":16384}],"proxy":false}}`
+	w2n := httptest.NewRecorder()
+	req2n, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(bodyNoPreset))
+	req2n.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w2n, req2n)
+	if w2n.Code != 200 {
+		t.Fatalf("without preset should be 200, got %d body %s", w2n.Code, w2n.Body.String())
 	}
-	if !strings.Contains(strings.ToLower(w2.Body.String()), "preset") {
-		t.Fatalf("error should mention preset, got %s", w2.Body.String())
-	}
-	// +Add with preset, without exposedModels should default to full select
+	// +Add with preset, without exposedModels should stay unexposed (no auto full select)
 	bodyWithPreset := `{"name":"new-provider","profile":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://new.example.com/v1","apiKey":"sk-new","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384},{"id":"m2","contextWindow":128000,"maxTokens":16384}],"preset":"openai","proxy":false}}`
 	w3 := httptest.NewRecorder()
 	req3, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(bodyWithPreset))
@@ -682,17 +679,11 @@ func TestGatewaySupplier_09_S7_AddFullSelect(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	var cfgMap map[string]interface{}
 	_ = json.Unmarshal(b, &cfgMap)
-	newProf := cfgMap["profiles"].(map[string]interface{})["new-provider"].(map[string]interface{})
-	em, ok := newProf["exposedModels"].([]interface{})
-	if !ok || len(em) != 2 {
-		t.Fatalf("new provider should have exposedModels default full 2, got %v", newProf["exposedModels"])
-	}
-	ids := map[string]bool{}
-	for _, v := range em {
-		ids[v.(string)] = true
-	}
-	if !ids["m1"] || !ids["m2"] {
-		t.Fatalf("exposedModels should contain m1,m2 got %v", em)
+	for _, pname := range []string{"new-provider-nopreset", "new-provider"} {
+		newProf := cfgMap["profiles"].(map[string]interface{})[pname].(map[string]interface{})
+		if em, ok := newProf["exposedModels"].([]interface{}); ok && len(em) != 0 {
+			t.Fatalf("%s should have empty exposedModels, got %v", pname, newProf["exposedModels"])
+		}
 	}
 	// validate duplicate id should be 400
 	dupBody := `{"name":"dup-test","profile":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://x","apiKey":"k","models":[{"id":"a","contextWindow":128000,"maxTokens":16384},{"id":"a","contextWindow":128000,"maxTokens":16384}],"preset":"openai","proxy":false}}`
