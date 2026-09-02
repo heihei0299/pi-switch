@@ -819,11 +819,63 @@ func handleUseProfile(c *gin.Context) {
 func handleTestProfile(c *gin.Context) {
 	name := c.Param("name")
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	if _, ok := cfg.Profiles[name]; !ok {
+	prof, ok := cfg.Profiles[name]
+	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "message": "ok", "responseTimeMs": 10})
+	baseURL := strings.TrimRight(prof.PrimaryBaseURL(), "/")
+	apiKey := prof.PrimaryAPIKey()
+	if baseURL == "" {
+		c.JSON(200, gin.H{"success": false, "message": "baseUrl is empty", "responseTimeMs": 0})
+		return
+	}
+	// 真实探测：打上游最小只读接口，不写盘、不污染统计。
+	// 之前这里是写死成功的桩，错误 Key 也能过（manual-test-bugs/01）。
+	start := time.Now()
+	client := &http.Client{Timeout: 5 * time.Second}
+	urls := []string{baseURL + "/models", baseURL + "/v1/models"}
+	var lastErr string
+	for _, u := range urls {
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		ms := time.Since(start).Milliseconds()
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			c.JSON(200, gin.H{"success": false, "message": fmt.Sprintf("upstream HTTP %d: invalid api key or no permission", resp.StatusCode), "responseTimeMs": ms})
+			return
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Sprintf("upstream HTTP %d: %s", resp.StatusCode, truncateForTest(body))
+			continue
+		}
+		c.JSON(200, gin.H{"success": true, "message": "ok", "responseTimeMs": ms})
+		return
+	}
+	c.JSON(200, gin.H{"success": false, "message": "unreachable: " + lastErr, "responseTimeMs": time.Since(start).Milliseconds()})
+}
+
+func truncateForTest(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	if s == "" {
+		s = "(empty body)"
+	}
+	return s
 }
 
 func handleFetchModels(c *gin.Context) {
@@ -1244,6 +1296,10 @@ func handleGatewayPreview(c *gin.Context) {
 			}
 		}
 	}
+	// 与落盘口径对齐：Publish 会经 MergeGatewayExtra 把 current 的 extra 键
+	//（compat/headers 等）并入 proposed，直接比会恒差。先归一化再 diff，
+	// 否则发布后 pending 永远回不到 0（manual-test-bugs/02）。
+	proposed = gateway.MergeGatewayExtra(curMap, proposed)
 	pending := gateway.ComputePendingCount(curMap, proposed)
 	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending})
 }

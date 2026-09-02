@@ -167,7 +167,8 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	if err := cmd.Start(); err != nil {
 		return DaemonResult{}, fmt.Errorf("Failed to spawn daemon: %w", err)
 	}
-	_ = cmd.Process.Release()
+	// 注意：必须先取 Pid 再 Release——Release 会把 Process.Pid 置为 -1，
+	// 之前顺序写反导致 pid 文件里一直是 4294967295，stop 永远杀不掉进程。
 	pid := uint32(cmd.Process.Pid)
 	now := uint64(time.Now().UnixMilli())
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now}
@@ -184,6 +185,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		}
 		return DaemonResult{}, fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
 	}
+	_ = cmd.Process.Release() // 健康检查通过后才脱钩；失败分支的 Kill 必须在 Release 之前才有效
 	msg := fmt.Sprintf("%s daemon started (PID %d) on http://%s:%d", s.Label, pid, host, port)
 	return DaemonResult{Running: true, Pid: &pid, Host: &host, Port: &port, StartedAt: &now, Message: msg}, nil
 }
