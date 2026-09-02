@@ -238,6 +238,7 @@ func NewMgmtRouter() *gin.Engine {
 		api.POST("/proxy/start", handleProxyStart)
 		api.POST("/proxy/stop", handleProxyStop)
 		api.PUT("/proxy/failover", handlePutFailover)
+		api.GET("/settings", handleGetSettings)
 		api.PUT("/settings", handlePutSettings)
 		api.POST("/config/export", handleConfigExportStub)
 		api.POST("/config/import", handleConfigImportStub)
@@ -1405,6 +1406,11 @@ func handlePutFailover(c *gin.Context) {
 	_ = saveConfig(cfg)
 	c.JSON(200, gin.H{"ok": true})
 }
+func handleGetSettings(c *gin.Context) {
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	c.JSON(200, cfg.Settings)
+}
+
 func handlePutSettings(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	var s config.Settings
@@ -1422,6 +1428,7 @@ func handleConfigImportStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "mes
 func handleConfigRestoreStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "backup": "/tmp/backup.json"}) }
 
 func saveConfig(cfg config.PiSwitchConfig) error {
+	cfg = config.MigratedForSave(cfg)
 	path := configPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	b, _ := json.MarshalIndent(cfg, "", "  ")

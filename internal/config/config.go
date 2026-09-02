@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -63,6 +64,85 @@ type Settings struct {
 	} `json:"web"`
 }
 
+func (s *Settings) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		s.ProviderPrefix = "pi-switch"
+		s.WriteMode = "gateway"
+		s.GatewayAPI = "openai-completions"
+		s.ConversationSource = "sessionScan"
+		s.Proxy.Host = "127.0.0.1"
+		s.Proxy.Port = 43112
+		s.Web.Host = "127.0.0.1"
+		s.Web.Port = 43110
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if vv, ok := raw["providerPrefix"]; ok {
+		_ = json.Unmarshal(vv, &s.ProviderPrefix)
+	}
+	if vv, ok := raw["writeMode"]; ok {
+		_ = json.Unmarshal(vv, &s.WriteMode)
+	}
+	if vv, ok := raw["gatewayApi"]; ok {
+		_ = json.Unmarshal(vv, &s.GatewayAPI)
+	}
+	if vv, ok := raw["conversationSource"]; ok {
+		var cs string
+		if err := json.Unmarshal(vv, &cs); err != nil {
+			return err
+		}
+		switch cs {
+		case "proxy", "off", "sessionScan":
+			s.ConversationSource = cs
+		default:
+			return fmt.Errorf("invalid conversationSource %q", cs)
+		}
+	} else if vv, ok := raw["injectOpenCodeAttribution"]; ok {
+		var bval bool
+		if err := json.Unmarshal(vv, &bval); err == nil {
+			if bval {
+				s.ConversationSource = "proxy"
+			} else {
+				s.ConversationSource = "off"
+			}
+		}
+	}
+	if vv, ok := raw["proxy"]; ok {
+		_ = json.Unmarshal(vv, &s.Proxy)
+	}
+	if vv, ok := raw["web"]; ok {
+		_ = json.Unmarshal(vv, &s.Web)
+	}
+	if s.ProviderPrefix == "" {
+		s.ProviderPrefix = "pi-switch"
+	}
+	if s.WriteMode == "" {
+		s.WriteMode = "gateway"
+	}
+	if s.GatewayAPI == "" {
+		s.GatewayAPI = "openai-completions"
+	}
+	if s.ConversationSource == "" {
+		s.ConversationSource = "sessionScan"
+	}
+	if s.Proxy.Host == "" {
+		s.Proxy.Host = "127.0.0.1"
+	}
+	if s.Proxy.Port == 0 {
+		s.Proxy.Port = 43112
+	}
+	if s.Web.Host == "" {
+		s.Web.Host = "127.0.0.1"
+	}
+	if s.Web.Port == 0 {
+		s.Web.Port = 43110
+	}
+	return nil
+}
+
 type PiSwitchConfig struct {
 	Version  uint32                     `json:"version"`
 	Current  *string                    `json:"current"`
@@ -105,6 +185,22 @@ func DefaultConfig() PiSwitchConfig {
 	}
 }
 
+func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
+	out := cfg
+	if out.Version < 2 {
+		out.Version = 2
+	}
+	if out.Settings.ConversationSource == "" {
+		out.Settings.ConversationSource = "sessionScan"
+	}
+	switch out.Settings.ConversationSource {
+	case "proxy", "off", "sessionScan":
+	default:
+		out.Settings.ConversationSource = "sessionScan"
+	}
+	return out
+}
+
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -129,36 +225,7 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 		}
 	}
 	if v, ok := raw["settings"]; ok {
-		var sRaw map[string]json.RawMessage
-		if err := json.Unmarshal(v, &sRaw); err == nil {
-			if vv, ok := sRaw["providerPrefix"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.ProviderPrefix)
-			}
-			if vv, ok := sRaw["writeMode"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.WriteMode)
-			}
-			if vv, ok := sRaw["gatewayApi"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.GatewayAPI)
-			}
-			if vv, ok := sRaw["conversationSource"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.ConversationSource)
-			} else if vv, ok := sRaw["injectOpenCodeAttribution"]; ok {
-				var bval bool
-				if err := json.Unmarshal(vv, &bval); err == nil {
-					if bval {
-						cfg.Settings.ConversationSource = "proxy"
-					} else {
-						cfg.Settings.ConversationSource = "off"
-					}
-				}
-			}
-			if vv, ok := sRaw["proxy"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.Proxy)
-			}
-			if vv, ok := sRaw["web"]; ok {
-				_ = json.Unmarshal(vv, &cfg.Settings.Web)
-			}
-		}
+		_ = json.Unmarshal(v, &cfg.Settings)
 	}
 	if cfg.Settings.ProviderPrefix == "" {
 		cfg.Settings.ProviderPrefix = "pi-switch"
