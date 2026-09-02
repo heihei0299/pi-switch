@@ -2,7 +2,7 @@
 
 # pi-switch
 
-[![Version](https://img.shields.io/badge/version-20260831.1.0-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
+[![Version](https://img.shields.io/badge/version-20260902.0.0-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

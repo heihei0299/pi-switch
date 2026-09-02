@@ -18,7 +18,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    name: verify / rust and webui
+    name: verify / go and webui
     permissions:
       contents: read
     steps:
@@ -31,19 +31,10 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: verify-cargo-${{ hashFiles('Cargo.lock') }}
+          go-version: "1.23"
+          cache: true
 
       - name: Install dependencies
         run: npm install
@@ -51,85 +42,44 @@ jobs:
       - name: Build WebUI
         run: npm run build:webui
 
-      - name: Find changed Rust files
-        id: rust-files
-        shell: bash
-        run: |
-          # tag 事件下 origin/main...HEAD 为空，改用 HEAD~1...HEAD 兜底；非 tag 直接全量检查
-          if git rev-parse origin/main >/dev/null 2>&1; then
-            base="origin/main...HEAD"
-            if ! git diff --name-only $base -- '*.rs' > changed-rust-files.txt 2>/dev/null || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-              : > changed-rust-files.txt
-            fi
-          else
-            git diff --name-only HEAD~1...HEAD -- '*.rs' > changed-rust-files.txt 2>/dev/null || : > changed-rust-files.txt
-          fi
-          # tag 推送时 changed 文件为空则回退为全量校验（避免误跳过）
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            : > changed-rust-files.txt
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
-          elif [[ -s changed-rust-files.txt ]]; then
-            echo "has_files=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Vet Go
+        run: go vet ./...
 
-      - name: Format changed Rust files for manual runs
-        if: github.event_name == 'workflow_dispatch' && steps.rust-files.outputs.has_files == 'true'
-        shell: bash
-        run: |
-          xargs -r rustfmt --edition 2021 --config skip_children=true < changed-rust-files.txt
-          git diff --binary > rustfmt.patch
+      - name: Test Go
+        run: go test ./...
 
-      - name: Upload Rust formatting patch
-        if: github.event_name == 'workflow_dispatch' && steps.rust-files.outputs.has_files == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustfmt-patch
-          path: rustfmt.patch
+      - name: Test WebUI
+        run: npm run test:webui
 
-      - name: Check Rust formatting (full when tag or no changed files)
-        if: github.event_name != 'workflow_dispatch'
-        shell: bash
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "${{ steps.rust-files.outputs.has_files }}" == "false" ]]; then
-            cargo fmt --check
-          else
-            xargs -r rustfmt --edition 2021 --config skip_children=true --check < changed-rust-files.txt
-          fi
-
-      - name: Lint Rust
-        run: >-
-          cargo clippy --all-targets --
-          -D warnings
-          -A clippy::manual_checked_ops
-          -A clippy::manual_is_multiple_of
-          -A clippy::collapsible_match
-          -A clippy::unnecessary_sort_by
-
-      # TODO(ci-guard): 恢复 config.rs config_dir/pi_dir 测试隔离后去掉 --test-threads=1（当前 config.rs 未隔离，proxy.rs 已隔离，见 .scratch/research/ci-actions-调研.md）
-      - name: Test Rust
-        run: cargo test --release --lib -- --test-threads=1
+      - name: Build Go (current platform)
+        run: go build -o /tmp/pi-switch ./cmd/pi-switch && /tmp/pi-switch --help || true
 
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-unknown-linux-gnu
+          - goos: linux
+            goarch: amd64
             os: ubuntu-latest
-            use_zig: true
-          - target: x86_64-unknown-linux-musl
+          - goos: linux
+            goarch: arm64
             os: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
+          - goos: darwin
+            goarch: amd64
+            os: macos-latest
+          - goos: darwin
+            goarch: arm64
+            os: macos-latest
+          - goos: windows
+            goarch: amd64
+            os: windows-latest
+          - goos: windows
+            goarch: arm64
             os: windows-latest
 
     runs-on: ${{ matrix.os }}
-    name: build / ${{ matrix.target }}
+    name: build / ${{ matrix.goos }}-${{ matrix.goarch }}
     permissions:
       contents: read
     steps:
@@ -140,33 +90,10 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install musl tools (Linux musl only)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install zig (for glibc 2.31 targeting)
-        if: matrix.use_zig == true
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
-
-      - name: Install cargo-zigbuild
-        if: matrix.use_zig == true
-        run: pip3 install cargo-zigbuild
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          go-version: "1.23"
+          cache: true
 
       - name: Install dependencies
         run: npm install
@@ -174,23 +101,19 @@ jobs:
       - name: Build WebUI
         run: npm run build:webui
 
-      - name: Build native (with zig for glibc 2.31)
-        if: matrix.use_zig == true
+      - name: Build Go binary
+        shell: bash
         run: |
-          cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
-          cp target/x86_64-unknown-linux-gnu/release/libpi_switch_native.so pi-switch-native.linux-x64-gnu.node
-
-      - name: Build native (standard)
-        if: matrix.use_zig != true
-        run: |
-          npm install -g @napi-rs/cli
-          npm run build:native -- --target ${{ matrix.target }}
+          ext=""
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then ext=".exe"; fi
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "-s -w" -o "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/pi-switch
+          ls -lh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-${{ matrix.target }}
-          path: "*.node"
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: "bin/pi-switch-*"
           if-no-files-found: error
 
   publish:
@@ -210,16 +133,30 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build WebUI
+        run: npm run build:webui
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: native-*
+          pattern: binary-*
           path: artifacts
           merge-multiple: true
           if-no-files-found: error
 
-      - name: Move artifacts to project root
-        run: mv artifacts/*.node .
+      - name: Move artifacts to bin
+        run: |
+          mkdir -p bin
+          mv artifacts/pi-switch-* bin/ 2>/dev/null || mv artifacts/* bin/ 2>/dev/null || true
+          ls -lh bin/
 
       - name: Publish to npm
         run: npm publish --access public

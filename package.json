@@ -1,17 +1,14 @@
 {
   "name": "@heihei0299/pi-switch",
-  "version": "20260831.1.0",
+  "version": "20260902.0.0",
   "description": "Lightweight profile switcher for pi models.json",
   "type": "module",
   "bin": {
     "pi-switch": "./bin/pi-switch.js"
   },
-  "main": "./index.js",
   "files": [
     "bin/",
     "webui/dist/",
-    "index.js",
-    "index.d.ts",
     "README.md",
     "README_ZH.md"
   ],
@@ -24,7 +21,7 @@
     "dev:webui": "npm --prefix webui run dev",
     "doctor": "node ./bin/pi-switch.js doctor",
     "test": "go test ./...",
-    "test:webui": "NODE_ENV=test npx --prefix webui vitest run"
+    "test:webui": "NODE_ENV=test npm --prefix webui run test"
   },
   "keywords": [
     "pi",

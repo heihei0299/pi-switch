@@ -7,12 +7,12 @@ pi-switch offers **three ways** to manage the same configuration — order refle
 
 | Priority | Interface | Entry | Lives in |
 |----------|-----------|-------|----------|
-| **① Primary** | **WebUI** | `pi-switch webui start --daemon` → http://127.0.0.1:43110 | `src-rust/web.rs` (axum) + `webui/` (React, `rust-embed`) |
-| ② CLI | `pi-switch <cmd>` | `bin/pi-switch.js` → napi | |
-| ③ TUI | `pi-switch tui` | `src-rust/tui/` (ratatui) — secondary, terminal fallback | |
+| **① Primary** | **WebUI** | `pi-switch webui start --daemon` → http://127.0.0.1:43110 | `internal/server` (gin) + `webui/` (React, `embed.FS`) |
+| ② CLI | `pi-switch <cmd>` | `bin/pi-switch.js` → Go binary | |
+| ③ TUI | `pi-switch tui` | `internal/tui/` (bubbletea) — secondary, terminal fallback | |
 
-All three are **thin adapters over the same Rust core** (`src-rust/ops.rs` +
-`src-rust/config.rs` + `src-rust/gateway.rs` + `src-rust/service.rs`). No business logic lives in the UI
+All three are **thin adapters over the same Go core** (`internal/config` +
+`internal/gateway` + `internal/proxy` + `internal/server` + `internal/store`). No business logic lives in the UI
 layers, so behaviour stays identical across them.
 
 ### Screenshots (also in README)
@@ -31,40 +31,40 @@ TUI screenshot remains at `assets/main.png` for terminal reference.
 ## Architecture — thin adapters
 
 ```
-                 ┌──────────── shared Rust core ────────────┐
-   WebUI(axum) ─►│  service.rs  (reads / shaping)           │
-   CLI (node) ──►│  ops.rs      (provider mutations)        │──► ~/.pi-switch/config.json
-   TUI  (rust) ─►│  gateway.rs  (gateway publish, Upstream) │──► ~/.pi/agent/models.json
-                 │  config.rs   (ProviderProfile + Upstream)│
-                 └──────────────────────────────────────────┘
+                 ┌──────────── shared Go core ────────────┐
+   WebUI(gin)  ─►│  server.go   (REST + reads/shaping)    │
+   CLI (node) ──►│  config.go   (ProviderProfile)         │──► ~/.pi-switch/config.json
+   TUI (go)   ──►│  gateway.go  (gateway publish)         │──► ~/.pi/agent/models.json
+                 │  proxy/      (forward/failover/limit)  │
+                 └────────────────────────────────────────┘
         ▲                    ▲                      ▲
-   webui/src           bin/pi-switch.js         src-rust/tui/  ← REST /api/* + embedded webui/dist
-   React SPA            (napi in lib.rs)         (ratatui)
+   webui/src           bin/pi-switch.js         internal/tui/  ← REST /api/* + embedded webui/dist
+   React SPA            (Go binary)            (bubbletea)
 ```
 
-The WebUI backend is an **axum server** that:
-1. serves the React SPA (compiled into the `.node` via `rust-embed`), and
-2. exposes `REST /api/*` where every route delegates to `ops`/`service`/`daemon`/`sync`.
+The WebUI backend is a **gin server** that:
+1. serves the React SPA (compiled into the Go binary via `embed.FS`), and
+2. exposes `REST /api/*` where every route delegates to `config`/`gateway`/`daemon`/`store`.
 
 It runs as a second **daemon-managed service** alongside the proxy (own pid/log/port),
-using the generalized machinery in `src-rust/daemon.rs`.
+using the generalized machinery in `internal/daemon`.
 
 ---
 
 ## Usage
 
-### Build (frontend + native)
+### Build (frontend + Go)
 
 ```bash
-# one-shot: builds webui/dist then embeds it into the .node
+# one-shot: builds webui/dist then embeds it into the Go binary
 npm run build
 
 # or step by step
 npm run build:webui      # vite build → webui/dist
-npm run build:native     # napi build --release  (embeds webui/dist)
+npm run build:go         # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch (embeds webui/dist)
 ```
 
-> Stop any running TUI/daemon before `build:native` — they hold a lock on the `.node`.
+> Stop any running webui daemon before rebuilding — it may hold the binary.
 
 ### Run
 
@@ -84,7 +84,7 @@ Then open `http://127.0.0.1:43110` in a browser. Defaults come from
 ### Dev workflow (hot reload)
 
 ```bash
-# terminal 1 — Rust API server
+# terminal 1 — Go API server
 pi-switch webui start --port 43110
 
 # terminal 2 — vite dev server (proxies /api to :43110)
@@ -153,39 +153,38 @@ Only successful (`ok: true`, not `retry`) rows with both `promptTokens` and `com
 Because the UIs are thin, a new capability is added **once in the core** and then
 wired into each adapter:
 
-1. **Core** — implement the logic in `src-rust/ops.rs` (mutation) or
-   `src-rust/service.rs` (read/shape). This is the single source of truth.
-2. **CLI** — add a napi wrapper in `src-rust/lib.rs`, export it in `index.js`,
-   and add a subcommand in `bin/pi-switch.js`.
-3. **WebUI backend** — add one route in `src-rust/web.rs` that calls the core fn.
+1. **Core** — implement the logic in `internal/config` (mutation) or
+   `internal/server` (read/shape). This is the single source of truth.
+2. **CLI** — add a command in `cmd/pi-switch` and expose it via `bin/pi-switch.js`.
+3. **WebUI backend** — add one route in `internal/server/server.go` that calls the core fn.
 4. **WebUI frontend** — add a method in `webui/src/api.ts` and use it in the
    relevant panel under `webui/src/components/`.
 
-The TUI (`src-rust/tui/`) already calls the core directly, so it usually needs a
+The TUI (`internal/tui/`) already calls the core directly, so it usually needs a
 change only if the feature has a TUI screen.
 
 ### REST ↔ core map (current)
 
 | Route | Core call |
 |-------|-----------|
-| `GET /api/state` | `service::get_state` |
-| `GET /api/presets` · `/presets/:id` | `service::presets_info` · `show_preset` |
-| `GET /api/profiles/:name` | `service::get_profile` |
-| `GET /api/models/gateway` | `service::get_gateway` |
-| `GET /api/models/gateway/preview` | `service::gateway_preview` (dry-run, merges hand-written extra) |
-| `PUT /api/models/gateway` | `service::apply_gateway` (validated write) |
-| `GET /api/doctor` · `/config/validate` | `service::run_doctor` · `config::validate_config` |
-| `GET /api/backups` · `/stats` | `service::list_backups` · `service::stats_value` |
-| `POST /api/profiles` · `PUT /api/profiles/:name` | `ops::upsert_profile` |
-| `DELETE /api/profiles/:name` | `ops::remove_profile` |
-| `POST /api/profiles/:name/{duplicate,use,test,fetch-models}` | `ops::{duplicate_profile,use_profile,test_provider,fetch_models}` |
-| `PUT /api/profiles/:name/{models,expose,spoof}` | `ops::{update_provider_models,update_exposed_models,set_profile_spoof}` |
-| `GET /api/profiles/:name/credits` | `credits::fetch_credits_for_profile` (OpencodeGoFetcher, 5s 超时, 仅主上游, 归一化 `{balance,used,total,remaining,percent,resetAt/expiry,raw}`, 不写盘) |
-| `POST /api/proxy/{start,stop}` | `daemon::daemon_{start,stop}(&PROXY, …)` |
-| `PUT /api/proxy/failover` | `ops::set_failover` |
-| `PUT /api/settings` | `ops::update_settings` |
-| `POST /api/config/{export,import,restore}` | `sync::{encrypt_config,import_config}` · `config::restore_config` |
-| `POST /api/init` | `ops::init` |
+| `GET /api/state` | `server::get_state` |
+| `GET /api/presets` · `/presets/:id` | `presets` |
+| `GET /api/profiles/:name` | `config::get_profile` |
+| `GET /api/models/gateway` | `gateway::get_gateway` |
+| `GET /api/models/gateway/preview` | `gateway::preview` (dry-run, merges hand-written extra) |
+| `PUT /api/models/gateway` | `gateway::apply` (validated write) |
+| `GET /api/doctor` · `/config/validate` | `doctor` |
+| `GET /api/backups` · `/stats` | `store::backups` · `stats` |
+| `POST /api/profiles` · `PUT /api/profiles/:name` | `config::upsert` |
+| `DELETE /api/profiles/:name` | `config::remove` |
+| `POST /api/profiles/:name/{duplicate,use,test,fetch-models}` | `config::*` |
+| `PUT /api/profiles/:name/{models,expose,spoof}` | `config::*` |
+| `GET /api/profiles/:name/credits` | `credits` (5s 超时, 仅主上游) |
+| `POST /api/proxy/{start,stop}` | `daemon::proxy` |
+| `PUT /api/proxy/failover` | `config::set_failover` |
+| `PUT /api/settings` | `config::update_settings` |
+| `POST /api/config/{export,import,restore}` | `sync` |
+| `POST /api/init` | `config::init` |
 
 ### Gateway explicit publish (supplier-gateway isolation)
 
@@ -193,18 +192,14 @@ Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel
 
 1. `GET /api/models/gateway/preview` — dry-run, returns `{ current, proposed, conflicts, pending_count }` without writing; `current` is the last published gateway, `proposed` is built from current `config.json`.
 2. `GatewayPanel` shows `Current vs Proposed` and `pending_count`, plus `pending`/`mismatch` banner on first load when `pending_count>0`; it does not auto-apply.
-3. On `Apply to Pi`, `PUT /api/models/gateway` validates and atomically writes `models.json` (merging hand-written `extra` fields via `gateway::merge_gateway_extra`), then notifies via `gateway.notify`.
+3. On `Apply to Pi`, `PUT /api/models/gateway` validates and atomically writes `models.json` (merging hand-written `extra` fields), then notifies.
 
 This keeps supplier as the single source of truth, gateway as a read-only derived view, and prevents `models.json` overwrites from discarding manual `headers`/`compat`/`cost`/`extra` fields (merged, not authoritative).
 
 ---
 
-## Type sync (frontend ↔ Rust)
+## Type sync (frontend ↔ Go)
 
-`webui/src/types.ts` is a hand-written mirror of the Rust structs in
-`src-rust/config.rs` (the source of truth). Keep them in sync when the config
+`webui/src/types.ts` is a hand-written mirror of the Go structs in
+`internal/config/config.go` (the source of truth). Keep them in sync when the config
 model changes.
-
-**Future option:** auto-generate `types.ts` from the Rust structs with
-[`typeshare`](https://github.com/1Password/typeshare) or `ts-rs` to eliminate drift.
-Not wired up yet to keep the toolchain lean.

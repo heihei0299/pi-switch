@@ -20,7 +20,7 @@ import type { ConversationRange, StatsRange } from "./lib/statsWindow";
 import type { NormalizedCredits } from "./lib/credits";
 
 // Single point of coupling to the backend. Every call maps to one REST route in
-// src-rust/web.rs, which in turn delegates to the shared ops/service layer.
+// internal/server/server.go, which in turn delegates to the shared Go core.
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
