@@ -649,10 +649,9 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if prof.Preset == nil || strings.TrimSpace(*prof.Preset) == "" {
-		c.JSON(400, gin.H{"error": "preset is required"})
-		return
-	}
+	// preset 仅是“预填模板 + 模型目录推断”提示，允许为空：
+	// WebUI 明确提供“无”选项，自定义上游不应被强制套模板；
+	// 为空时模型目录推断走 modelsDevProvider（为空则 enrich 跳过并告警，不致命）。
 	if err := validateProviderProfile(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
