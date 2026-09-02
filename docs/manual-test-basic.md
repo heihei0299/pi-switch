@@ -16,6 +16,17 @@
 3. 记下基线：打开 Stats 页，记下当前 `TOTAL` 请求数；网关页确认 `pending_count` 为 0（无待发布）。
 4. 密钥安全：测试用 Key 随用随删，不截图外发，不写入文档；优先使用可随时撤销的测试 Key。
 
+5. 隔离环境（血泪教训）：服务端读配置只认 `PI_SWITCH_CONFIG`，**不认**
+   `PI_SWITCH_CONFIG_DIR`（后者只决定 pid/log 目录）。只 export 后者做隔离是假隔离，
+   供应商增删会直接写到真实的 `~/.pi-switch/config.json`。隔离测试必须四个变量一起 export，
+   且 daemon 子进程继承父进程环境，export 后再 `start`：
+   ```bash
+   export PI_SWITCH_CONFIG=/tmp/pitest/config.json \
+     PI_SWITCH_CONFIG_DIR=/tmp/pitest \
+     PI_SWITCH_DB=/tmp/pitest/req.db \
+     PI_SWITCH_MODELS=/tmp/pitest/models.json
+   ```
+   开测前先调 `GET /api/state` 确认 `profiles` 为空，证明隔离生效；收尾删 `/tmp/pitest` 即可。
 测试供应商命名建议统一用 `manual-test-<日期>`（如 `manual-test-0902`），方便清理时识别。
 
 ## 1. 供应商：添加 API
