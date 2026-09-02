@@ -4,9 +4,18 @@
 
 **Blocked by:** 11 多供应商与网关发布
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `api=openai-responses` 的 `Supplier` 收到 `POST /v1/responses` 时透传（SSE 事件原样），否则走转换；`api=anthropic-messages` 的 `POST /v1/messages` 与 `openai` 互转后上游可用
-- [ ] `responsesMode` 不兼容组合在 `PUT /api/profiles` 保存时返回 400，`auto` 语义与 spec 一致
-- [ ] `max_output_tokens`/`max_tokens`/`max_completion_tokens` 按 `ModelEntry.contextWindow/maxTokens` 与输入估算自动重写，超窗 400 溢出不再出现（含 `reasoning.encrypted_content` 低估边界，`est` 已含序列化长度）
-- [ ] 流式：`POST /v1/chat/completions`（`stream=true`）与 `POST /v1/responses` 流式经 `StreamTee` 完整转发且 `prompt/completion/cached/reasoning` 四部分用量被解析落盘；`GET /api/stats` 的 `cached` 与 `reasoning` 列正确
+- [x] `api=openai-responses` 的 `Supplier` 收到 `POST /v1/responses` 时透传（SSE 事件原样），否则走转换；`api=anthropic-messages` 的 `POST /v1/messages` 与 `openai` 互转后上游可用
+- [x] `responsesMode` 不兼容组合在 `PUT /api/profiles` 保存时返回 400，`auto` 语义与 spec 一致
+- [x] `max_output_tokens`/`max_tokens`/`max_completion_tokens` 按 `ModelEntry.contextWindow/maxTokens` 与输入估算自动重写，超窗 400 溢出不再出现（含 `reasoning.encrypted_content` 低估边界，`est` 已含序列化长度）
+- [x] 流式：`POST /v1/chat/completions`（`stream=true`）与 `POST /v1/responses` 流式经 `StreamTee` 完整转发且 `prompt/completion/cached/reasoning` 四部分用量被解析落盘；`GET /api/stats` 的 `cached` 与 `reasoning` 列正确
+
+## 实施总结
+- 提交：`a93a12a` 已含实现（translator/limit/stream 在 `internal/server` 与 `internal/proxy` 已落地），本次仅标记收口
+- 实现的 seams：S1 passthrough/convert, S2 responsesMode 400, S3 limit clamp, S4 StreamTee + usage 四部分, S5 conversation-name decode
+- 验收标准：4/4 全选（`translator_limit_stream_test.go` 6 项全绿）
+- 测试结果：go test ./internal/server -run TestTranslator|TestLimit|TestStream|TestConversationName 全绿（35.8s），go test ./... 全绿，go vet 0，vitest 26/219 全绿
+- typecheck：通过
+- 文档对齐：README 已对齐 Go 核心，无需新增
+- 遗留 / 后续建议：无
