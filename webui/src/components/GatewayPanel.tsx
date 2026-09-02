@@ -58,7 +58,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setConflicts(conf);
       if (typeof pending === "number") setBackendPending(pending);
       else setBackendPending(null);
-      const src = prop ?? cur ?? {};
+      const src = cur ?? prop ?? {};
       setDraft(src);
       const rec = asRecord(src);
       setApiType((rec.api as string) || "openai-completions");
