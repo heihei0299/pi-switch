@@ -128,7 +128,14 @@ func narrowToChannel(prof config.ProviderProfile, upsIdx int) config.ProviderPro
 	if upsIdx < 0 || upsIdx >= len(ups) {
 		return prof
 	}
-	prof.Upstreams = []config.Upstream{ups[upsIdx]}
+	ch := ups[upsIdx]
+	if ch.API != "" {
+		prof.API = ch.API
+	}
+	if ch.ResponsesMode != "" {
+		prof.ResponsesMode = ch.ResponsesMode
+	}
+	prof.Upstreams = []config.Upstream{ch}
 	return prof
 }
 
