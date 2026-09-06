@@ -69,11 +69,21 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
-      setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+      setDrafts(
+        models.map((m) => {
+          const e = m as ModelEntry;
+          const parts = e.id.split("/");
+          const displayId = parts.length === 3 ? `${parts[0]}/${parts[2]}` : e.id;
+          return draftFromEntry({ ...e, id: displayId } as ModelEntry);
+        }),
+      );
       // 分组与二次勾选：groups/removed 透出（旧后端缺省为空），默认全选并集。
-      const propModels = Array.isArray((prop as any)?.models) ? ((prop as any).models as Array<{ id?: unknown }>) : [];
-      const propIds = propModels.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
-      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      const toShort = (id: string) => {
+        const p = id.split("/");
+        return p.length === 3 ? `${p[0]}/${p[2]}` : id;
+      };
+      const propIds = propModels.map((m) => String((m as any)?.id ?? "")).filter(Boolean).map(toShort);
+      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean).map(toShort);
       setGroups(Array.isArray((preview as any).groups) ? ((preview as any).groups as PreviewGroup[]) : []);
       setRemovedIds(Array.isArray((preview as any).removed) ? ((preview as any).removed as string[]) : []);
       setChecked(new Set([...propIds, ...draftIds]));
@@ -221,6 +231,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
 
   function gatewayIdOf(g: PreviewGroup, itemId: string): string {
     return g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
+  }
+  function displayGatewayId(g: PreviewGroup, itemId: string): string {
+    // 前端展示隐藏 channel 段，仅显示 supplier/model
+    return `${g.supplier}/${itemId}`;
   }
 
   // 二次勾选子集：按勾选过滤发布模型；有草稿行优先用用户编辑，无行用候选/已注入原文。
@@ -432,7 +446,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                           onChange={() => toggleChecked(gid)}
                           className="h-3.5 w-3.5 accent-amber-400"
                         />
-                        <span className="font-mono">{gid}</span>
+                        <span className="font-mono">{displayGatewayId(g, m.id)}</span>
                         <span className={m.status === "published" ? "text-emerald-400" : "text-amber-300"}>
                           {m.status === "published" ? "已发布" : "待发布"}
                         </span>
@@ -454,7 +468,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                       onChange={() => toggleChecked(id)}
                       className="h-3.5 w-3.5 accent-amber-400"
                     />
-                    <span className="font-mono">{id}</span>
+                    <span className="font-mono">{(() => { const p = id.split("/"); return p.length === 3 ? `${p[0]}/${p[2]}` : id; })()}</span>
                   </label>
                 ))}
               </div>
