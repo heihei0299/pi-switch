@@ -14,7 +14,10 @@ import (
 )
 
 var (
-	version   = "20260831.1.0-go"
+	// Version is the single source of truth in package.json and is injected
+	// at build time via ldflags (-X main.version=...); "dev" means a plain
+	// `go build` without the npm build scripts.
+	version   = "dev"
 	buildTime = "unknown"
 )
 

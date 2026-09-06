@@ -106,7 +106,8 @@ jobs:
         run: |
           ext=""
           if [[ "${{ matrix.goos }}" == "windows" ]]; then ext=".exe"; fi
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "-s -w" -o "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/pi-switch
+          ver=$(node -p "require('./package.json').version")
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "-s -w -X main.version=$ver -X github.com/heihei0299/pi-switch/internal/server.Version=$ver" -o "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/pi-switch
           ls -lh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
 
       - name: Upload artifact

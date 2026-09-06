@@ -52,7 +52,7 @@ npm install
 npm run build              # 构建 webui/dist + go build（通过 embed.FS 嵌入 webui）
 # 或分步：
 # npm run build:webui      # vite 构建 → webui/dist
-# npm run build:go         # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch（嵌入 webui/dist）
+# npm run build:go         # go build，通过 ldflags 从 package.json 注入版本号（嵌入 webui/dist）
 node bin/pi-switch.js webui start --daemon
 # 打开 http://127.0.0.1:43110
 ```
@@ -469,7 +469,7 @@ pi-switch proxy start --daemon
 ```bash
 npm run build                    # 一次性：构建 webui/dist + go build（通过 embed.FS 嵌入）
 npm run build:webui              # vite 构建 → webui/dist
-npm run build:go                 # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch（嵌入 webui/dist）
+npm run build:go                 # go build，通过 ldflags 从 package.json 注入版本号（嵌入 webui/dist）
 go test ./...                    # Go 集成测试
 go vet ./...                     # Vet
 NODE_ENV=test npx --prefix webui vitest run  # WebUI 测试

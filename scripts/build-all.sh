@@ -9,7 +9,8 @@ if [ ! -d "webui/dist" ] || [ -z "$(ls -A webui/dist 2>/dev/null)" ]; then
 fi
 
 mkdir -p bin
-BUILD_FLAGS='-s -w'
+VER=$(node -p "require('./package.json').version")
+BUILD_FLAGS="-s -w -X main.version=$VER -X github.com/heihei0299/pi-switch/internal/server.Version=$VER"
 for GOOS in linux darwin windows; do
   for GOARCH in amd64 arm64; do
     EXT=""

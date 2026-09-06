@@ -1,6 +1,6 @@
 {
   "name": "@heihei0299/pi-switch",
-  "version": "20260902.0.0",
+  "version": "20260906.0.0",
   "description": "Lightweight profile switcher for pi models.json",
   "type": "module",
   "bin": {
@@ -15,9 +15,9 @@
   "scripts": {
     "build": "npm run build:webui && npm run build:go",
     "build:webui": "npm --prefix webui install && npm --prefix webui run build",
-    "build:go": "go build -ldflags \"-s -w\" -o bin/pi-switch ./cmd/pi-switch",
+    "build:go": "go build -ldflags \"-s -w -X main.version=$npm_package_version -X github.com/heihei0299/pi-switch/internal/server.Version=$npm_package_version\" -o bin/pi-switch ./cmd/pi-switch",
     "build:all": "bash scripts/build-all.sh",
-    "build:go:current": "go build -ldflags \"-s -w\" -o bin/pi-switch-$(go env GOOS)-$(go env GOARCH) ./cmd/pi-switch",
+    "build:go:current": "go build -ldflags \"-s -w -X main.version=$npm_package_version -X github.com/heihei0299/pi-switch/internal/server.Version=$npm_package_version\" -o bin/pi-switch-$(go env GOOS)-$(go env GOARCH) ./cmd/pi-switch",
     "dev:webui": "npm --prefix webui run dev",
     "doctor": "node ./bin/pi-switch.js doctor",
     "test": "go test ./...",

@@ -41,7 +41,7 @@ const bin = resolveBin();
 if (!bin) {
   console.error(`Error: Go binary not found for ${process.platform}/${process.arch}.`);
   console.error(`Expected: bin/pi-switch-${platformMap[process.platform]||process.platform}-${archMap[process.arch]||process.arch}${(platformMap[process.platform]==='windows' || process.platform==='win32') ? '.exe' : ''}`);
-  console.error(`Build with: npm run build:webui && go build -ldflags "-s -w" -o bin/pi-switch-${platformMap[process.platform]||process.platform}-${archMap[process.arch]||process.arch} ./cmd/pi-switch`);
+  console.error(`Build with: npm run build:webui && npm run build:go:current`);
   console.error(`Or set PI_SWITCH_GO_BIN=/path/to/binary`);
   process.exit(1);
 }

@@ -52,7 +52,7 @@ npm install
 npm run build              # builds webui/dist + go build (embeds webui via embed.FS)
 # or step by step:
 # npm run build:webui      # vite build → webui/dist
-# npm run build:go         # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch (embeds webui/dist)
+# npm run build:go         # go build with version injected from package.json via ldflags (embeds webui/dist)
 node bin/pi-switch.js webui start --daemon
 # open http://127.0.0.1:43110
 ```
@@ -476,7 +476,7 @@ Everything under `~/.pi-switch/`. Pi's own registry is `~/.pi/agent/models.json`
 ```bash
 npm run build                    # one-shot: webui/dist + go build (embed.FS)
 npm run build:webui              # vite build → webui/dist
-npm run build:go                 # go build -ldflags "-s -w" -o bin/pi-switch ./cmd/pi-switch (embeds webui/dist)
+npm run build:go                 # go build with version injected from package.json via ldflags (embeds webui/dist)
 npm run build:all                # cross-compile linux/darwin/windows × amd64/arm64 → bin/pi-switch-*
 go test ./...                    # Go integration tests (48+)
 NODE_ENV=test npx --prefix webui vitest run  # WebUI tests (199)
