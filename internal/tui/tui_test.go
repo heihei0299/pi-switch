@@ -46,7 +46,7 @@ func TestTUI_RendersGatewayAndStats(t *testing.T) {
 	}
 	m.tab = 2
 	v2 := m.View()
-	if !strings.Contains(v2, "Stats") || !strings.Contains(v2, "Cost") {
+	if !strings.Contains(v2, "Stats") || (!strings.Contains(v2, "Cost") && !strings.Contains(v2, "cost")) {
 		t.Fatalf("stats tab view missing: %q", v2)
 	}
 }

@@ -37,12 +37,12 @@ func TestProxyModels_ChannelPrefixedIDs(t *testing.T) {
 	for _, m := range data {
 		ids[m.(map[string]interface{})["id"].(string)] = true
 	}
-	for _, want := range []string{"sup/main/m1", "leg/old"} {
+	for _, want := range []string{"sup/main/m1", "leg/old", "sup/m1"} {
 		if !ids[want] {
 			t.Fatalf("ids = %v, want %q", ids, want)
 		}
 	}
-	for _, absent := range []string{"sup/bk/m1", "sup/m1", "empty/hid"} {
+	for _, absent := range []string{"sup/bk/m1", "empty/hid"} {
 		if ids[absent] {
 			t.Fatalf("ids = %v, must not contain %q", ids, absent)
 		}

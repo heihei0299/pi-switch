@@ -3180,6 +3180,8 @@ func handleModels(c *gin.Context) {
 	for name, prof := range cfg.Profiles {
 		// 空 exposed = 不暴露（与网关发布一致），不回退到全部 Models。
 		if prof.HasChannelPartitions() {
+			// 收集 3 段全限定，并统计短别名唯一性
+			modelToChannels := map[string][]string{}
 			for i := range prof.Upstreams {
 				ch := prof.ChannelName(i)
 				_, exposed := prof.ChannelView(ch)
@@ -3190,6 +3192,18 @@ func handleModels(c *gin.Context) {
 					}
 					seen[id] = true
 					data = append(data, map[string]interface{}{"id": id, "object": "model", "owned_by": name})
+					modelToChannels[mid] = append(modelToChannels[mid], ch)
+				}
+			}
+			// 短别名：仅当模型在单一渠道唯一时暴露 oc/model
+			for mid, chs := range modelToChannels {
+				if len(chs) == 1 {
+					shortID := name + "/" + mid
+					if seen[shortID] {
+						continue
+					}
+					seen[shortID] = true
+					data = append(data, map[string]interface{}{"id": shortID, "object": "model", "owned_by": name})
 				}
 			}
 			continue
@@ -3611,6 +3625,8 @@ func handleChatCompletions(c *gin.Context) {
 		}
 	}
 	if pinnedChannel == "" {
+		matched := -1
+		matchCount := 0
 		for i, ups := range prof.ResolvedUpstreams() {
 			chName := ""
 			if ups.Name != nil {
@@ -3619,12 +3635,21 @@ func handleChatCompletions(c *gin.Context) {
 			_, exposed := prof.ChannelView(chName)
 			for _, eid := range exposed {
 				if eid == realModel {
-					prof = narrowToChannel(prof, i)
-					goto channelFound
+					if matched == -1 {
+						matched = i
+					}
+					matchCount++
+					break
 				}
 			}
 		}
-	channelFound:
+		if matchCount > 1 {
+			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", requestedModel, name, matchCount, name, realModel), "type": "ambiguous"}})
+			return
+		}
+		if matched != -1 {
+			prof = narrowToChannel(prof, matched)
+		}
 	}
 	base := prof.PrimaryBaseURL()
 	if base == "" {
@@ -3857,6 +3882,8 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		}
 	}
 	if pinnedChannel == "" {
+		matched := -1
+		matchCount := 0
 		for i, ups := range prof.ResolvedUpstreams() {
 			chName := ""
 			if ups.Name != nil {
@@ -3865,12 +3892,21 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			_, exposed := prof.ChannelView(chName)
 			for _, eid := range exposed {
 				if eid == realModel {
-					prof = narrowToChannel(prof, i)
-					goto channelFoundStream
+					if matched == -1 {
+						matched = i
+					}
+					matchCount++
+					break
 				}
 			}
 		}
-	channelFoundStream:
+		if matchCount > 1 {
+			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s/%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", name, realModel, name, matchCount, name, realModel), "type": "ambiguous"}})
+			return
+		}
+		if matched != -1 {
+			prof = narrowToChannel(prof, matched)
+		}
 	}
 	base := prof.PrimaryBaseURL()
 	if base == "" {

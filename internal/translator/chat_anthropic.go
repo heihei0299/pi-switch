@@ -11,14 +11,14 @@ func ChatToResponses(body map[string]interface{}) map[string]interface{} {
 		for _, m := range msgs {
 			if pm, ok := m.(map[string]interface{}); ok {
 				role, _ := pm["role"].(string)
-				content := pm["content"]
+				content := normalizeChatContent(pm["content"])
 				if role == "system" {
 					continue
 				}
 				input = append(input, map[string]interface{}{"role": role, "content": content})
 			}
 		}
-	}
+}
 	out := map[string]interface{}{
 		"model": body["model"],
 		"input": input,
@@ -45,6 +45,56 @@ func ChatToResponses(body map[string]interface{}) map[string]interface{} {
 	}
 	if tools, ok := body["tools"]; ok {
 		out["tools"] = tools
+	}
+	return out
+}
+func normalizeChatContent(content interface{}) interface{} {
+	if s, ok := content.(string); ok {
+		return []interface{}{map[string]interface{}{"type": "input_text", "text": s}}
+	}
+	arr, ok := content.([]interface{})
+	if !ok {
+		return content
+	}
+	out := make([]interface{}, 0, len(arr))
+	for _, part := range arr {
+		pm, ok := part.(map[string]interface{})
+		if !ok {
+			out = append(out, part)
+			continue
+		}
+		typ, _ := pm["type"].(string)
+		switch typ {
+		case "text":
+			t, _ := pm["text"].(string)
+			out = append(out, map[string]interface{}{"type": "input_text", "text": t})
+		case "image_url":
+			var url string
+			switch v := pm["image_url"].(type) {
+			case string:
+				url = v
+			case map[string]interface{}:
+				if u, ok := v["url"].(string); ok {
+					url = u
+				}
+			}
+			if url == "" {
+				if u, ok := pm["url"].(string); ok {
+					url = u
+				}
+			}
+			out = append(out, map[string]interface{}{"type": "input_image", "image_url": url})
+		case "input_text", "input_image", "output_text":
+			// already Responses shaped or legacy, normalize output_text as well
+			if typ == "output_text" {
+				t, _ := pm["text"].(string)
+				out = append(out, map[string]interface{}{"type": "input_text", "text": t})
+			} else {
+				out = append(out, pm)
+			}
+		default:
+			out = append(out, pm)
+		}
 	}
 	return out
 }

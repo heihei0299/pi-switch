@@ -335,7 +335,7 @@ func convertResponsesInput(items []interface{}) ([]interface{}, error) {
 			if role == "" {
 				role = "user"
 			}
-			content := m["content"]
+			content := normalizeResponsesContent(m["content"])
 			msg := map[string]interface{}{"role": role, "content": content}
 			if role == "assistant" {
 				if calls := extractEmbeddedFunctionCalls(&msg); calls != nil {
@@ -346,6 +346,48 @@ func convertResponsesInput(items []interface{}) ([]interface{}, error) {
 		}
 	}
 	return messages, nil
+}
+func normalizeResponsesContent(content interface{}) interface{} {
+	arr, ok := content.([]interface{})
+	if !ok {
+		return content
+	}
+	out := make([]interface{}, 0, len(arr))
+	for _, part := range arr {
+		pm, ok := part.(map[string]interface{})
+		if !ok {
+			out = append(out, part)
+			continue
+		}
+		typ, _ := pm["type"].(string)
+		switch typ {
+		case "input_text":
+			t, _ := pm["text"].(string)
+			out = append(out, map[string]interface{}{"type": "text", "text": t})
+		case "input_image":
+			var url string
+			switch v := pm["image_url"].(type) {
+			case string:
+				url = v
+			case map[string]interface{}:
+				if u, ok := v["url"].(string); ok {
+					url = u
+				}
+			}
+			if url == "" {
+				if u, ok := pm["url"].(string); ok {
+					url = u
+				}
+			}
+			out = append(out, map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}})
+		case "output_text":
+			t, _ := pm["text"].(string)
+			out = append(out, map[string]interface{}{"type": "text", "text": t})
+		default:
+			out = append(out, pm)
+		}
+	}
+	return out
 }
 
 func extractEmbeddedFunctionCalls(message *map[string]interface{}) []interface{} {
