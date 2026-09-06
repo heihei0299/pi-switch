@@ -70,6 +70,10 @@ func ensureLegacyImported(db *sql.DB) {
 // importLegacyLog scans path from offset and inserts absent rows.
 // Returns imported/skipped counts; completed=false on read error
 // (fingerprint must not advance, so the next call retries).
+// The write side is wrapped in a single transaction for 23k-line
+// imports so the daemon health window is not the bottleneck; when
+// called in the background (ImportLegacyOnStartup) the listener is
+// already up, but the transaction still avoids 23k autocommits.
 func importLegacyLog(db *sql.DB, path string, offset int64) (imported, skipped int, completed bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -87,6 +91,33 @@ func importLegacyLog(db *sql.DB, path string, offset int64) (imported, skipped i
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	completed = true
+	tx, err := db.Begin()
+	if err != nil {
+		tx = nil
+	}
+	if tx != nil {
+		defer func() {
+			if completed {
+				_ = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+		}()
+	}
+	execDB := func(q string, args ...interface{}) (int64, error) {
+		var res sql.Result
+		var e error
+		if tx != nil {
+			res, e = tx.Exec(q, args...)
+		} else {
+			res, e = db.Exec(q, args...)
+		}
+		if e != nil {
+			return 0, e
+		}
+		n, _ := res.RowsAffected()
+		return n, nil
+	}
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
@@ -97,12 +128,46 @@ func importLegacyLog(db *sql.DB, path string, offset int64) (imported, skipped i
 			skipped++
 			continue
 		}
-		ins, ok := insertLegacyRow(db, v)
-		if !ok || !ins {
+		ts := legacyStr(v, "ts")
+		if ts == "" {
 			skipped++
 			continue
 		}
-		imported++
+		b, hasSuccess := v["ok"].(bool)
+		if !hasSuccess {
+			skipped++
+			continue
+		}
+		provider := legacyStr(v, "provider")
+		model := legacyStr(v, "model")
+		pt := legacyInt(v, "promptTokens")
+		ct := legacyInt(v, "completionTokens")
+		cached := legacyInt(v, "cachedTokens")
+		reasoning := legacyInt(v, "reasoningTokens")
+		var costVal interface{}
+		if f, ok := v["costTotal"].(float64); ok {
+			costVal = f
+		}
+		convID := legacyStr(v, "conversationId")
+		convName := legacyStr(v, "conversationName")
+		succ := 0
+		if b {
+			succ = 1
+		}
+		n, err := execDB(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms)
+			SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (
+				SELECT 1 FROM requests WHERE ts=? AND provider=? AND model=? AND prompt_tokens=? AND completion_tokens=?
+			)`, ts, provider, model, succ, pt, ct, cached, reasoning, costVal, convID, convName, nil,
+			ts, provider, model, pt, ct)
+		if err != nil {
+			skipped++
+			continue
+		}
+		if n == 1 {
+			imported++
+		} else {
+			skipped++
+		}
 	}
 	if err := sc.Err(); err != nil {
 		completed = false
@@ -225,12 +290,15 @@ func requestURLOf(resp *http.Response) string {
 }
 
 // ImportLegacyOnStartup imports requests.log history once at process start.
-// Called from the serving entrypoints (not the routers, which tests also
-// construct); failures are swallowed so startup never breaks.
+// Runs in a background goroutine so it never blocks the HTTP listener
+// (23k lines with per-row INSERT would exceed the daemon health window).
+// Failures are swallowed so startup never breaks.
 func ImportLegacyOnStartup() {
-	db, err := store.GetDB()
-	if err != nil {
-		return
-	}
-	ensureLegacyImported(db)
+	go func() {
+		db, err := store.GetDB()
+		if err != nil {
+			return
+		}
+		ensureLegacyImported(db)
+	}()
 }
