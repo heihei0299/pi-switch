@@ -245,6 +245,7 @@ func NewMgmtRouter() *gin.Engine {
 		api.POST("/config/import", handleConfigImportStub)
 		api.POST("/config/restore", handleConfigRestoreStub)
 		api.GET("/buildInfo", handleBuildInfo)
+		api.GET("/dumps", handleDumps)
 	}
 	// static webui
 	r.GET("/", handleWebUIIndex)
@@ -3397,7 +3398,38 @@ func incomingProtocol(path string) string {
 	}
 }
 
+func estimateEffectiveLen(body map[string]interface{}, rawLen int) int {
+	// For reasoning.encrypted_content base64 dense (≈2.5 chars/token vs 3 for normal text),
+	// effectiveLen = rawLen + 0.2*encryptedLen so that est = effectiveLen/3 = (raw-encrypted)/3 + encrypted/2.5
+	var encryptedLen int
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch vv := v.(type) {
+		case map[string]interface{}:
+			for k, val := range vv {
+				if k == "encrypted_content" {
+					if s, ok := val.(string); ok {
+						encryptedLen += len(s)
+					}
+				}
+				walk(val)
+			}
+		case []interface{}:
+			for _, e := range vv {
+				walk(e)
+			}
+		}
+	}
+	walk(body)
+	if encryptedLen > 0 {
+		extra := int(math.Ceil(float64(encryptedLen) * 0.2))
+		return rawLen + extra
+	}
+	return rawLen
+}
+
 func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLen int) {
+	effectiveLen := estimateEffectiveLen(body, rawLen)
 	for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
 		if v, ok := body[key]; ok {
 			var req int
@@ -3410,7 +3442,7 @@ func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLe
 				continue
 			}
 			reqCopy := req
-			clamped := limit.ClampMaxTokens(modelEntry.ContextWindow, modelEntry.MaxTokens, rawLen, &reqCopy)
+			clamped := limit.ClampMaxTokens(modelEntry.ContextWindow, modelEntry.MaxTokens, effectiveLen, &reqCopy)
 			if clamped != req {
 				body[key] = float64(clamped)
 			}
@@ -3585,6 +3617,93 @@ func handleChatCompletions(c *gin.Context) {
 	respBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		bodyStr := string(respBody)
+		shouldRetry := resp.StatusCode == 400 && strings.Contains(bodyStr, "invalid_request_error")
+		if shouldRetry {
+			// Retry once with max_output_tokens=16 (and other max keys) to recover from context overflow.
+			bcopy2 := cloneMap(bcopy)
+			for _, k := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
+				bcopy2[k] = float64(16)
+			}
+			convBody2, convErr2 := plan.TransformRequest(realModel, bcopy2)
+			if convErr2 == nil {
+				for _, k := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
+					if _, ok := convBody2[k]; ok {
+						convBody2[k] = float64(16)
+					}
+				}
+				// Also ensure max_output_tokens is present for Responses
+				if _, ok := convBody2["max_output_tokens"]; !ok {
+					convBody2["max_output_tokens"] = float64(16)
+				}
+				clampBody(convBody2, modelEntry, rawLen)
+				bbytes2, _ := json.Marshal(convBody2)
+				u2 := buildUpstreamURL(base, upstreamPath)
+				req2, err2 := http.NewRequest("POST", u2, bytes.NewReader(bbytes2))
+				if err2 == nil {
+					req2.Header.Set("Content-Type", "application/json")
+					if apiKey != "" {
+						req2.Header.Set("Authorization", "Bearer "+apiKey)
+					}
+					for k, v := range headers {
+						req2.Header.Set(k, v)
+					}
+					req2.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
+					client2 := &http.Client{Timeout: 30 * time.Second}
+					resp2, err2 := client2.Do(req2)
+					if err2 == nil {
+						respBody2, _ := io.ReadAll(resp2.Body)
+						resp2.Body.Close()
+						if resp2.StatusCode < 400 {
+							// Success on retry: handle as normal success
+							finalBody2 := respBody2
+							finalHeaders2 := resp2.Header
+							if needRespConvert {
+								var upstreamObj map[string]interface{}
+								if err := json.Unmarshal(respBody2, &upstreamObj); err == nil {
+									if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
+										b, _ := json.Marshal(conv)
+										finalBody2 = b
+										finalHeaders2 = http.Header{}
+										finalHeaders2.Set("Content-Type", "application/json")
+									}
+								}
+							}
+							var respObj map[string]interface{}
+							_ = json.Unmarshal(finalBody2, &respObj)
+							usagePrompt, usageCompletion, usageCached, usageReasoning := extractUsage(respObj)
+							if usagePrompt == 0 && usageCompletion == 0 {
+								if s := usage.ExtractUsage(respObj); s != nil {
+									usagePrompt = int(s.PromptTokens)
+									usageCompletion = int(s.CompletionTokens)
+									usageCached = int(s.CachedTokens)
+									usageReasoning = int(s.ReasoningTokens)
+								}
+							}
+							cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
+							latMs := time.Since(start).Milliseconds()
+							logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp2.StatusCode, "", u2)
+							for k, vv := range finalHeaders2 {
+								for _, v := range vv {
+									if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+										continue
+									}
+									c.Header(k, v)
+								}
+							}
+							ct := finalHeaders2.Get("Content-Type")
+							if ct == "" {
+								ct = "application/json"
+							}
+							c.Data(resp2.StatusCode, ct, finalBody2)
+							return
+						}
+						// Retry also failed: fall through to original 400 handling but log retry body
+						_ = respBody2
+					}
+				}
+			}
+		}
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
 		return
@@ -3987,7 +4106,56 @@ func logRequest(provider, model string, success bool, prompt, completion, cached
 	_, _ = db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency)
 	appendLegacyLog(legacyLogEntry(ts, provider, model, success, prompt, completion, cached, reasoning, cost, convID, convName, status, errMsg, upstreamURL))
-	_ = math.Ceil
+}
+
+func dump400(model, errMsg string, body []byte) {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".pi-switch", "400-dump")
+	_ = os.MkdirAll(dir, 0755)
+	ts := time.Now().Format("20060102-150405")
+	safeModel := strings.ReplaceAll(model, "/", "-")
+	if safeModel == "" {
+		safeModel = "unknown"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%s.json", ts, safeModel))
+	// Keep only last 10
+	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	if len(files) >= 10 {
+		// Remove oldest (lexicographically first is oldest due to ts prefix)
+		_ = os.Remove(files[0])
+	}
+	payload := map[string]interface{}{
+		"ts":    time.Now().Format(time.RFC3339),
+		"model": model,
+		"error": errMsg,
+		"body":  string(body[:min(len(body), 8192)]),
+	}
+	b, _ := json.MarshalIndent(payload, "", "  ")
+	_ = os.WriteFile(path, b, 0644)
+}
+
+func handleDumps(c *gin.Context) {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".pi-switch", "400-dump")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		c.JSON(200, []interface{}{})
+		return
+	}
+	var out []map[string]interface{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		var m map[string]interface{}
+		if err := json.Unmarshal(b, &m); err == nil {
+			out = append(out, map[string]interface{}{"file": e.Name(), "data": m})
+		} else {
+			out = append(out, map[string]interface{}{"file": e.Name()})
+		}
+	}
+	c.JSON(200, out)
 }
 
 func effectiveConversationID(convID, convName sql.NullString, provider, model, ts sql.NullString, source string) (string, string) {
