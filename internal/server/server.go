@@ -1366,14 +1366,270 @@ func handleGatewayStart(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": cfg.Settings.ProviderPrefix})
 }
-func handlePackagesList(c *gin.Context) { c.JSON(200, gin.H{"packages": []interface{}{}}) }
-func handlePackageAdd(c *gin.Context)   { c.JSON(200, gin.H{"ok": true}) }
-func handlePackageImport(c *gin.Context) {
-	c.JSON(200, gin.H{"ok": true, "count": 0, "message": "imported 0"})
+func piSwitchDBPath() string {
+	if p := os.Getenv("PI_SWITCH_DB"); p != "" {
+		return filepath.Join(filepath.Dir(p), "pi-switch.db")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "/tmp/pi-switch.db"
+	}
+	return filepath.Join(home, ".pi-switch", "pi-switch.db")
 }
-func handlePackageGet(c *gin.Context)    { c.JSON(404, gin.H{"error": "not found"}) }
-func handlePackageDelete(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) }
-func handlePackageToggle(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) }
+
+func openPiSwitchDB() (*sql.DB, error) {
+	path := piSwitchDBPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS packages (
+	    id TEXT PRIMARY KEY,
+	    spec TEXT NOT NULL,
+	    type TEXT NOT NULL,
+	    name TEXT NOT NULL,
+	    version TEXT,
+	    description TEXT,
+	    homepage TEXT,
+	    has_extensions INTEGER NOT NULL DEFAULT 0,
+	    has_skills INTEGER NOT NULL DEFAULT 0,
+	    has_prompts INTEGER NOT NULL DEFAULT 0,
+	    has_themes INTEGER NOT NULL DEFAULT 0,
+	    installed INTEGER NOT NULL DEFAULT 0,
+	    enabled INTEGER NOT NULL DEFAULT 1,
+	    installed_at INTEGER,
+	    updated_at INTEGER,
+	    package_json TEXT
+	  )`)
+	return db, nil
+}
+
+func piAgentSettingsPath() string {
+	if p := os.Getenv("PI_AGENT_SETTINGS"); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "/tmp/pi-agent-settings.json"
+	}
+	return filepath.Join(home, ".pi", "agent", "settings.json")
+}
+
+func parsePackageSpec(spec string) (typ, name string) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "unknown", spec
+	}
+	if idx := strings.Index(spec, ":"); idx >= 0 {
+		typ = spec[:idx]
+		name = spec[idx+1:]
+		if typ == "" {
+			typ = "npm"
+		}
+		if name == "" {
+			name = spec
+		}
+		return typ, name
+	}
+	if strings.HasPrefix(spec, ".") || strings.HasPrefix(spec, "/") {
+		typ = "local"
+		name = filepath.Base(spec)
+		if name == "." || name == "" {
+			name = spec
+		}
+		return typ, name
+	}
+	return "npm", spec
+}
+
+func handlePackagesList(c *gin.Context) {
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(200, gin.H{"packages": []interface{}{}})
+		return
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT id, spec, type, name, version, has_extensions, has_skills, has_prompts, has_themes, installed, enabled, installed_at FROM packages WHERE installed=1 ORDER BY name`)
+	if err != nil {
+		c.JSON(200, gin.H{"packages": []interface{}{}})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]interface{}{}
+	for rows.Next() {
+		var id, spec, typ, name sql.NullString
+		var version sql.NullString
+		var hasExt, hasSkills, hasPrompts, hasThemes, installed, enabled sql.NullInt64
+		var installedAt sql.NullInt64
+		if err := rows.Scan(&id, &spec, &typ, &name, &version, &hasExt, &hasSkills, &hasPrompts, &hasThemes, &installed, &enabled, &installedAt); err != nil {
+			continue
+		}
+		m := map[string]interface{}{
+			"id":      id.String,
+			"spec":    spec.String,
+			"type":    typ.String,
+			"name":    name.String,
+			"version": version.String,
+			"hasExtensions": hasExt.Int64 == 1,
+			"hasSkills":     hasSkills.Int64 == 1,
+			"hasPrompts":    hasPrompts.Int64 == 1,
+			"hasThemes":     hasThemes.Int64 == 1,
+			"installed": installed.Int64 == 1,
+			"enabled":   enabled.Int64 == 1,
+		}
+		if installedAt.Valid && installedAt.Int64 != 0 {
+			var t time.Time
+			if installedAt.Int64 > 1e12 {
+				sec := installedAt.Int64 / 1000
+				nsec := (installedAt.Int64 % 1000) * int64(time.Millisecond)
+				t = time.Unix(sec, nsec)
+			} else {
+				t = time.Unix(installedAt.Int64, 0)
+			}
+			m["installedAt"] = t.Format(time.RFC3339)
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []map[string]interface{}{}
+	}
+	c.JSON(200, gin.H{"packages": out})
+}
+func handlePackageAdd(c *gin.Context) {
+	var body struct {
+		Spec    string `json:"spec"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Spec) == "" {
+		c.JSON(400, gin.H{"error": "spec required"})
+		return
+	}
+	spec := strings.TrimSpace(body.Spec)
+	typ, name := parsePackageSpec(spec)
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+	enabled := 1
+	if body.Enabled != nil && !*body.Enabled {
+		enabled = 0
+	}
+	now := time.Now().UnixMilli()
+	_, err = db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET spec=excluded.spec, type=excluded.type, name=excluded.name, installed=1, enabled=excluded.enabled, updated_at=excluded.updated_at` , spec, spec, typ, name, 1, enabled, now, now)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true, "id": spec})
+}
+func handlePackageImport(c *gin.Context) {
+	path := piAgentSettingsPath()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		c.JSON(200, gin.H{"ok": true, "count": 0, "message": "no pi agent settings"})
+		return
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		c.JSON(500, gin.H{"error": "invalid pi agent settings"})
+		return
+	}
+	var pkgs []string
+	if v, ok := raw["packages"]; ok {
+		_ = json.Unmarshal(v, &pkgs)
+	}
+	if pkgs == nil {
+		c.JSON(200, gin.H{"ok": true, "count": 0, "message": "imported 0"})
+		return
+	}
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+	count := 0
+	now := time.Now().UnixMilli()
+	for _, spec := range pkgs {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		typ, name := parsePackageSpec(spec)
+		_, err := db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET installed=1, updated_at=excluded.updated_at` , spec, spec, typ, name, 1, 1, now, now)
+		if err == nil {
+			count++
+		}
+	}
+	c.JSON(200, gin.H{"ok": true, "count": count, "message": fmt.Sprintf("imported %d", count)})
+}
+func handlePackageGet(c *gin.Context) {
+	id := c.Param("id")
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+	var dbId, spec, typ, name, version sql.NullString
+	var hasExt, hasSkills, hasPrompts, hasThemes, installed, enabled sql.NullInt64
+	var installedAt sql.NullInt64
+	err = db.QueryRow(`SELECT id, spec, type, name, version, has_extensions, has_skills, has_prompts, has_themes, installed, enabled, installed_at FROM packages WHERE id=?`, id).Scan(&dbId, &spec, &typ, &name, &version, &hasExt, &hasSkills, &hasPrompts, &hasThemes, &installed, &enabled, &installedAt)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	m := map[string]interface{}{"id": dbId.String, "spec": spec.String, "type": typ.String, "name": name.String, "version": version.String, "hasExtensions": hasExt.Int64 == 1, "hasSkills": hasSkills.Int64 == 1, "hasPrompts": hasPrompts.Int64 == 1, "hasThemes": hasThemes.Int64 == 1, "installed": installed.Int64 == 1, "enabled": enabled.Int64 == 1}
+	if installedAt.Valid && installedAt.Int64 != 0 {
+		var t time.Time
+		if installedAt.Int64 > 1e12 {
+			sec := installedAt.Int64 / 1000
+			nsec := (installedAt.Int64 % 1000) * int64(time.Millisecond)
+			t = time.Unix(sec, nsec)
+		} else {
+			t = time.Unix(installedAt.Int64, 0)
+		}
+		m["installedAt"] = t.Format(time.RFC3339)
+	}
+	c.JSON(200, m)
+}
+func handlePackageDelete(c *gin.Context) {
+	id := c.Param("id")
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+	_, _ = db.Exec(`UPDATE packages SET installed=0, updated_at=? WHERE id=?`, time.Now().UnixMilli(), id)
+	c.JSON(200, gin.H{"ok": true})
+}
+func handlePackageToggle(c *gin.Context) {
+	id := c.Param("id")
+	db, err := openPiSwitchDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+	var enabled int
+	err = db.QueryRow(`SELECT enabled FROM packages WHERE id=?`, id).Scan(&enabled)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	newEnabled := 0
+	if enabled == 0 {
+		newEnabled = 1
+	}
+	_, _ = db.Exec(`UPDATE packages SET enabled=?, updated_at=? WHERE id=?`, newEnabled, time.Now().UnixMilli(), id)
+	c.JSON(200, gin.H{"ok": true, "enabled": newEnabled == 1})
+}
 func handleCcsProviders(c *gin.Context)  { c.JSON(200, gin.H{"providers": []interface{}{}}) }
 func handleCcsImport(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true, "imported": 0, "results": []interface{}{}})

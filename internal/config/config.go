@@ -66,6 +66,11 @@ type ProviderProfile struct {
 	RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
 }
 
+type CircuitBreakerSettings struct {
+	Enabled          bool `json:"enabled"`
+	FailureThreshold int  `json:"failureThreshold"`
+	CooldownSeconds  int  `json:"cooldownSeconds"`
+}
 type Settings struct {
 	ProviderPrefix     string `json:"providerPrefix"`
 	WriteMode          string `json:"writeMode"`
@@ -76,6 +81,7 @@ type Settings struct {
 		Port      int      `json:"port"`
 		Failover  []string `json:"failover,omitempty"`
 		UserAgent *string  `json:"userAgent,omitempty"`
+		CircuitBreaker CircuitBreakerSettings `json:"circuitBreaker"`
 		// RequestRetry is the number of additional credential retry rounds after
 		// round 0 (nil = default 3, negative = default 3, 0 = no additional rounds).
 		RequestRetry *int `json:"requestRetry,omitempty"`
@@ -107,6 +113,7 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 		s.ConversationSource = "sessionScan"
 		s.Proxy.Host = "127.0.0.1"
 		s.Proxy.Port = 43112
+		s.Proxy.CircuitBreaker = CircuitBreakerSettings{Enabled: true, FailureThreshold: 3, CooldownSeconds: 60}
 		s.Web.Host = "127.0.0.1"
 		s.Web.Port = 43110
 		return nil
@@ -173,6 +180,25 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 		s.Web.Host = "127.0.0.1"
 	}
 	if s.Web.Port == 0 {
+	// circuitBreaker defaults (legacy JS compat): when the whole object is zero, backfill
+	if s.Proxy.CircuitBreaker.FailureThreshold == 0 && s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+		// Distinguish explicit "disabled: false with 0 thresholds" from missing object
+		// by checking whether the raw JSON had a "circuitBreaker" key. The Unmarshal above
+		// already filled s.Proxy from the raw "proxy" object, so a missing key leaves zeros.
+		// We treat zeros as "missing" and backfill defaults; an explicit zero-threshold
+		// config is not a valid intentional setting (min 1), so this is safe.
+		if s.Proxy.CircuitBreaker.FailureThreshold == 0 {
+			s.Proxy.CircuitBreaker.FailureThreshold = 3
+		}
+		if s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+			s.Proxy.CircuitBreaker.CooldownSeconds = 60
+		}
+		// enabled defaults to true when the object was missing (zero value false would hide)
+		// but we cannot tell missing vs explicit false. Preserve explicit false only when
+		// thresholds were non-zero. Since we already decided thresholds were zero => missing,
+		// set enabled to true.
+		s.Proxy.CircuitBreaker.Enabled = true
+	}
 		s.Web.Port = 43110
 	}
 	return nil
@@ -211,13 +237,14 @@ func DefaultConfig() PiSwitchConfig {
 				Port                          int                  `json:"port"`
 				Failover                      []string             `json:"failover,omitempty"`
 				UserAgent                     *string              `json:"userAgent,omitempty"`
+				CircuitBreaker                CircuitBreakerSettings `json:"circuitBreaker"`
 				RequestRetry                  *int                 `json:"requestRetry,omitempty"`
 				MaxRetryCredentials           int                  `json:"maxRetryCredentials,omitempty"`
 				MaxRetryInterval              *int                 `json:"maxRetryInterval,omitempty"`
 				DisableCooling                *bool                `json:"disableCooling,omitempty"`
 				TransientErrorCooldownSeconds *int                 `json:"transientErrorCooldownSeconds,omitempty"`
 				RequestScopedErrors           []RequestScopedError `json:"requestScopedErrors,omitempty"`
-			}{Host: "127.0.0.1", Port: 43112},
+			}{Host: "127.0.0.1", Port: 43112, CircuitBreaker: CircuitBreakerSettings{Enabled: true, FailureThreshold: 3, CooldownSeconds: 60}},
 			Web: struct {
 				Host string `json:"host"`
 				Port int    `json:"port"`
@@ -291,6 +318,15 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	}
 	if cfg.Settings.Web.Port == 0 {
 		cfg.Settings.Web.Port = 43110
+	}
+	if cfg.Settings.Proxy.CircuitBreaker.FailureThreshold == 0 && cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+		if cfg.Settings.Proxy.CircuitBreaker.FailureThreshold == 0 {
+			cfg.Settings.Proxy.CircuitBreaker.FailureThreshold = 3
+		}
+		if cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+			cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds = 60
+		}
+		cfg.Settings.Proxy.CircuitBreaker.Enabled = true
 	}
 	if cfg.Version < 2 {
 		cfg.Version = 2

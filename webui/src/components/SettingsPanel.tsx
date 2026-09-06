@@ -17,6 +17,11 @@ export function SettingsPanel({
   const [s, setS] = useState<Settings>(() => {
     const init = JSON.parse(JSON.stringify(state.settings));
     if (!init.conversationSource) init.conversationSource = "sessionScan";
+    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, failover: [], circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
+    if (!init.proxy.circuitBreaker) init.proxy.circuitBreaker = { enabled: true, failureThreshold: 3, cooldownSeconds: 60 };
+    if (init.proxy.circuitBreaker.failureThreshold == null) init.proxy.circuitBreaker.failureThreshold = 3;
+    if (init.proxy.circuitBreaker.cooldownSeconds == null) init.proxy.circuitBreaker.cooldownSeconds = 60;
+    if (init.proxy.circuitBreaker.enabled == null) init.proxy.circuitBreaker.enabled = true;
     return init;
   });
 
@@ -26,7 +31,7 @@ export function SettingsPanel({
   const setCb = (patch: Partial<Settings["proxy"]["circuitBreaker"]>) =>
     setS((prev) => ({
       ...prev,
-      proxy: { ...prev.proxy, circuitBreaker: { ...prev.proxy.circuitBreaker, ...patch } },
+      proxy: { ...prev.proxy, circuitBreaker: { ...(prev.proxy.circuitBreaker ?? { enabled: true, failureThreshold: 3, cooldownSeconds: 60 }), ...patch } },
     }));
   const setWeb = (patch: Partial<Settings["web"]>) =>
     setS((prev) => ({ ...prev, web: { ...prev.web, ...patch } }));
@@ -131,7 +136,7 @@ export function SettingsPanel({
           <label className="flex items-center gap-2 text-sm text-zinc-300">
             <input
               type="checkbox"
-              checked={s.proxy.circuitBreaker.enabled}
+              checked={s.proxy.circuitBreaker?.enabled ?? true}
               onChange={(e) => setCb({ enabled: e.target.checked })}
             />
             {t("Circuit breaker enabled")}
@@ -140,7 +145,7 @@ export function SettingsPanel({
             <Field label={t("Failure threshold")}>
               <Input
                 type="number"
-                value={s.proxy.circuitBreaker.failureThreshold}
+                value={s.proxy.circuitBreaker?.failureThreshold ?? 3}
                 onChange={(e) =>
                   setCb({ failureThreshold: parseInt(e.target.value, 10) || 0 })
                 }
@@ -149,7 +154,7 @@ export function SettingsPanel({
             <Field label={t("Cooldown (seconds)")}>
               <Input
                 type="number"
-                value={s.proxy.circuitBreaker.cooldownSeconds}
+                value={s.proxy.circuitBreaker?.cooldownSeconds ?? 60}
                 onChange={(e) =>
                   setCb({ cooldownSeconds: parseInt(e.target.value, 10) || 0 })
                 }
