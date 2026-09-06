@@ -36,7 +36,10 @@ export interface Upstream {
   headers?: Record<string, string>;
   weight?: number;
   name?: string;
-  [key: string]: unknown;
+  /** 渠道分区模型池（与 Go Upstream.models 同步） */
+  models?: ModelEntry[];
+  /** 渠道分区暴露集（与 Go Upstream.exposedModels 同步） */
+  exposedModels?: string[];
 }
 
 export interface ProviderProfile {
@@ -259,6 +262,17 @@ export interface UsageStats {
   [key: string]: unknown;
 }
 
+// 网关预览分组（与 Go gateway.PreviewGroup 同步）：按供应商/渠道分组的已暴露候选。
+export interface PreviewGroupItem {
+  id: string;
+  status: "published" | "pending";
+}
+
+export interface PreviewGroup {
+  supplier: string;
+  channel: string;
+  models: PreviewGroupItem[];
+}
 export interface PackageEntry {
   id: string;
   name: string;

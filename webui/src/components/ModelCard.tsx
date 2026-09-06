@@ -20,15 +20,18 @@ export function ModelCard({
   onRemove,
   expanded,
   onToggleExpanded,
+  hideExposed,
 }: {
   draft: ModelDraft;
   exposed: boolean;
   onToggleExposed: () => void;
+  hideExposed?: boolean;
   onChange: (next: ModelDraft) => void;
   onRemove: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
-}) {
+}
+) {
   const { t } = useI18n() as any;
   const [costExpanded, setCostExpanded] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
@@ -75,7 +78,8 @@ export function ModelCard({
           <span className={`inline-block text-xs transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
         </button>
 
-        <label className="flex items-center gap-1.5">
+        {!hideExposed && (
+          <label className="flex items-center gap-1.5">
           <input
             type="checkbox"
             checked={exposed}
@@ -83,7 +87,8 @@ export function ModelCard({
             title={t("Checked = exposed")}
             className="h-3.5 w-3.5 rounded border-white/20 bg-zinc-800"
           />
-        </label>
+          </label>
+        )}
 
         <div className="flex min-w-0 flex-1 gap-2">
           <Input

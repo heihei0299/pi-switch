@@ -77,14 +77,16 @@ describe("ProfilesPanel Upstream list增删 (has_upstreams/resolved_upstreams)",
     await waitFor(() => expect(screen.getByText("Manage upstreams")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Manage upstreams"));
     await waitFor(() => expect(screen.getByText("Upstream #1")).toBeInTheDocument());
-    // edit first upstream baseUrl
+    // edit first upstream baseUrl + name（渠道名必填，否则保存被前端拦截）
     const input = screen.getByDisplayValue("http://a/v1") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "http://b/v1" } });
+    fireEvent.change(screen.getByPlaceholderText("upstream-a"), { target: { value: "main" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
     const payload = (update.mock.calls[0] as any[])[1];
     expect(payload.upstreams).toBeDefined();
     expect(payload.upstreams[0].baseUrl).toBe("http://b/v1");
+    expect(payload.upstreams[0].name).toBe("main");
     expect(payload.baseUrl).toBe("http://b/v1");
   });
 

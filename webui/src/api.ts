@@ -15,6 +15,7 @@ import type {
   TestResult,
   UsageStats,
   ValidationIssue,
+  PreviewGroup,
 } from "./types";
 import type { ConversationRange, StatsRange } from "./lib/statsWindow";
 import type { NormalizedCredits } from "./lib/credits";
@@ -102,12 +103,12 @@ export const api = {
     req("POST", `/profiles/${enc(name)}/use`, mode ? { mode } : {}),
   testProfile: (name: string) =>
     req<TestResult>("POST", `/profiles/${enc(name)}/test`),
-  fetchModels: (name: string) =>
-    req<{ models: string[]; enrich?: EnrichStats }>("POST", `/profiles/${enc(name)}/fetch-models`),
-  updateModels: (name: string, models: ModelEntry[]) =>
-    req<{ ok: boolean; backup?: string; enrich?: EnrichStats }>("PUT", `/profiles/${enc(name)}/models`, { models }),
-  expose: (name: string, modelIds: string[]) =>
-    req("PUT", `/profiles/${enc(name)}/expose`, { modelIds }),
+  fetchModels: (name: string, channel?: string) =>
+    req<{ models: string[]; enrich?: EnrichStats }>("POST", `/profiles/${enc(name)}/fetch-models${channel ? `?channel=${enc(channel)}` : ""}`),
+  updateModels: (name: string, models: ModelEntry[], channel?: string) =>
+    req<{ ok: boolean; backup?: string; enrich?: EnrichStats }>("PUT", `/profiles/${enc(name)}/models`, channel ? { models, channel } : { models }),
+  expose: (name: string, modelIds: string[], channel?: string) =>
+    req("PUT", `/profiles/${enc(name)}/expose${channel ? `?channel=${enc(channel)}` : ""}`, { modelIds }),
   setSpoof: (name: string, spoof: string | null) =>
     req("PUT", `/profiles/${enc(name)}/spoof`, { spoof }),
   getCredits: (name: string) =>
@@ -120,7 +121,7 @@ export const api = {
   setFailover: (failover: string[]) => req("PUT", "/proxy/failover", { failover }),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
   getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
-  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number }>("GET", "/models/gateway/preview"),
+  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number; groups?: PreviewGroup[]; removed?: string[] }>("GET", "/models/gateway/preview"),
   applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
   getGatewayHealth: () => req<{ running: boolean; mode: string; gateway_id: string; has_models_file: boolean; last_notify: string | null; upstreams_total: number; message: string }>("GET", "/gateway/health"),
   startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start"),

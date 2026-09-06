@@ -40,6 +40,10 @@ type Upstream struct {
 	RequestRetry *int `json:"requestRetry,omitempty"`
 	// DisableCooling overrides cooling for this channel when non-nil.
 	DisableCooling *bool `json:"disableCooling,omitempty"`
+	// Models / ExposedModels: per-channel partitioned model pool and exposure set.
+	// Nil/empty = unpartitioned (falls back to profile top-level legacy fields).
+	Models        []ModelEntry `json:"models,omitempty"`
+	ExposedModels []string     `json:"exposedModels,omitempty"`
 }
 
 type ProviderProfile struct {
@@ -77,10 +81,10 @@ type Settings struct {
 	GatewayAPI         string `json:"gatewayApi"`
 	ConversationSource string `json:"conversationSource"`
 	Proxy              struct {
-		Host      string   `json:"host"`
-		Port      int      `json:"port"`
-		Failover  []string `json:"failover,omitempty"`
-		UserAgent *string  `json:"userAgent,omitempty"`
+		Host           string                 `json:"host"`
+		Port           int                    `json:"port"`
+		Failover       []string               `json:"failover,omitempty"`
+		UserAgent      *string                `json:"userAgent,omitempty"`
 		CircuitBreaker CircuitBreakerSettings `json:"circuitBreaker"`
 		// RequestRetry is the number of additional credential retry rounds after
 		// round 0 (nil = default 3, negative = default 3, 0 = no additional rounds).
@@ -180,25 +184,25 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 		s.Web.Host = "127.0.0.1"
 	}
 	if s.Web.Port == 0 {
-	// circuitBreaker defaults (legacy JS compat): when the whole object is zero, backfill
-	if s.Proxy.CircuitBreaker.FailureThreshold == 0 && s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-		// Distinguish explicit "disabled: false with 0 thresholds" from missing object
-		// by checking whether the raw JSON had a "circuitBreaker" key. The Unmarshal above
-		// already filled s.Proxy from the raw "proxy" object, so a missing key leaves zeros.
-		// We treat zeros as "missing" and backfill defaults; an explicit zero-threshold
-		// config is not a valid intentional setting (min 1), so this is safe.
-		if s.Proxy.CircuitBreaker.FailureThreshold == 0 {
-			s.Proxy.CircuitBreaker.FailureThreshold = 3
+		// circuitBreaker defaults (legacy JS compat): when the whole object is zero, backfill
+		if s.Proxy.CircuitBreaker.FailureThreshold == 0 && s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+			// Distinguish explicit "disabled: false with 0 thresholds" from missing object
+			// by checking whether the raw JSON had a "circuitBreaker" key. The Unmarshal above
+			// already filled s.Proxy from the raw "proxy" object, so a missing key leaves zeros.
+			// We treat zeros as "missing" and backfill defaults; an explicit zero-threshold
+			// config is not a valid intentional setting (min 1), so this is safe.
+			if s.Proxy.CircuitBreaker.FailureThreshold == 0 {
+				s.Proxy.CircuitBreaker.FailureThreshold = 3
+			}
+			if s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
+				s.Proxy.CircuitBreaker.CooldownSeconds = 60
+			}
+			// enabled defaults to true when the object was missing (zero value false would hide)
+			// but we cannot tell missing vs explicit false. Preserve explicit false only when
+			// thresholds were non-zero. Since we already decided thresholds were zero => missing,
+			// set enabled to true.
+			s.Proxy.CircuitBreaker.Enabled = true
 		}
-		if s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-			s.Proxy.CircuitBreaker.CooldownSeconds = 60
-		}
-		// enabled defaults to true when the object was missing (zero value false would hide)
-		// but we cannot tell missing vs explicit false. Preserve explicit false only when
-		// thresholds were non-zero. Since we already decided thresholds were zero => missing,
-		// set enabled to true.
-		s.Proxy.CircuitBreaker.Enabled = true
-	}
 		s.Web.Port = 43110
 	}
 	return nil
@@ -233,17 +237,17 @@ func DefaultConfig() PiSwitchConfig {
 			GatewayAPI:         "openai-completions",
 			ConversationSource: "sessionScan",
 			Proxy: struct {
-				Host                          string               `json:"host"`
-				Port                          int                  `json:"port"`
-				Failover                      []string             `json:"failover,omitempty"`
-				UserAgent                     *string              `json:"userAgent,omitempty"`
+				Host                          string                 `json:"host"`
+				Port                          int                    `json:"port"`
+				Failover                      []string               `json:"failover,omitempty"`
+				UserAgent                     *string                `json:"userAgent,omitempty"`
 				CircuitBreaker                CircuitBreakerSettings `json:"circuitBreaker"`
-				RequestRetry                  *int                 `json:"requestRetry,omitempty"`
-				MaxRetryCredentials           int                  `json:"maxRetryCredentials,omitempty"`
-				MaxRetryInterval              *int                 `json:"maxRetryInterval,omitempty"`
-				DisableCooling                *bool                `json:"disableCooling,omitempty"`
-				TransientErrorCooldownSeconds *int                 `json:"transientErrorCooldownSeconds,omitempty"`
-				RequestScopedErrors           []RequestScopedError `json:"requestScopedErrors,omitempty"`
+				RequestRetry                  *int                   `json:"requestRetry,omitempty"`
+				MaxRetryCredentials           int                    `json:"maxRetryCredentials,omitempty"`
+				MaxRetryInterval              *int                   `json:"maxRetryInterval,omitempty"`
+				DisableCooling                *bool                  `json:"disableCooling,omitempty"`
+				TransientErrorCooldownSeconds *int                   `json:"transientErrorCooldownSeconds,omitempty"`
+				RequestScopedErrors           []RequestScopedError   `json:"requestScopedErrors,omitempty"`
 			}{Host: "127.0.0.1", Port: 43112, CircuitBreaker: CircuitBreakerSettings{Enabled: true, FailureThreshold: 3, CooldownSeconds: 60}},
 			Web: struct {
 				Host string `json:"host"`
@@ -266,7 +270,75 @@ func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
 	default:
 		out.Settings.ConversationSource = "sessionScan"
 	}
+	for name, prof := range out.Profiles {
+		out.Profiles[name] = MigrateTopLevelToFirstChannel(prof)
+	}
 	return out
+}
+
+// HasChannelPartitions reports whether any upstream carries partitioned
+// models/exposedModels. When false, readers fall back to the profile
+// top-level legacy fields.
+func (p ProviderProfile) HasChannelPartitions() bool {
+	for _, u := range p.Upstreams {
+		if len(u.Models) > 0 || len(u.ExposedModels) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ChannelName returns the stable key of the i-th upstream ("" when unnamed).
+func (p ProviderProfile) ChannelName(i int) string {
+	if i < 0 || i >= len(p.Upstreams) {
+		return ""
+	}
+	if p.Upstreams[i].Name == nil {
+		return ""
+	}
+	return *p.Upstreams[i].Name
+}
+
+// ChannelView returns the effective (models, exposed) for a channel:
+// partitioned data wins; legacy top-level is the fallback only while no
+// partitions exist (unpartitioned channels never inherit top-level once
+// partitioned, preserving cross-channel isolation).
+func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
+	if !p.HasChannelPartitions() {
+		// Legacy mode: top-level serves the primary (first/unnamed) channel.
+		if name == "" || len(p.Upstreams) == 0 || p.ChannelName(0) == name {
+			return p.Models, p.ExposedModels
+		}
+		return nil, nil
+	}
+	for i := range p.Upstreams {
+		if p.ChannelName(i) == name {
+			return p.Upstreams[i].Models, p.Upstreams[i].ExposedModels
+		}
+	}
+	return nil, nil
+}
+
+// MigrateTopLevelToFirstChannel moves legacy top-level models/exposedModels
+// into the first upstream. No-op when there are no upstreams, the first
+// channel already holds data (never overwrites), or top-level is empty.
+// Safe to call before any channel-scoped write: it only fills an empty
+// first channel, so just-written partitions are never clobbered.
+func MigrateTopLevelToFirstChannel(p ProviderProfile) ProviderProfile {
+	if len(p.Upstreams) == 0 {
+		return p
+	}
+	if len(p.Upstreams[0].Models) > 0 || len(p.Upstreams[0].ExposedModels) > 0 {
+		return p
+	}
+	if len(p.Models) == 0 && len(p.ExposedModels) == 0 {
+		return p
+	}
+	p.Upstreams[0].Models = p.Models
+	p.Upstreams[0].ExposedModels = p.ExposedModels
+	p.Models = nil
+	p.ExposedModels = nil
+	return p
 }
 
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {

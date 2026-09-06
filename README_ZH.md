@@ -254,7 +254,8 @@ _WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）_
 请求按 body 中的模型名路由 — 无需额外状态，没有"当前目标"概念：
 
 - **模型名路由** — `"model": "provider-a/gpt-5.4"` 解析为 profile `provider-a`、真实模型 `gpt-5.4`；转发前代理将 body.model 改回真实 ID
-- **单个网关 provider** — pi 只看到一个 `pi-switch` provider，下面列出所有暴露模型（格式 `profile/真实模型ID`）；在 pi 中切换模型 = 发送不同的 model 字符串 = 即时路由切换
+- **渠道精确路由** — 已分区供应商的模型形如 `provider-a/main/gpt-5.4`（`供应商/渠道/模型`），精确打到该渠道凭证，不跨供应商 failover
+- **单个网关 provider** — pi 只看到一个 `pi-switch` provider，下面列出所有暴露模型（未分区格式 `profile/真实模型ID`，已分区格式 `profile/渠道/真实模型ID`）；在 pi 中切换模型 = 发送不同的 model 字符串 = 即时路由切换
 - **自动故障转移** — 429/5xx 或网络错误时，按配置链进行同模型 fallback
 - **断路器保护** — 连续 3 次失败后进入 60s 冷却，半开探测成功后自动恢复
 - **流式（SSE）** — 同格式请求（openai→openai、anthropic→anthropic）逐字流式转发；保留上游响应头（Content-Type 等）

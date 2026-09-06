@@ -139,7 +139,7 @@ pi-switch stats                                     # View request statistics
 | Category | Highlights |
 |----------|------------|
 | 🌐 **WebUI (primary)** | Browser control plane at `http://127.0.0.1:43110` — Profiles CRUD, Gateway `Current vs Proposed` diff & `Apply to Pi`, Proxy control, Stats dashboard with time windows, Packages, Settings, Doctor. Daemon-managed (own pid/log/port), loopback-open / non-loopback Basic auth. |
-| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with baseUrl/apiKey/headers/weight), expose to pi agent, configure Responses API passthrough/conversion mode |
+| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with baseUrl/apiKey/headers/weight/name, each channel carrying its own `models`/`exposedModels` partition), per-channel fetch/expose, gateway publish with secondary model selection, configure Responses API passthrough/conversion mode |
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
 | 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
@@ -261,7 +261,8 @@ _WebUI: `Proxy → Start` (same daemon, WebUI shows status)._
 Requests are routed by the model name in the request body — no out-of-band state, no "current target":
 
 - **Model-name routing** — `"model": "provider-a/gpt-5.4"` resolves to profile `provider-a`, real model `gpt-5.4`; the proxy rewrites the body before forwarding upstream
-- **Single gateway provider** — pi sees one `pi-switch` provider advertising every exposed model as `profile/realModelId`; switching model in pi = sending a different model string = instant routing change
+- **Channel-pinned routing** — partitioned suppliers advertise `provider-a/main/gpt-5.4` (`supplier/channel/model`), routed to exactly that channel's credentials with no cross-supplier failover
+- **Single gateway provider** — pi sees one `pi-switch` provider advertising every exposed model (`profile/realModelId`, or `profile/channel/realModelId` when partitioned); switching model in pi = sending a different model string = instant routing change
 - **Automatic failover** — same-model fallback across the configured chain on 429/5xx errors or network failures; retryable failures (403/408/429/5xx) also cool the credential down (default 60s, skipped while cooling). Extra rounds (`settings.proxy.requestRetry`, default 3), per-profile/channel `requestRetry` overrides, and `requestScopedErrors` (status + body-match → stop|stop-and-cooldown|continue|continue-and-cooldown) tune the policy
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token, as do Responses↔Chat cross-format routes (converted both directions); upstream response headers (Content-Type, etc.) are preserved

@@ -145,3 +145,72 @@ describe("GatewayPanel gateway-sep", () => {
     expect(screen.getByText(/Current vs Proposed/) || screen.getByText("gateway offline")).toBeTruthy();
   });
 });
+
+describe("GatewayPanel supplier/channel groups + secondary selection", () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage?.clear();
+  });
+  const groupedPreview = {
+    current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+    proposed: {
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:43112/v1",
+      models: [{ id: "sup/main/m1" }, { id: "sup/bk/b1" }],
+      proxy: false,
+    },
+    conflicts: [],
+    pending_count: 1,
+    groups: [
+      { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
+      { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },
+    ],
+    removed: ["ghost/x"],
+  };
+
+  function renderGrouped() {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(groupedPreview as any);
+    renderGateway();
+  }
+
+  it("groups candidates by supplier/channel with publish status", async () => {
+    renderGrouped();
+    await waitFor(() => expect(screen.getByText("sup / main")).toBeInTheDocument());
+    expect(screen.getByText("sup / bk")).toBeInTheDocument();
+    expect(screen.getByText("已发布")).toBeInTheDocument();
+    expect(screen.getByText("待发布")).toBeInTheDocument();
+    expect(screen.getByText("ghost/x")).toBeInTheDocument();
+  });
+
+  it("unchecking a candidate excludes it from the apply payload", async () => {
+    renderGrouped();
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    vi.spyOn(api, "getState").mockResolvedValue({ settings: { gatewayApi: "openai-completions", proxy: { host: "127.0.0.1", port: 43112 } } } as any);
+    const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
+    expect(ids).toContain("sup/main/m1");
+    expect(ids).not.toContain("sup/bk/b1");
+    expect(ids).not.toContain("ghost/x");
+  });
+
+  it("subset pending follows the selection", async () => {
+    renderGrouped();
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    // 全选：b1 待发布 → 子集待发布 1
+    expect(screen.getByText(/勾选子集待发布：1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ }));
+    // 取消 b1：子集与已注入一致 → 0
+    await waitFor(() => expect(screen.getByText(/勾选子集待发布：0/)).toBeInTheDocument());
+  });
+});

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/config"
@@ -43,46 +44,24 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 	port := cfg.Settings.Proxy.Port
 	models := []interface{}{}
 	for name, prof := range cfg.Profiles {
+		// 已分区：按渠道逐条聚合，id = supplier/channel/modelId，跨渠道同 id 独立。
+		if prof.HasChannelPartitions() {
+			for i := range prof.Upstreams {
+				chName := prof.ChannelName(i)
+				pool, exposed := prof.ChannelView(chName)
+				for _, exposedID := range exposed {
+					models = append(models, gatewayModelEntry(name+"/"+chName+"/"+exposedID, pool, exposedID))
+				}
+			}
+			continue
+		}
 		// 空 exposed = 不暴露：新拉取的模型默认不进网关，需显式 expose。
 		// 不要在这里回退到全部 Models，否则供应商界面“未暴露”与网关实际提供不一致。
 		if len(prof.ExposedModels) == 0 {
 			continue
 		}
-		exposed := prof.ExposedModels
-		for _, exposedID := range exposed {
-			var entry map[string]interface{}
-			found := false
-			for _, m := range prof.Models {
-				if m.ID == exposedID {
-					entry = map[string]interface{}{
-						"id":            name + "/" + exposedID,
-						"contextWindow": m.ContextWindow,
-						"maxTokens":     m.MaxTokens,
-					}
-					if m.Name != nil {
-						entry["name"] = *m.Name
-					}
-					if m.Cost != nil {
-						entry["cost"] = m.Cost
-					}
-					if len(m.Input) > 0 {
-						entry["input"] = m.Input
-					}
-					if m.Reasoning != nil && *m.Reasoning {
-						entry["compat"] = map[string]interface{}{"supportsDeveloperRole": false}
-					}
-					found = true
-					break
-				}
-			}
-			if !found {
-				entry = map[string]interface{}{
-					"id":            name + "/" + exposedID,
-					"contextWindow": uint32(128000),
-					"maxTokens":     uint32(16384),
-				}
-			}
-			models = append(models, entry)
+		for _, exposedID := range prof.ExposedModels {
+			models = append(models, gatewayModelEntry(name+"/"+exposedID, prof.Models, exposedID))
 		}
 	}
 	return map[string]interface{}{
@@ -94,6 +73,46 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 	}
 }
 
+// gatewayModelEntry builds one gateway model entry for a precomputed gateway id,
+// looking the exposed id up in the given pool (channel pool or legacy top-level).
+func gatewayModelEntry(id string, pool []config.ModelEntry, exposedID string) map[string]interface{} {
+	for _, m := range pool {
+		if m.ID != exposedID {
+			continue
+		}
+		entry := map[string]interface{}{
+			"id":            id,
+			"contextWindow": m.ContextWindow,
+			"maxTokens":     m.MaxTokens,
+		}
+		if m.Name != nil {
+			entry["name"] = *m.Name
+		}
+		if m.Cost != nil {
+			// cost 显式带 cacheWrite（含 0）：落盘形态经 webui draft round-trip
+			// 必含 cacheWrite:0；若提议侧用 *ModelCost（omitempty 省 0），
+			// JSON 序列化恒差，preview pending 恒=1，同步横幅永不消失。
+			entry["cost"] = map[string]interface{}{
+				"input":      m.Cost.Input,
+				"output":     m.Cost.Output,
+				"cacheRead":  m.Cost.CacheRead,
+				"cacheWrite": m.Cost.CacheWrite,
+			}
+		}
+		if len(m.Input) > 0 {
+			entry["input"] = m.Input
+		}
+		if m.Reasoning != nil && *m.Reasoning {
+			entry["compat"] = map[string]interface{}{"supportsDeveloperRole": false}
+		}
+		return entry
+	}
+	return map[string]interface{}{
+		"id":            id,
+		"contextWindow": uint32(128000),
+		"maxTokens":     uint32(16384),
+	}
+}
 func itoa(n int) string { return jsonNumber(n) }
 func jsonNumber(n int) string {
 	b, _ := json.Marshal(n)
@@ -316,4 +335,100 @@ func SyncSettingsFromGateway(cfg *config.PiSwitchConfig, gateway map[string]inte
 		}
 	}
 	return changed
+}
+
+// PreviewGroup is one supplier/channel group of exposed candidates for the
+// gateway preview: each model carries published/pending status against current.
+type PreviewGroup struct {
+	Supplier string             `json:"supplier"`
+	Channel  string             `json:"channel"`
+	Models   []PreviewGroupItem `json:"models"`
+}
+
+// PreviewGroupItem is one exposed candidate with its publish status.
+type PreviewGroupItem struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // published | pending
+}
+
+// BuildPreviewGroups groups proposed exposed candidates by supplier/channel
+// (deterministic: suppliers sorted, channels/upstreams and exposed in order).
+// status is published when current holds a JSON-equal entry, else pending.
+// Current-only ids return as sorted removed (stale entries awaiting cleanup).
+func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]interface{}) ([]PreviewGroup, []string) {
+	curByID := map[string]map[string]interface{}{}
+	if ms, _ := current["models"].([]interface{}); ms != nil {
+		for _, m := range ms {
+			if mm, ok := m.(map[string]interface{}); ok {
+				if id, _ := mm["id"].(string); id != "" {
+					curByID[id] = mm
+				}
+			}
+		}
+	}
+	propByID := map[string]map[string]interface{}{}
+	if ms, _ := proposed["models"].([]interface{}); ms != nil {
+		for _, m := range ms {
+			if mm, ok := m.(map[string]interface{}); ok {
+				if id, _ := mm["id"].(string); id != "" {
+					propByID[id] = mm
+				}
+			}
+		}
+	}
+	statusOf := func(id string) string {
+		cur, ok := curByID[id]
+		if !ok {
+			return "pending"
+		}
+		prop, ok := propByID[id]
+		if !ok {
+			return "pending"
+		}
+		a, _ := json.Marshal(cur)
+		b, _ := json.Marshal(prop)
+		if string(a) == string(b) {
+			return "published"
+		}
+		return "pending"
+	}
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	groups := []PreviewGroup{}
+	for _, name := range names {
+		prof := cfg.Profiles[name]
+		if prof.HasChannelPartitions() {
+			for i := range prof.Upstreams {
+				ch := prof.ChannelName(i)
+				_, exposed := prof.ChannelView(ch)
+				items := []PreviewGroupItem{}
+				for _, eid := range exposed {
+					gid := name + "/" + ch + "/" + eid
+					items = append(items, PreviewGroupItem{ID: eid, Status: statusOf(gid)})
+				}
+				groups = append(groups, PreviewGroup{Supplier: name, Channel: ch, Models: items})
+			}
+			continue
+		}
+		items := []PreviewGroupItem{}
+		for _, eid := range prof.ExposedModels {
+			gid := name + "/" + eid
+			items = append(items, PreviewGroupItem{ID: eid, Status: statusOf(gid)})
+		}
+		groups = append(groups, PreviewGroup{Supplier: name, Channel: "", Models: items})
+	}
+	var removed []string
+	for id := range curByID {
+		if _, ok := propByID[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	sort.Strings(removed)
+	if removed == nil {
+		removed = []string{}
+	}
+	return groups, removed
 }

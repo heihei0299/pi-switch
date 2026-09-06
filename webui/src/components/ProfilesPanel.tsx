@@ -461,6 +461,17 @@ function ProfileForm({
     const modeError = responsesModeError(apiType, responsesMode);
     if (modeError) throw new Error(t(modeError));
     const profile = build();
+    // 渠道名称前端先行校验：与后端 isValidChannelName 同口径，避免整单 400 才暴露问题。
+    {
+      const rule = /^[A-Za-z0-9-_]{1,32}$/;
+      const seenCh = new Set<string>();
+      for (const u of profile.upstreams ?? []) {
+        const n = (u.name ?? "").trim();
+        if (!rule.test(n)) throw new Error(`渠道名称必填且仅限字母数字/-/_（1-32字符），当前：${n || "(空)"}`);
+        if (seenCh.has(n)) throw new Error(`渠道名称重复：${n}`);
+        seenCh.add(n);
+      }
+    }
     if (original) {
       await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
     } else {
@@ -696,10 +707,52 @@ function ModelsModal({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
-  const [drafts, setDrafts] = useState<ModelDraft[]>(() => (profile.models ?? []).map((m) => draftFromEntry(m)));
-  const [exposed, setExposed] = useState<Set<string>>(
-    new Set(profile.exposedModels ?? []),
-  );
+  // 渠道分区：upstreams 全员具名时按渠道分池编辑（键=渠道名），否则沿用顶层单池（键=""）。
+  // 未具名渠道回退单池，避免不可寻址渠道产生写丢失。
+  const channelNames = useMemo(() => {
+    const ups = profile.upstreams ?? [];
+    if (ups.length === 0) return null;
+    const names = ups.map((u) => (u.name ?? "").trim());
+    if (names.some((n) => !n)) return null;
+    return names;
+  }, [profile]);
+  const [activeChannel, setActiveChannel] = useState<string>(() => "");
+  const [pools, setPools] = useState<Record<string, { drafts: ModelDraft[]; exposed: Set<string> }>>(() => {
+    const init: Record<string, { drafts: ModelDraft[]; exposed: Set<string> }> = {
+      "": {
+        drafts: (profile.models ?? []).map((m) => draftFromEntry(m)),
+        exposed: new Set(profile.exposedModels ?? []),
+      },
+    };
+    for (const u of profile.upstreams ?? []) {
+      const n = (u.name ?? "").trim();
+      if (!n) continue;
+      init[n] = {
+        drafts: (u.models ?? []).map((m) => draftFromEntry(m as ModelEntry)),
+        exposed: new Set(u.exposedModels ?? []),
+      };
+    }
+    return init;
+  });
+  const poolKey = channelNames ? activeChannel || channelNames[0] : "";
+  const drafts = pools[poolKey]?.drafts ?? [];
+  const exposed = pools[poolKey]?.exposed ?? new Set<string>();
+  function setDrafts(next: ModelDraft[] | ((prev: ModelDraft[]) => ModelDraft[])) {
+    setPools((prevPools) => {
+      const cur = prevPools[poolKey] ?? { drafts: [], exposed: new Set<string>() };
+      const drafts = typeof next === "function" ? (next as (p: ModelDraft[]) => ModelDraft[])(cur.drafts) : next;
+      return { ...prevPools, [poolKey]: { ...cur, drafts } };
+    });
+  }
+  function setExposed(next: Set<string> | ((prev: Set<string>) => Set<string>)) {
+    setPools((prevPools) => {
+      const cur = prevPools[poolKey] ?? { drafts: [], exposed: new Set<string>() };
+      const exposed = typeof next === "function" ? (next as (p: Set<string>) => Set<string>)(cur.exposed) : next;
+      return { ...prevPools, [poolKey]: { ...cur, exposed } };
+    });
+  }
+  // 渠道定向参数：单池（""）不传，后端走顶层旧语义。
+  const activeChannelParam = channelNames ? poolKey : undefined;
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -711,6 +764,15 @@ function ModelsModal({
       return "[]";
     }
   });
+  // 切换渠道页签时用该池重播 raw 文本（未应用的 raw 编辑不跨页签保留）。
+  useEffect(() => {
+    try {
+      setText(JSON.stringify(drafts.map((d) => modelPreview(d)), null, 2));
+    } catch {
+      setText("[]");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poolKey]);
   const jsonValidation = useMemo(() => validateModelsJson(text), [text]);
   const modelsErrorLine = useMemo(() => {
     try {
@@ -845,7 +907,7 @@ function ModelsModal({
   async function fetchFromProvider() {
     setFetching(true);
     try {
-      const { models: ids, enrich } = await api.fetchModels(name);
+      const { models: ids, enrich } = await api.fetchModels(name, activeChannelParam);
       setDrafts((prev) => {
         const have = new Set(prev.map((d) => d.id));
         const added = ids.filter((id) => !have.has(id)).map((id) => {
@@ -945,7 +1007,7 @@ function ModelsModal({
         return p;
       });
     }
-    const res = await api.updateModels(name, models);
+    const res = await api.updateModels(name, models, activeChannelParam);
     if ((res as any).enrich) {
       const e = (res as any).enrich;
       const isZh = (lang as string) === "zh";
@@ -962,6 +1024,7 @@ function ModelsModal({
     await api.expose(
       name,
       [...exposed].filter((id) => models.some((m) => m.id === id)),
+      activeChannelParam,
     );
     toast("ok", "已保存到本地，需到网关发布");
     await onSaved();
@@ -985,6 +1048,26 @@ function ModelsModal({
             )}
           </div>
         </div>
+        {channelNames && (
+          <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="渠道">
+            {channelNames.map((c) => {
+              const n = pools[c]?.drafts.length ?? 0;
+              const active = poolKey === c;
+              return (
+                <button
+                  key={c}
+                  role="tab"
+                  aria-label={c}
+                  aria-selected={active}
+                  onClick={() => { setActiveChannel(c); }}
+                  className={`h-7 rounded-md px-2 text-xs ${active ? "bg-amber-400/20 text-amber-200" : "text-zinc-400 hover:bg-white/5"}`}
+                >
+                  {c} · {n}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {mode === "structured" ? (
           <>
             <div className="mb-1 flex items-center gap-2 text-xs text-zinc-500">

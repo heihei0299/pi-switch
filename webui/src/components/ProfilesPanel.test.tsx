@@ -228,3 +228,102 @@ describe("Profiles save decoupled from gateway (gateway-sep)", () => {
     await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());
   });
 });
+
+describe("ModelsModal channel partition", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "getPresets").mockResolvedValue([]);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+  const partitioned = () =>
+    stateWithProfile({
+      models: [],
+      exposedModels: [],
+      upstreams: [
+        {
+          name: "main",
+          baseUrl: "http://a/v1",
+          apiKey: "k",
+          models: [{ id: "m1", input: ["text"], contextWindow: 100, maxTokens: 10 }],
+          exposedModels: ["m1"],
+        },
+        {
+          name: "bk",
+          baseUrl: "http://b/v1",
+          apiKey: "k",
+          models: [{ id: "b1", input: ["text"], contextWindow: 200, maxTokens: 20 }],
+          exposedModels: [],
+        },
+      ],
+    });
+
+  function openModelsModal(state: AppState) {
+    vi.spyOn(api, "fetchModels").mockResolvedValue({ models: [], enrich: undefined } as any);
+    renderPanel(state, vi.fn(async () => {}));
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+  }
+
+  it("shows channel tabs and switches pools per tab", async () => {
+    openModelsModal(partitioned());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "main" })).toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "bk" })).toBeInTheDocument();
+    // main tab shows m1
+    await waitFor(() => expect(screen.getByDisplayValue("m1")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("tab", { name: "bk" }));
+    await waitFor(() => expect(screen.getByDisplayValue("b1")).toBeInTheDocument());
+    expect(screen.queryByDisplayValue("m1")).not.toBeInTheDocument();
+  });
+
+  it("per-channel fetch passes channel to the api", async () => {
+    const fetch = vi
+      .spyOn(api, "fetchModels")
+      .mockResolvedValue({ models: ["b2"], enrich: undefined } as any);
+    openModelsModal(partitioned());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "bk" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("tab", { name: "bk" }));
+    await waitFor(() => expect(screen.getByDisplayValue("b1")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Fetch from provider/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("native", "bk"));
+  });
+
+  it("per-channel save writes only the active channel pool", async () => {
+    const updateModels = vi.spyOn(api, "updateModels").mockResolvedValue({ ok: true } as any);
+    const expose = vi.spyOn(api, "expose").mockResolvedValue({ ok: true } as any);
+    openModelsModal(partitioned());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "bk" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("tab", { name: "bk" }));
+    await waitFor(() => expect(screen.getByDisplayValue("b1")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateModels).toHaveBeenCalledWith("native", expect.any(Array), "bk"));
+    await waitFor(() => expect(expose).toHaveBeenCalledWith("native", expect.any(Array), "bk"));
+    const saved = updateModels.mock.calls[0][1] as Array<{ id: string }>;
+    expect(saved.map((m) => m.id)).toEqual(["b1"]);
+  });
+});
+
+describe("ProfileForm channel name validation", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "getPresets").mockResolvedValue([]);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("blocks save when an upstream has no name", async () => {
+    const update = vi.spyOn(api, "updateProfile").mockResolvedValue({});
+    renderPanel(stateWithProfile(), vi.fn(async () => {}));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Manage upstreams/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Manage upstreams/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Add upstream/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Add upstream/ }));
+    const urlInputs = screen.getAllByPlaceholderText("https://api.example.com/v1");
+    fireEvent.change(urlInputs[urlInputs.length - 1], { target: { value: "https://b.example.com/v1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText(/渠道名称必填/)).toBeInTheDocument());
+    expect(update).not.toHaveBeenCalled();
+  });
+});

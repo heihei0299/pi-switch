@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
@@ -7,7 +7,7 @@ import { ModelCard } from "./ModelCard";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
-import type { ModelEntry } from "../types";
+import type { ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
 
 const API_OPTIONS = [
@@ -44,6 +44,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [showMismatchBanner, setShowMismatchBanner] = useState(false);
   const [hasCheckedMismatch, setHasCheckedMismatch] = useState(false);
   const [backendPending, setBackendPending] = useState<number | null>(null);
+  // 二次勾选：按供应商/渠道分组的发布选择（网关 id 粒度），默认全选。
+  const [groups, setGroups] = useState<PreviewGroup[]>([]);
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
 
   const load = async () => {
     setLoading(true);
@@ -66,6 +70,14 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setApiKey((rec.apiKey as string) || "");
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+      // 分组与二次勾选：groups/removed 透出（旧后端缺省为空），默认全选并集。
+      const propModels = Array.isArray((prop as any)?.models) ? ((prop as any).models as Array<{ id?: unknown }>) : [];
+      const propIds = propModels.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      setGroups(Array.isArray((preview as any).groups) ? ((preview as any).groups as PreviewGroup[]) : []);
+      setRemovedIds(Array.isArray((preview as any).removed) ? ((preview as any).removed as string[]) : []);
+      setChecked(new Set([...propIds, ...draftIds]));
+      skipAutoCheck.current.clear();
       // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
       if (!hasCheckedMismatch) {
         const curForDiff = cur as Record<string, unknown> | null;
@@ -185,6 +197,94 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     }, 50);
   }
 
+  // 新出现的模型 id 默认纳入发布选择；用户显式取消的不再补回。
+  const skipAutoCheck = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set<string>();
+    for (const d of drafts) if (d.id.trim()) ids.add(d.id);
+    const propModels = asRecord(proposed ?? {}).models;
+    if (Array.isArray(propModels)) {
+      for (const m of propModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
+    }
+    const rawModels = rawValidation.value?.models;
+    if (Array.isArray(rawModels)) {
+      for (const m of rawModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
+    }
+    ids.delete("");
+    setChecked((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ids) if (!next.has(id) && !skipAutoCheck.current.has(id)) { next.add(id); changed = true; }
+      return changed ? next : prev;
+    });
+  }, [drafts, proposed, rawValidation.value]);
+
+  function gatewayIdOf(g: PreviewGroup, itemId: string): string {
+    return g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
+  }
+
+  // 二次勾选子集：按勾选过滤发布模型；有草稿行优先用用户编辑，无行用候选/已注入原文。
+  function buildSelectedModels(): Array<Record<string, unknown>> {
+    const draftById = new Map(drafts.map((d) => [d.id, modelPreview(d) as unknown as Record<string, unknown>]));
+    const propById = new Map<string, Record<string, unknown>>();
+    const propModels = asRecord(proposed ?? {}).models;
+    if (Array.isArray(propModels)) {
+      for (const m of propModels as Array<Record<string, unknown>>) {
+        const id = String((m as any)?.id ?? "");
+        if (id) propById.set(id, m);
+      }
+    }
+    const curById = new Map<string, Record<string, unknown>>();
+    const curModels = asRecord(current ?? {}).models;
+    if (Array.isArray(curModels)) {
+      for (const m of curModels as Array<Record<string, unknown>>) {
+        const id = String((m as any)?.id ?? "");
+        if (id) curById.set(id, m);
+      }
+    }
+    const order: string[] = [];
+    for (const id of propById.keys()) order.push(id);
+    for (const id of draftById.keys()) if (!order.includes(id)) order.push(id);
+    for (const id of curById.keys()) if (!order.includes(id)) order.push(id);
+    const out: Array<Record<string, unknown>> = [];
+    for (const id of order) {
+      if (!checked.has(id)) continue;
+      out.push(draftById.get(id) ?? propById.get(id) ?? curById.get(id) ?? { id });
+    }
+    return out;
+  }
+
+  // 勾选子集待发布数：当前已注入 vs 勾选子集的按模型差异计数（本地计算，不调后端）。
+  const subsetPending = useMemo(() => {
+    const selected = buildSelectedModels();
+    const curModels = asRecord(current ?? {}).models;
+    const curById = new Map<string, string>();
+    if (Array.isArray(curModels)) {
+      for (const m of curModels as Array<Record<string, unknown>>) {
+        const id = String((m as any)?.id ?? "");
+        if (id) curById.set(id, JSON.stringify(m));
+      }
+    }
+    let n = 0;
+    const seen = new Set<string>();
+    for (const m of selected) {
+      const id = String((m as any)?.id ?? "");
+      seen.add(id);
+      if (curById.get(id) !== JSON.stringify(m)) n++;
+    }
+    for (const id of curById.keys()) if (!seen.has(id)) n++;
+    return n;
+  }, [current, drafts, proposed, checked]);
+
+  function toggleChecked(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); skipAutoCheck.current.add(id); }
+      else { next.add(id); skipAutoCheck.current.delete(id); }
+      return next;
+    });
+  }
+
   async function handleApplyToPi() {
     const activeValidation = rawValidation;
     if (!activeValidation.ok || !activeValidation.value) {
@@ -195,7 +295,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     const newApi = typeof payload.api === "string" ? payload.api : "";
     const newBaseUrl = typeof payload.baseUrl === "string" ? payload.baseUrl : "";
     try {
-      await api.applyGateway(activeValidation.value);
+      await api.applyGateway({ ...activeValidation.value, models: buildSelectedModels() });
       // 同步网关的 api / baseUrl 回 Settings（最小实现：api 直写 gatewayApi，baseUrl 解析 host:port）
       try {
         const state = await api.getState();
@@ -301,6 +401,67 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         </div>
       )}
 
+      {/* 已暴露候选分组 + 二次勾选：只读归属，暴露编辑仍在供应商页 */}
+      {groups.length > 0 && (
+        <div className="mb-3 rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2">
+          <div className="mb-2 flex items-center justify-between text-xs font-medium text-zinc-200">
+            <span>候选分组（按供应商/渠道，勾选后发布）</span>
+            <span className="text-zinc-400">勾选子集待发布：{subsetPending}</span>
+          </div>
+          <div className="space-y-2">
+            {groups.map((g) => {
+              const title = g.channel ? `${g.supplier} / ${g.channel}` : g.supplier;
+              const pub = g.models.filter((m) => m.status === "published").length;
+              return (
+                <div key={title} className="rounded border border-white/10 px-2 py-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-zinc-200">{title}</span>
+                    <span className="text-zinc-500">已发布 {pub} / 待发布 {g.models.length - pub}</span>
+                  </div>
+                  {g.models.length === 0 && (
+                    <div className="mt-1 text-xs text-zinc-500">该渠道未暴露模型，去供应商页勾选后发布</div>
+                  )}
+                  {g.models.map((m) => {
+                    const gid = gatewayIdOf(g, m.id);
+                    return (
+                      <label key={gid} className="mt-1 flex items-center gap-2 text-xs text-zinc-300">
+                        <input
+                          type="checkbox"
+                          aria-label={gid}
+                          checked={checked.has(gid)}
+                          onChange={() => toggleChecked(gid)}
+                          className="h-3.5 w-3.5 accent-amber-400"
+                        />
+                        <span className="font-mono">{gid}</span>
+                        <span className={m.status === "published" ? "text-emerald-400" : "text-amber-300"}>
+                          {m.status === "published" ? "已发布" : "待发布"}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {removedIds.length > 0 && (
+              <div className="rounded border border-white/10 px-2 py-1">
+                <div className="text-xs font-medium text-zinc-400">已撤回待同步</div>
+                {removedIds.map((id) => (
+                  <label key={id} className="mt-1 flex items-center gap-2 text-xs text-zinc-400">
+                    <input
+                      type="checkbox"
+                      aria-label={id}
+                      checked={checked.has(id)}
+                      onChange={() => toggleChecked(id)}
+                      className="h-3.5 w-3.5 accent-amber-400"
+                    />
+                    <span className="font-mono">{id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <Card className="mb-4">
         <div className="grid gap-x-4 sm:grid-cols-2">
           <Field label={t("接口格式")}>
@@ -359,6 +520,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 key={d.key}
                 draft={d}
                 exposed={true}
+                hideExposed
                 onToggleExposed={() => {}}
                 onChange={(next) => setDrafts((prev) => prev.map((x) => (x.key === d.key ? next : x)))}
                 onRemove={() =>

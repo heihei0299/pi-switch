@@ -880,12 +880,138 @@ func truncateForTest(b []byte) string {
 	return s
 }
 
+// handleFetchModelsForChannel fetches /v1/models with the named channel's
+// credentials, merges new ids (enriched) into that channel's pool only and
+// persists. Existing entries are never modified; other channels untouched.
+func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name string, prof config.ProviderProfile, channel string) {
+	idx := channelIndex(prof, channel)
+	if idx < 0 {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
+		return
+	}
+	u := prof.Upstreams[idx]
+	ids, lastErr := fetchUpstreamIDs(u.BaseURL, u.APIKey, u.Headers)
+	if ids == nil {
+		c.JSON(500, gin.H{"error": lastErr})
+		return
+	}
+	seeds := make([]map[string]interface{}, 0, len(ids))
+	for _, id := range ids {
+		seeds = append(seeds, map[string]interface{}{
+			"id":            id,
+			"contextWindow": uint32(128000),
+			"maxTokens":     uint32(16384),
+			"input":         []string{"text"},
+		})
+	}
+	enriched, skipped, failed, warning := enrichModelsWithCatalog(seeds, prof)
+	var entries []config.ModelEntry
+	if b, err := json.Marshal(seeds); err == nil {
+		_ = json.Unmarshal(b, &entries)
+	}
+	seen := map[string]bool{}
+	for _, m := range prof.Upstreams[idx].Models {
+		seen[m.ID] = true
+	}
+	for _, e := range entries {
+		if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
+			continue
+		}
+		seen[e.ID] = true
+		prof.Upstreams[idx].Models = append(prof.Upstreams[idx].Models, e)
+	}
+	cfg.Profiles[name] = prof
+	_ = saveConfig(cfg)
+	enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
+	if warning != "" {
+		enrich["warning"] = warning
+	}
+	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
+}
+
+// fetchUpstreamIDs tries baseURL/models then baseURL/v1/models with optional
+// bearer key and headers. Returns nil ids + lastErr when all attempts fail.
+func fetchUpstreamIDs(baseURL, apiKey string, headers map[string]string) ([]string, string) {
+	if baseURL == "" {
+		return nil, "baseUrl is empty"
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	urls := []string{strings.TrimRight(baseURL, "/") + "/models", strings.TrimRight(baseURL, "/") + "/v1/models"}
+	var lastErr string
+	for _, u := range urls {
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		for k, v := range headers {
+			if k != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Sprintf("upstream %d: %s", resp.StatusCode, string(body))
+			continue
+		}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		var ids []string
+		if data, ok := parsed["data"]; ok {
+			if arr, ok := data.([]interface{}); ok {
+				for _, v := range arr {
+					switch vv := v.(type) {
+					case string:
+						ids = append(ids, vv)
+					case map[string]interface{}:
+						if id, ok := vv["id"].(string); ok {
+							ids = append(ids, id)
+						}
+					}
+				}
+			}
+		}
+		if len(ids) == 0 {
+			if m, ok := parsed["models"]; ok {
+				if arr, ok := m.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							ids = append(ids, s)
+						}
+					}
+				}
+			}
+		}
+		return ids, ""
+	}
+	return nil, lastErr
+}
+
 func handleFetchModels(c *gin.Context) {
 	name := c.Param("name")
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	// 渠道定向拉取：?channel=name 用该渠道的 baseUrl/apiKey/headers 拉取，
+	// enrich 后仅新增 id 合并入该渠道池并落盘；未知渠道 400。
+	// 无参走下方旧路径（兼容，不写盘）。
+	if channel := c.Query("channel"); channel != "" {
+		handleFetchModelsForChannel(c, cfg, name, prof, channel)
 		return
 	}
 	baseURL := prof.PrimaryBaseURL()
@@ -1044,7 +1170,8 @@ func enrichModelsWithCatalog(models []map[string]interface{}, prof config.Provid
 func handlePutModels(c *gin.Context) {
 	name := c.Param("name")
 	var body struct {
-		Models []config.ModelEntry `json:"models"`
+		Models  []config.ModelEntry `json:"models"`
+		Channel string              `json:"channel,omitempty"`
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
@@ -1052,6 +1179,32 @@ func handlePutModels(c *gin.Context) {
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	// 渠道池写入：先吸收遗留顶层进首渠道（仅空首渠道时），再定向覆盖目标渠道池。
+	if channel := body.Channel; channel != "" {
+		idx := channelIndex(prof, channel)
+		if idx < 0 {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
+			return
+		}
+		seen := map[string]bool{}
+		for _, m := range body.Models {
+			if strings.TrimSpace(m.ID) == "" {
+				c.JSON(400, gin.H{"error": "model id must not be empty"})
+				return
+			}
+			if seen[m.ID] {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("duplicate model id %q", m.ID)})
+				return
+			}
+			seen[m.ID] = true
+		}
+		prof = config.MigrateTopLevelToFirstChannel(prof)
+		prof.Upstreams[idx].Models = body.Models
+		cfg.Profiles[name] = prof
+		_ = saveConfig(cfg)
+		c.JSON(200, gin.H{"ok": true, "backup": nil, "enrich": gin.H{"enriched": 0}})
 		return
 	}
 	prof.Models = body.Models
@@ -1073,7 +1226,51 @@ func handlePutExpose(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// validate each modelId exists in prof.Models
+	// 渠道定向暴露：?channel=name 校验该渠道池归属并写入该渠道暴露集；
+	// 无参 + 已分区 → 回退首条渠道（兼容）；无参 + 未分区 → 顶层旧语义。
+	if channel := c.Query("channel"); channel != "" {
+		idx := channelIndex(prof, channel)
+		if idx < 0 {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
+			return
+		}
+		// 先吸收遗留顶层进首渠道，再按渠道池校验（modal 按回退视图编辑，数据一致）。
+		prof = config.MigrateTopLevelToFirstChannel(prof)
+		seen := map[string]bool{}
+		for _, m := range prof.Upstreams[idx].Models {
+			seen[m.ID] = true
+		}
+		for _, eid := range body.ModelIds {
+			if !seen[eid] {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q in channel %q", eid, channel)})
+				return
+			}
+		}
+		prof.Upstreams[idx].ExposedModels = body.ModelIds
+		cfg.Profiles[name] = prof
+		_ = saveConfig(cfg)
+		c.JSON(200, gin.H{"ok": true, "backup": nil})
+		return
+	}
+	// 分区回退：先吸收遗留顶层（首渠道空时），再写首渠道。
+	prof = config.MigrateTopLevelToFirstChannel(prof)
+	if prof.HasChannelPartitions() && len(prof.Upstreams) > 0 {
+		seen := map[string]bool{}
+		for _, m := range prof.Upstreams[0].Models {
+			seen[m.ID] = true
+		}
+		for _, eid := range body.ModelIds {
+			if !seen[eid] {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q", eid)})
+				return
+			}
+		}
+		prof.Upstreams[0].ExposedModels = body.ModelIds
+		cfg.Profiles[name] = prof
+		_ = saveConfig(cfg)
+		c.JSON(200, gin.H{"ok": true, "backup": nil})
+		return
+	}
 	seen := map[string]bool{}
 	for _, m := range prof.Models {
 		seen[m.ID] = true
@@ -1182,13 +1379,67 @@ func validateResponsesMode(p config.ProviderProfile) error {
 	}
 	return nil
 }
+
+// isValidChannelName enforces the channel primary-key rule: required,
+// 1-32 chars, letters/digits/'-'/"_" only (stable gateway id segment).
+func isValidChannelName(name string) bool {
+	if len(name) == 0 || len(name) > 32 {
+		return false
+	}
+	for _, c := range name {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// channelIndex returns the upstream index of the named channel, or -1.
+func channelIndex(prof config.ProviderProfile, channel string) int {
+	for i := range prof.Upstreams {
+		if prof.ChannelName(i) == channel {
+			return i
+		}
+	}
+	return -1
+}
+
 func validateProviderProfile(p config.ProviderProfile) error {
 	if p.BaseURL != "" && !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
 		return fmt.Errorf("baseUrl must start with http:// or https://")
 	}
+	seenChannel := map[string]bool{}
 	for _, u := range p.Upstreams {
 		if u.BaseURL != "" && !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
 			return fmt.Errorf("upstreams baseUrl must start with http:// or https://")
+		}
+		name := ""
+		if u.Name != nil {
+			name = *u.Name
+		}
+		if !isValidChannelName(name) {
+			return fmt.Errorf("upstreams name %q invalid: required, 1-32 chars of [A-Za-z0-9-_]", name)
+		}
+		if seenChannel[name] {
+			return fmt.Errorf("duplicate upstream name %q", name)
+		}
+		seenChannel[name] = true
+		// 分区校验：池内 id 去重；暴露 id 必须归属本渠道池。
+		poolSeen := map[string]bool{}
+		for _, m := range u.Models {
+			if strings.TrimSpace(m.ID) == "" {
+				return fmt.Errorf("upstreams[%q] model id must not be empty", name)
+			}
+			if poolSeen[m.ID] {
+				return fmt.Errorf("upstreams[%q] duplicate model id %q", name, m.ID)
+			}
+			poolSeen[m.ID] = true
+		}
+		for _, eid := range u.ExposedModels {
+			if !poolSeen[eid] {
+				return fmt.Errorf("upstreams[%q] exposedModels references unknown model %q", name, eid)
+			}
 		}
 	}
 	seen := map[string]bool{}
@@ -1307,7 +1558,8 @@ func handleGatewayPreview(c *gin.Context) {
 	// 否则发布后 pending 永远回不到 0（manual-test-bugs/02）。
 	proposed = gateway.MergeGatewayExtra(curMap, proposed)
 	pending := gateway.ComputePendingCount(curMap, proposed)
-	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending})
+	groups, removed := gateway.BuildPreviewGroups(cfg, curMap, proposed)
+	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed})
 }
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
@@ -2810,6 +3062,21 @@ func handleModels(c *gin.Context) {
 	seen := map[string]bool{}
 	for name, prof := range cfg.Profiles {
 		// 空 exposed = 不暴露（与网关发布一致），不回退到全部 Models。
+		if prof.HasChannelPartitions() {
+			for i := range prof.Upstreams {
+				ch := prof.ChannelName(i)
+				_, exposed := prof.ChannelView(ch)
+				for _, mid := range exposed {
+					id := name + "/" + ch + "/" + mid
+					if seen[id] {
+						continue
+					}
+					seen[id] = true
+					data = append(data, map[string]interface{}{"id": id, "object": "model", "owned_by": name})
+				}
+			}
+			continue
+		}
 		exposed := prof.ExposedModels
 		for _, mid := range exposed {
 			id := name + "/" + mid
@@ -2839,12 +3106,42 @@ func exposes(cfg config.PiSwitchConfig, name, model string) bool {
 				return true
 			}
 		}
-		return false
+	}
+	// 分区并集：任一渠道暴露即视为提供（裸 id 与二段 id 兼容）。
+	for i := range prof.Upstreams {
+		_, exposed := prof.ChannelView(prof.ChannelName(i))
+		for _, e := range exposed {
+			if e == model {
+				return true
+			}
+		}
 	}
 	// 空 exposed = 不暴露：新模型默认不经代理提供，需显式 expose。
 	return false
 }
-func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string) {
+
+// exposesChannel reports whether model is exposed in the named channel.
+func exposesChannel(cfg config.PiSwitchConfig, supplier, channel, model string) bool {
+	prof, ok := cfg.Profiles[supplier]
+	if !ok {
+		return false
+	}
+	_, exposed := prof.ChannelView(channel)
+	for _, eid := range exposed {
+		if eid == model {
+			return true
+		}
+	}
+	return false
+}
+func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string, string) {
+	// 三段 id supplier/channel/model：精确 pin 到渠道（单候选，不跨供应商 failover）。
+	if strings.Count(requested, "/") >= 2 {
+		parts := strings.SplitN(requested, "/", 3)
+		if len(parts) == 3 && isNonProxy(cfg, parts[0]) && exposesChannel(cfg, parts[0], parts[1], parts[2]) {
+			return []string{parts[0]}, parts[2], parts[1]
+		}
+	}
 	if strings.Contains(requested, "/") {
 		parts := strings.SplitN(requested, "/", 2)
 		prefix, rest := parts[0], parts[1]
@@ -2855,7 +3152,7 @@ func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string
 					profiles = append(profiles, fo)
 				}
 			}
-			return profiles, rest
+			return profiles, rest, ""
 		}
 	}
 	profiles := []string{}
@@ -2869,7 +3166,42 @@ func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string
 			profiles = append(profiles, name)
 		}
 	}
-	return profiles, requested
+	return profiles, requested, ""
+}
+
+// pinChannelAttempts keeps only attempts hitting the pinned channel of its
+// supplier. Empty pin (legacy/bare ids) keeps everything: failover, weight
+// order and retry rounds are untouched.
+func pinChannelAttempts(cfg *config.PiSwitchConfig, attempts []attempt, candidates []string, pinned string) []attempt {
+	if pinned == "" || cfg == nil {
+		return attempts
+	}
+	supplier := ""
+	if len(candidates) > 0 {
+		supplier = candidates[0]
+	}
+	prof, ok := cfg.Profiles[supplier]
+	if !ok {
+		return attempts
+	}
+	ups := prof.ResolvedUpstreams()
+	keep := map[int]bool{}
+	for idx, u := range ups {
+		name := ""
+		if u.Name != nil {
+			name = *u.Name
+		}
+		if name == pinned {
+			keep[idx] = true
+		}
+	}
+	out := make([]attempt, 0, len(attempts))
+	for _, att := range attempts {
+		if att.ref.name == supplier && keep[att.ref.upsIdx] {
+			out = append(out, att)
+		}
+	}
+	return out
 }
 func contains(arr []string, s string) bool {
 	for _, v := range arr {
@@ -2991,6 +3323,16 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 }
 
 func findModelEntry(prof config.ProviderProfile, realModel string) *config.ModelEntry {
+	// narrowed attempt profiles carry a single (named) channel: prefer its pool,
+	// so clamp/cost use the channel's own params. Legacy synthetic channels
+	// have no pool and fall through to top-level.
+	if len(prof.Upstreams) == 1 && prof.Upstreams[0].Name != nil {
+		for i := range prof.Upstreams[0].Models {
+			if prof.Upstreams[0].Models[i].ID == realModel {
+				return &prof.Upstreams[0].Models[i]
+			}
+		}
+	}
 	for i := range prof.Models {
 		if prof.Models[i].ID == realModel {
 			return &prof.Models[i]
@@ -3090,7 +3432,7 @@ func handleChatCompletions(c *gin.Context) {
 	if requestedModel == "" {
 		requestedModel = "gpt-4o-mini"
 	}
-	candidates, realModel := resolveRoute(cfg, requestedModel)
+	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
 	if len(candidates) == 0 {
 		if cfg.Current != nil {
 			if _, ok := cfg.Profiles[*cfg.Current]; ok {
@@ -3116,7 +3458,7 @@ func handleChatCompletions(c *gin.Context) {
 		isStream = true
 	}
 	if isStream {
-		handleStream(c, cfg, candidates, body, realModel, convID, convName, proto, rawLen, start)
+		handleStream(c, cfg, candidates, body, realModel, pinnedChannel, convID, convName, proto, rawLen, start)
 		return
 	}
 	var lastErr string
@@ -3127,7 +3469,7 @@ func handleChatCompletions(c *gin.Context) {
 	var successProvider string
 	var successUpstreamURL string
 	var successModelEntry *config.ModelEntry
-	attempts := expandAttempts(candidates, &cfg)
+	attempts := pinChannelAttempts(&cfg, expandAttempts(candidates, &cfg), candidates, pinnedChannel)
 	prevRound := -1
 	profTried := map[int]map[string]bool{}
 	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
@@ -3307,11 +3649,11 @@ func handleChatCompletions(c *gin.Context) {
 	c.Data(lastStatus, ct, successResp)
 }
 
-func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, convID, convName, proto string, rawLen int, start time.Time) {
+func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, pinnedChannel, convID, convName, proto string, rawLen int, start time.Time) {
 	var lastErr string
 	var lastStatus int = 502
 	triedUpstream := false
-	attempts := expandAttempts(candidates, &cfg)
+	attempts := pinChannelAttempts(&cfg, expandAttempts(candidates, &cfg), candidates, pinnedChannel)
 	prevRound := -1
 	profTried := map[int]map[string]bool{}
 	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
