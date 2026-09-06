@@ -119,7 +119,6 @@ export const api = {
   proxyStart: (host?: string, port?: number) =>
     req<DaemonResult>("POST", "/proxy/start", { host, port }),
   proxyStop: () => req<DaemonResult>("POST", "/proxy/stop"),
-  setFailover: (failover: string[]) => req("PUT", "/proxy/failover", { failover }),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
   getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
   previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number; groups?: PreviewGroup[]; removed?: string[]; enrich?: PreviewEnrich }>("GET", "/models/gateway/preview"),

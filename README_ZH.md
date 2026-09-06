@@ -101,7 +101,6 @@ pi-switch provider fetch-models <名称>             # 从 API 抓取模型列�
 # WebUI：Profiles → + Add profile / Import from cc-switch → Edit → Expose
 
 # 代理（网关）
-pi-switch proxy failover <p1,p2,...>               # 同模型故障转移链
 pi-switch proxy start --daemon                     # 启动代理守护进程
 pi-switch proxy status
 
@@ -186,7 +185,7 @@ pi-switch import ccswitch --path /路径/cc-switch.db   # 自定义数据库路�
 
 ## 🎯 核心流程
 
-### 网关路由与故障转移
+### 网关路由
 
 ```mermaid
 graph LR
@@ -241,7 +240,6 @@ pi-switch provider expose provider-a gpt-5.4
 **3. 启动代理** — 读取已发布的 `pi-switch` 网关 provider：
 
 ```bash
-pi-switch proxy failover provider-b,provider-c          # 可选：同模型故障转移
 pi-switch proxy start --daemon
 ```
 
@@ -317,19 +315,6 @@ pi-switch provider expose <名称> <model-id>...
 
 </details>
 
-<details>
-<summary><b>如何设置故障转移？</b></summary>
-<br>
-
-WebUI 中：`Gateway` / `Proxy` 面板展示并编辑故障转移链（或 TUI：`Settings → Failover` → `Enter` → 输入逗号分隔的名称 → `Enter`）。
-或使用 CLI：
-```bash
-pi-switch proxy failover provider-b,provider-c
-```
-
-暴露了相同模型的 failover 链中的 provider 会在主 provider 失败时按顺序尝试。
-
-</details>
 
 <details>
 <summary><b>[proxy] 徽章是什么意思？</b></summary>
@@ -349,15 +334,14 @@ pi-switch proxy failover provider-b,provider-c
 
 1. 按第一个 `/` 拆分 — profile `provider-a`，真实模型 `gpt-5.4`
 2. 路由到 `provider-a` profile 的上游，将 `body.model` 改为 `gpt-5.4`
-3. 失败（429/5xx）时，在 failover 链中寻找其他暴露了 `gpt-5.4` 的 profile
+3. 失败（429/5xx）时直接透传错误，不进行故障转移（单候选直通）
 
 ```bash
 # 1. 暴露模型（按 profile）
 pi-switch provider expose provider-a gpt-5.4
 pi-switch provider expose provider-b gpt-5.4
 
-# 2. 设置故障转移链（可选）
-pi-switch proxy failover provider-b
+# 2. （故障转移已移除）
 
 # 3. 启动代理守护进程
 pi-switch proxy start --daemon

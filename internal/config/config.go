@@ -83,7 +83,6 @@ type Settings struct {
 	Proxy              struct {
 		Host           string                 `json:"host"`
 		Port           int                    `json:"port"`
-		Failover       []string               `json:"failover,omitempty"`
 		UserAgent      *string                `json:"userAgent,omitempty"`
 		CircuitBreaker CircuitBreakerSettings `json:"circuitBreaker"`
 		// RequestRetry is the number of additional credential retry rounds after
@@ -239,7 +238,6 @@ func DefaultConfig() PiSwitchConfig {
 			Proxy: struct {
 				Host                          string                 `json:"host"`
 				Port                          int                    `json:"port"`
-				Failover                      []string               `json:"failover,omitempty"`
 				UserAgent                     *string                `json:"userAgent,omitempty"`
 				CircuitBreaker                CircuitBreakerSettings `json:"circuitBreaker"`
 				RequestRetry                  *int                   `json:"requestRetry,omitempty"`

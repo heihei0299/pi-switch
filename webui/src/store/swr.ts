@@ -14,7 +14,3 @@ export async function mutateAfterProfilePut(): Promise<void> {
 export async function mutateAfterGatewayPublish(): Promise<void> {
   await Promise.all([mutate(SWR_KEY_PROFILES as unknown as string), mutate(SWR_KEY_GATEWAY as unknown as string)]);
 }
-
-export async function mutateAfterFailover(): Promise<void> {
-  await Promise.all([mutate(SWR_KEY_PROFILES as unknown as string), mutate(SWR_KEY_GATEWAY as unknown as string)]);
-}

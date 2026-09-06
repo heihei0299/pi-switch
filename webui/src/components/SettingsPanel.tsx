@@ -17,7 +17,7 @@ export function SettingsPanel({
   const [s, setS] = useState<Settings>(() => {
     const init = JSON.parse(JSON.stringify(state.settings));
     if (!init.conversationSource) init.conversationSource = "sessionScan";
-    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, failover: [], circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
+    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, target: null, circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
     if (!init.proxy.circuitBreaker) init.proxy.circuitBreaker = { enabled: true, failureThreshold: 3, cooldownSeconds: 60 };
     if (init.proxy.circuitBreaker.failureThreshold == null) init.proxy.circuitBreaker.failureThreshold = 3;
     if (init.proxy.circuitBreaker.cooldownSeconds == null) init.proxy.circuitBreaker.cooldownSeconds = 60;

@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import type { AppState, DaemonResult } from "../types";
 import { api } from "../api";
-import { mutateAfterFailover } from "../store/swr";
 import { Badge, Button, Card, Field, Input, SectionTitle } from "./ui";
 import { useAction } from "./ui";
 import { useI18n } from "../i18n";
 
 export function ProxyPanel({
   state,
-  refresh,
+  refresh: _refresh,
 }: {
   state: AppState;
   refresh: () => Promise<void>;
@@ -81,107 +80,6 @@ export function ProxyPanel({
           </Button>
         </div>
       </Card>
-
-      <FailoverEditor state={state} refresh={refresh} />
     </div>
-  );
-}
-
-function FailoverEditor({
-  state,
-  refresh,
-}: {
-  state: AppState;
-  refresh: () => Promise<void>;
-}) {
-  const run = useAction();
-  const { t } = useI18n();
-  const [chain, setChain] = useState<string[]>(state.settings.proxy.failover ?? []);
-
-  const nonProxy = Object.entries(state.profiles)
-    .filter(([, p]) => !p.proxy)
-    .map(([n]) => n);
-  const available = nonProxy.filter((n) => !chain.includes(n));
-
-  const move = (i: number, d: number) => {
-    const j = i + d;
-    if (j < 0 || j >= chain.length) return;
-    const next = [...chain];
-    [next[i], next[j]] = [next[j], next[i]];
-    setChain(next);
-  };
-
-  async function save() {
-    await api.setFailover(chain);
-    await mutateAfterFailover();
-    await refresh();
-  }
-
-  return (
-    <>
-      <Card>
-        <div className="mb-1 text-sm font-semibold text-zinc-200">{t("Failover chain")}</div>
-        <div className="mb-3 text-xs text-zinc-500">
-          {t("Same-model fallback order when the primary provider fails. Proxy profiles are excluded.")}
-        </div>
-
-        <div className="space-y-1">
-          {chain.length === 0 && (
-            <div className="text-sm text-zinc-500">{t("No failover configured.")}</div>
-          )}
-          {chain.map((name, i) => (
-            <div
-              key={name}
-              className="flex items-center justify-between rounded-md border border-white/10 px-2 py-1.5 text-sm"
-            >
-              <span className="text-zinc-200">
-                <span className="mr-2 text-zinc-500">{i + 1}.</span>
-                {name}
-              </span>
-              <div className="flex gap-1">
-                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, -1)}>
-                  ↑
-                </button>
-                <button className="px-1 text-zinc-400 hover:text-zinc-100" onClick={() => move(i, 1)}>
-                  ↓
-                </button>
-                <button
-                  className="px-1 text-zinc-400 hover:text-red-300"
-                  onClick={() => setChain(chain.filter((x) => x !== name))}
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-3 flex items-center gap-2">
-          {available.length > 0 && (
-            <select
-              className="rounded-md border border-white/10 bg-zinc-950/60 px-2 py-1.5 text-sm text-zinc-100"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) setChain([...chain, e.target.value]);
-              }}
-            >
-              <option value="">+ add profile…</option>
-              {available.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          )}
-          <Button
-            variant="primary"
-            onClick={() => run(save, t("Failover saved"))}
-          >
-            {t("Save chain")}
-          </Button>
-        </div>
-      </Card>
-
-    </>
   );
 }

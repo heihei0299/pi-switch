@@ -658,7 +658,7 @@ function ProfileForm({
             </div>
             <label className="mb-3 flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
               <input type="checkbox" checked={proxy} onChange={(e) => setProxy(e.target.checked)} />
-              {t("Mark as a proxy profile (excluded from failover, not exposed to pi)")}
+              {t("Mark as a proxy profile (not exposed to pi)")}
             </label>
           </div>
         ) : (

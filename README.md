@@ -101,7 +101,6 @@ pi-switch provider fetch-models <name>             # Fetch models from API
 # In WebUI: Profiles → + Add profile / Import from cc-switch → Edit → Expose
 
 # Proxy (gateway)
-pi-switch proxy failover <p1,p2,...>               # Same-model fallback chain
 pi-switch proxy start --daemon                     # Start proxy daemon
 pi-switch proxy status
 
@@ -186,14 +185,13 @@ Every proxied request is appended to `~/.pi-switch/requests.log` as a JSON line.
 
 ## 🎯 Core Workflow
 
-### Gateway Routing & Failover
+### Gateway Routing
 
 ```mermaid
 graph LR
     subgraph Setup["⚙️ Setup"]
         A[Add Provider] --> B[Configure Models]
         B --> C[Expose to Pi]
-        C --> D[Set Failover Chain]
     end
 
     subgraph Runtime["🚀 Runtime"]
@@ -201,10 +199,7 @@ graph LR
         F --> G[Try provider-a]
         G --> H{Success?}
         H -->|✓| I[Response]
-        H -->|✗ 429/5xx| J[Try provider-b]
-        J --> K{Success?}
-        K -->|✓| I
-        K -->|✗| L[Circuit Breaker]
+        H -->|✗| L[Error Passthrough]
         L --> M[60s Cooldown]
         M --> N[Half-Open Probe]
         N -->|✓| G
@@ -248,7 +243,6 @@ In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback). The
 **3. Start the proxy** — it reads the published `pi-switch` gateway provider
 
 ```bash
-pi-switch proxy failover provider-b,provider-c          # optional same-model fallback
 pi-switch proxy start --daemon
 ```
 
@@ -263,7 +257,6 @@ Requests are routed by the model name in the request body — no out-of-band sta
 - **Model-name routing** — `"model": "provider-a/gpt-5.4"` resolves to profile `provider-a`, real model `gpt-5.4`; the proxy rewrites the body before forwarding upstream
 - **Channel-pinned routing** — partitioned suppliers advertise `provider-a/main/gpt-5.4` (`supplier/channel/model`), routed to exactly that channel's credentials with no cross-supplier failover
 - **Single gateway provider** — pi sees one `pi-switch` provider advertising every exposed model (`profile/realModelId`, or `profile/channel/realModelId` when partitioned); switching model in pi = sending a different model string = instant routing change
-- **Automatic failover** — same-model fallback across the configured chain on 429/5xx errors or network failures; retryable failures (403/408/429/5xx) also cool the credential down (default 60s, skipped while cooling). Extra rounds (`settings.proxy.requestRetry`, default 3), per-profile/channel `requestRetry` overrides, and `requestScopedErrors` (status + body-match → stop|stop-and-cooldown|continue|continue-and-cooldown) tune the policy
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token, as do Responses↔Chat cross-format routes (converted both directions); upstream response headers (Content-Type, etc.) are preserved
 - **OpenAI ↔ Anthropic** — transparently converts between chat completions and messages APIs
@@ -324,19 +317,6 @@ pi-switch provider expose <name> <model-id>...
 
 </details>
 
-<details>
-<summary><b>How do I set up failover?</b></summary>
-<br>
-
-In WebUI: `Gateway`/`Proxy` panels expose the failover chain (or `Settings → Failover` in TUI → `Enter` → comma-separated names → `Enter`).
-Or via CLI:
-```bash
-pi-switch proxy failover provider-b,provider-c
-```
-
-Profiles in the failover chain that expose the same model are tried in order when the primary fails.
-
-</details>
 
 <details>
 <summary><b>What does the [proxy] badge mean?</b></summary>
@@ -356,15 +336,14 @@ The proxy advertises every exposed model as `profile/realModelId` under a single
 
 1. Splits on the first `/` — profile `provider-a`, real model `gpt-5.4`
 2. Routes to the `provider-a` profile's upstream, rewriting `body.model` to `gpt-5.4`
-3. On failure (429/5xx), tries the failover chain for any other profile exposing `gpt-5.4`
+3. On failure (429/5xx), the error is returned directly without failover (single-candidate passthrough)
 
 ```bash
 # 1. Expose models (per profile)
 pi-switch provider expose provider-a gpt-5.4
 pi-switch provider expose provider-b gpt-5.4
 
-# 2. Set failover chain (optional)
-pi-switch proxy failover provider-b
+# 2. (failover removed)
 
 # 3. Start proxy daemon
 pi-switch proxy start --daemon

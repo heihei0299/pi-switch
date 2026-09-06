@@ -89,7 +89,6 @@ export interface ProxySettings {
   host: string;
   port: number;
   target?: string;
-  failover: string[];
   userAgent?: string;
   circuitBreaker: CircuitBreakerSettings;
 }

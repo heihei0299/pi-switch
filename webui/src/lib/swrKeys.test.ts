@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 vi.mock("swr", () => ({ mutate: vi.fn(() => Promise.resolve()) }));
 import { SWR_KEY_PROFILES, SWR_KEY_GATEWAY, swrKeyStats, PUT_MUTATE_KEYS } from "./swrKeys";
-import { mutateAfterProfilePut, mutateAfterGatewayPublish, mutateAfterFailover } from "../store/swr";
+import { mutateAfterProfilePut, mutateAfterGatewayPublish } from "../store/swr";
 import { mutate } from "swr";
 
 describe("S1 SWR three keys with mutate", () => {
@@ -33,9 +33,4 @@ describe("S1 SWR three keys with mutate", () => {
     expect(mutate).toHaveBeenCalledWith(["gateway"]);
   });
 
-  it("mutateAfterFailover triggers mutate for both keys", async () => {
-    await mutateAfterFailover();
-    expect(mutate).toHaveBeenCalledWith(["profiles"]);
-    expect(mutate).toHaveBeenCalledWith(["gateway"]);
-  });
 });

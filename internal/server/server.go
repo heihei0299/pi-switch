@@ -1492,12 +1492,7 @@ func handleValidate(c *gin.Context) {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.retry", name), "message": err.Error()})
 		}
 	}
-	// failover check
-	for _, f := range cfg.Settings.Proxy.Failover {
-		if _, ok := cfg.Profiles[f]; !ok {
-			issues = append(issues, map[string]interface{}{"level": "warning", "path": "settings.proxy.failover", "message": fmt.Sprintf("failover profile %s not found", f)})
-		}
-	}
+	// failover check removed (transitional)
 	if err := validateSettingsRetry(cfg.Settings); err != nil {
 		issues = append(issues, map[string]interface{}{"level": "error", "path": "settings.proxy.retry", "message": err.Error()})
 	}
@@ -2033,15 +2028,7 @@ func handleProxyStop(c *gin.Context) {
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid})
 }
 func handlePutFailover(c *gin.Context) {
-	var body struct {
-		Failover []string `json:"failover"`
-	}
-	raw, _ := c.GetRawData()
-	_ = json.Unmarshal(raw, &body)
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	cfg.Settings.Proxy.Failover = body.Failover
-	_ = saveConfig(cfg)
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(410, gin.H{"error": gin.H{"message": "failover removed, will be replaced by per-conversation breaker", "type": "gone"}})
 }
 func handleGetSettings(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -3215,27 +3202,16 @@ func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string
 		parts := strings.SplitN(requested, "/", 2)
 		prefix, rest := parts[0], parts[1]
 		if isNonProxy(cfg, prefix) && exposes(cfg, prefix, rest) {
-			profiles := []string{prefix}
-			for _, fo := range cfg.Settings.Proxy.Failover {
-				if fo != prefix && isNonProxy(cfg, fo) && exposes(cfg, fo, rest) && !contains(profiles, fo) {
-					profiles = append(profiles, fo)
-				}
-			}
-			return profiles, rest, ""
+			return []string{prefix}, rest, ""
 		}
 	}
-	profiles := []string{}
-	for _, fo := range cfg.Settings.Proxy.Failover {
-		if isNonProxy(cfg, fo) && exposes(cfg, fo, requested) && !contains(profiles, fo) {
-			profiles = append(profiles, fo)
+	// 裸模型：仅走 current 指向的供应商，否则无路由（不再全量扫描，不再遍历 failover）。
+	if cfg.Current != nil {
+		if name := *cfg.Current; isNonProxy(cfg, name) && exposes(cfg, name, requested) {
+			return []string{name}, requested, ""
 		}
 	}
-	for name := range cfg.Profiles {
-		if isNonProxy(cfg, name) && exposes(cfg, name, requested) && !contains(profiles, name) {
-			profiles = append(profiles, name)
-		}
-	}
-	return profiles, requested, ""
+	return nil, requested, ""
 }
 
 // pinChannelAttempts keeps only attempts hitting the pinned channel of its
@@ -3503,20 +3479,6 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
 	if len(candidates) == 0 {
-		if cfg.Current != nil {
-			if _, ok := cfg.Profiles[*cfg.Current]; ok {
-				candidates = []string{*cfg.Current}
-				realModel = requestedModel
-				if strings.Contains(requestedModel, "/") {
-					parts := strings.SplitN(requestedModel, "/", 2)
-					if parts[0] == *cfg.Current {
-						realModel = parts[1]
-					}
-				}
-			}
-		}
-	}
-	if len(candidates) == 0 {
 		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
 		return
 	}
@@ -3530,167 +3492,118 @@ func handleChatCompletions(c *gin.Context) {
 		handleStream(c, cfg, candidates, body, realModel, pinnedChannel, convID, convName, proto, rawLen, start)
 		return
 	}
-	var lastErr string
-	var lastStatus int = 502
-	var successResp []byte
-	triedUpstream := false
-	var successHeaders http.Header
-	var successProvider string
-	var successUpstreamURL string
-	var successModelEntry *config.ModelEntry
-	attempts := pinChannelAttempts(&cfg, expandAttempts(candidates, &cfg), candidates, pinnedChannel)
-	prevRound := -1
-	profTried := map[int]map[string]bool{}
-	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
-	for _, att := range attempts {
-		name := att.ref.name
-		if att.round != prevRound {
-			if prevRound >= 0 {
-				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
+	// Transitional passthrough: single candidate, no retry, no cooling.
+	// retained for per-conversation breaker, not used in transitional passthrough
+	name := candidates[0]
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
+		return
+	}
+	if pinnedChannel != "" {
+		found := false
+		for i, ups := range prof.ResolvedUpstreams() {
+			chName := ""
+			if ups.Name != nil {
+				chName = *ups.Name
 			}
-			prevRound = att.round
-		}
-		prof, ok := profForAttempt(&cfg, att)
-		if !ok {
-			continue
-		}
-		base := prof.PrimaryBaseURL()
-		if isCooling(cooldownKey(name, base)) {
-			continue
-		}
-		if !admitForRound(profTried, att, maxCreds) {
-			continue
-		}
-		if base == "" {
-			lastErr = "missing baseUrl"
-			continue
-		}
-		modelEntry := findModelEntry(prof, realModel)
-		if modelEntry == nil {
-			modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
-		}
-		successModelEntry = modelEntry
-		bcopy := cloneMap(body)
-		bcopy["model"] = realModel
-		clampBody(bcopy, modelEntry, rawLen)
-		var upstreamBody map[string]interface{}
-		var upstreamPath string
-		plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
-		if planErr != nil {
-			lastErr = fmt.Sprintf("profile %s: %s", name, planErr.Error())
-			continue
-		}
-		convBody, convErr := plan.TransformRequest(realModel, bcopy)
-		if convErr != nil {
-			lastErr = convErr.Error()
-			continue
-		}
-		clampBody(convBody, modelEntry, rawLen)
-		upstreamBody = convBody
-		upstreamPath = plan.UpstreamPath
-		needRespConvert := plan.NeedsConvert()
-		u := buildUpstreamURL(base, upstreamPath)
-		apiKey := prof.PrimaryAPIKey()
-		// headers merging: Upstream.headers > Profile.headers
-		headers := map[string]string{}
-		for k, v := range prof.Headers {
-			headers[k] = v
-		}
-		for _, ups := range prof.ResolvedUpstreams() {
-			if ups.BaseURL == base {
-				for k, v := range ups.Headers {
-					headers[k] = v
-				}
+			if chName == pinnedChannel {
+				prof = narrowToChannel(prof, i)
+				found = true
 				break
 			}
 		}
-		// fallback to PrimaryHeaders if empty (covers single baseUrl case already merged)
-		if len(headers) == 0 {
-			headers = prof.PrimaryHeaders()
-		}
-		bbytes, _ := json.Marshal(upstreamBody)
-		req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
-		client := &http.Client{Timeout: 30 * time.Second}
-		triedUpstream = true
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err.Error()
-			lastStatus = 502
-			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr, u)
-			continue
-		}
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
-			act := classifyUpstreamError(resp.StatusCode, respBody, &prof, &cfg)
-			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
-			if act.shouldStop() {
-				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
-				return
-			}
-			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
-			lastStatus = resp.StatusCode
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			act := classifyUpstreamError(resp.StatusCode, respBody, &prof, &cfg)
-			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
-			if !act.shouldStop() {
-				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
-				lastStatus = resp.StatusCode
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
-				continue
-			}
-			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
+		if !found {
+			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
 			return
 		}
-		finalBody := respBody
-		finalHeaders := resp.Header
-		if needRespConvert {
-			var upstreamObj map[string]interface{}
-			if err := json.Unmarshal(respBody, &upstreamObj); err == nil {
-				if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
-					b, _ := json.Marshal(conv)
-					finalBody = b
-					finalHeaders = http.Header{}
-					finalHeaders.Set("Content-Type", "application/json")
-				}
-			}
-		}
-		successResp = finalBody
-		successHeaders = finalHeaders
-		successProvider = name
-		successUpstreamURL = u
-		lastStatus = resp.StatusCode
-		break
 	}
-	if successResp == nil {
-		if hint := coolingHint(candidateCooldownKeys(candidates, &cfg)); !triedUpstream && hint != "" {
-			lastErr = "All candidates cooling" + hint
-		} else if lastErr == "" {
-			lastErr = "All upstream attempts failed"
-		}
-		c.JSON(lastStatus, gin.H{"error": gin.H{"message": lastErr, "type": "failover_exhausted"}})
+	base := prof.PrimaryBaseURL()
+	if base == "" {
+		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
 		return
 	}
+	modelEntry := findModelEntry(prof, realModel)
+	if modelEntry == nil {
+		modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
+	}
+	bcopy := cloneMap(body)
+	bcopy["model"] = realModel
+	clampBody(bcopy, modelEntry, rawLen)
+	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+	if planErr != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("profile %s: %s", name, planErr.Error()), "type": "no_route"}})
+		return
+	}
+	convBody, convErr := plan.TransformRequest(realModel, bcopy)
+	if convErr != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": convErr.Error(), "type": "no_route"}})
+		return
+	}
+	clampBody(convBody, modelEntry, rawLen)
+	upstreamBody := convBody
+	upstreamPath := plan.UpstreamPath
+	needRespConvert := plan.NeedsConvert()
+	u := buildUpstreamURL(base, upstreamPath)
+	apiKey := prof.PrimaryAPIKey()
+	headers := map[string]string{}
+	for k, v := range prof.Headers {
+		headers[k] = v
+	}
+	for _, ups := range prof.ResolvedUpstreams() {
+		if ups.BaseURL == base {
+			for k, v := range ups.Headers {
+				headers[k] = v
+			}
+			break
+		}
+	}
+	if len(headers) == 0 {
+		headers = prof.PrimaryHeaders()
+	}
+	bbytes, _ := json.Marshal(upstreamBody)
+	req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
+	if err != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), u)
+		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		return
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
+		return
+	}
+	finalBody := respBody
+	finalHeaders := resp.Header
+	if needRespConvert {
+		var upstreamObj map[string]interface{}
+		if err := json.Unmarshal(respBody, &upstreamObj); err == nil {
+			if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
+				b, _ := json.Marshal(conv)
+				finalBody = b
+				finalHeaders = http.Header{}
+				finalHeaders.Set("Content-Type", "application/json")
+			}
+		}
+	}
 	var respObj map[string]interface{}
-	_ = json.Unmarshal(successResp, &respObj)
+	_ = json.Unmarshal(finalBody, &respObj)
 	usagePrompt, usageCompletion, usageCached, usageReasoning := extractUsage(respObj)
 	if usagePrompt == 0 && usageCompletion == 0 {
 		if s := usage.ExtractUsage(respObj); s != nil {
@@ -3700,10 +3613,10 @@ func handleChatCompletions(c *gin.Context) {
 			usageReasoning = int(s.ReasoningTokens)
 		}
 	}
-	cost := computeCost(successModelEntry, usagePrompt, usageCompletion, usageCached)
+	cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
 	latMs := time.Since(start).Milliseconds()
-	logRequest(successProvider, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, lastStatus, "", successUpstreamURL)
-	for k, vv := range successHeaders {
+	logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp.StatusCode, "", u)
+	for k, vv := range finalHeaders {
 		for _, v := range vv {
 			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
 				continue
@@ -3711,167 +3624,127 @@ func handleChatCompletions(c *gin.Context) {
 			c.Header(k, v)
 		}
 	}
-	ct := successHeaders.Get("Content-Type")
+	ct := finalHeaders.Get("Content-Type")
 	if ct == "" {
 		ct = "application/json"
 	}
-	c.Data(lastStatus, ct, successResp)
+	c.Data(resp.StatusCode, ct, finalBody)
 }
 
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, pinnedChannel, convID, convName, proto string, rawLen int, start time.Time) {
-	var lastErr string
-	var lastStatus int = 502
-	triedUpstream := false
-	attempts := pinChannelAttempts(&cfg, expandAttempts(candidates, &cfg), candidates, pinnedChannel)
-	prevRound := -1
-	profTried := map[int]map[string]bool{}
-	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
-	for _, att := range attempts {
-		name := att.ref.name
-		if att.round != prevRound {
-			if prevRound >= 0 {
-				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
+	// Transitional passthrough: single candidate, no retry, no cooling.
+	if len(candidates) == 0 {
+		c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
+		return
+	}
+	name := candidates[0]
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
+		return
+	}
+	if pinnedChannel != "" {
+		found := false
+		for i, ups := range prof.ResolvedUpstreams() {
+			chName := ""
+			if ups.Name != nil {
+				chName = *ups.Name
 			}
-			prevRound = att.round
-		}
-		prof, ok := profForAttempt(&cfg, att)
-		if !ok {
-			continue
-		}
-		base := prof.PrimaryBaseURL()
-		if isCooling(cooldownKey(name, base)) {
-			continue
-		}
-		if !admitForRound(profTried, att, maxCreds) {
-			continue
-		}
-		if base == "" {
-			lastErr = "missing baseUrl"
-			continue
-		}
-		modelEntry := findModelEntry(prof, realModel)
-		if modelEntry == nil {
-			modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
-		}
-		bcopy := cloneMap(body)
-		bcopy["model"] = realModel
-		bcopy["stream"] = true
-		clampBody(bcopy, modelEntry, rawLen)
-		var upstreamBody map[string]interface{}
-		var upstreamPath string
-		plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
-		if planErr != nil {
-			lastErr = fmt.Sprintf("profile %s: %s", name, planErr.Error())
-			continue
-		}
-		convBody, convErr := plan.TransformRequest(realModel, bcopy)
-		if convErr != nil {
-			lastErr = convErr.Error()
-			continue
-		}
-		convBody["stream"] = true
-		clampBody(convBody, modelEntry, rawLen)
-		upstreamBody = convBody
-		upstreamPath = plan.UpstreamPath
-		u := buildUpstreamURL(base, upstreamPath)
-		apiKey := prof.PrimaryAPIKey()
-		headers := prof.PrimaryHeaders()
-		bbytes, _ := json.Marshal(upstreamBody)
-		req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "text/event-stream")
-		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-		// headers merging: Upstream.headers > Profile.headers
-		mergedHeaders := map[string]string{}
-		for k, v := range prof.Headers {
-			mergedHeaders[k] = v
-		}
-		for _, ups := range prof.ResolvedUpstreams() {
-			if ups.BaseURL == base {
-				for k, v := range ups.Headers {
-					mergedHeaders[k] = v
-				}
+			if chName == pinnedChannel {
+				prof = narrowToChannel(prof, i)
+				found = true
 				break
 			}
 		}
-		if len(mergedHeaders) == 0 {
-			mergedHeaders = headers
-		}
-		for k, v := range mergedHeaders {
-			req.Header.Set(k, v)
-		}
-		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
-		client := &http.Client{Timeout: 0}
-		triedUpstream = true
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err.Error()
-			lastStatus = 502
-			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr, u)
-			continue
-		}
-		if resp.StatusCode >= 500 {
-			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
-			resp.Body.Close()
-			act := classifyUpstreamError(resp.StatusCode, bodyBytes, &prof, &cfg)
-			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
-			if act.shouldStop() {
-				for k, vv := range resp.Header {
-					for _, v := range vv {
-						c.Header(k, v)
-					}
-				}
-				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), u)
-				return
-			}
-			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
-			lastStatus = resp.StatusCode
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
-			resp.Body.Close()
-			act := classifyUpstreamError(resp.StatusCode, bodyBytes, &prof, &cfg)
-			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
-			if !act.shouldStop() {
-				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
-				lastStatus = resp.StatusCode
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
-				continue
-			}
-			for k, vv := range resp.Header {
-				for _, v := range vv {
-					c.Header(k, v)
-				}
-			}
-			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
+		if !found {
+			c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
 			return
 		}
-		// Streaming conversion comes from the translator registry,
-		// keyed by upstream-to-downstream direction. Anthropic SSE has no
-		// registered converter and passes through (pre-existing behavior).
-		if conv := plan.StreamConverter(realModel); conv != nil {
-			streamConvert(c, resp, conv, plan.From == translator.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
-			return
-		}
-		streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
+	}
+	base := prof.PrimaryBaseURL()
+	if base == "" {
+		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
 		return
 	}
-	if hint := coolingHint(candidateCooldownKeys(candidates, &cfg)); !triedUpstream && hint != "" {
-		lastErr = "All candidates cooling" + hint
-	} else if lastErr == "" {
-		lastErr = "All upstream attempts failed"
+	modelEntry := findModelEntry(prof, realModel)
+	if modelEntry == nil {
+		modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
 	}
-	c.JSON(lastStatus, gin.H{"error": gin.H{"message": lastErr, "type": "failover_exhausted"}})
+	bcopy := cloneMap(body)
+	bcopy["model"] = realModel
+	bcopy["stream"] = true
+	clampBody(bcopy, modelEntry, rawLen)
+	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+	if planErr != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("profile %s: %s", name, planErr.Error()), "type": "no_route"}})
+		return
+	}
+	convBody, convErr := plan.TransformRequest(realModel, bcopy)
+	if convErr != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": convErr.Error(), "type": "no_route"}})
+		return
+	}
+	convBody["stream"] = true
+	clampBody(convBody, modelEntry, rawLen)
+	upstreamBody := convBody
+	upstreamPath := plan.UpstreamPath
+	u := buildUpstreamURL(base, upstreamPath)
+	apiKey := prof.PrimaryAPIKey()
+	headers := prof.PrimaryHeaders()
+	bbytes, _ := json.Marshal(upstreamBody)
+	req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
+	if err != nil {
+		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	mergedHeaders := map[string]string{}
+	for k, v := range prof.Headers {
+		mergedHeaders[k] = v
+	}
+	for _, ups := range prof.ResolvedUpstreams() {
+		if ups.BaseURL == base {
+			for k, v := range ups.Headers {
+				mergedHeaders[k] = v
+			}
+			break
+		}
+	}
+	if len(mergedHeaders) == 0 {
+		mergedHeaders = headers
+	}
+	for k, v := range mergedHeaders {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), u)
+		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		return
+	}
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
+		resp.Body.Close()
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				c.Header(k, v)
+			}
+		}
+		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), u)
+		return
+	}
+	if conv := plan.StreamConverter(realModel); conv != nil {
+		streamConvert(c, resp, conv, plan.From == translator.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
+		return
+	}
+	streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
 }
 
 func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {

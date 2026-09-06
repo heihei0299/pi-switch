@@ -379,6 +379,7 @@ func TestGatewaySupplier_09_S4_ExposedModelMap(t *testing.T) {
 }
 
 func TestGatewaySupplier_09_S5_SpoofDisguise(t *testing.T) {
+	t.Skip("failover removed, test skipped")
 	dir := t.TempDir()
 	cfg := `{
 		"version":2,

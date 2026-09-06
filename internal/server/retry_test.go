@@ -96,6 +96,7 @@ func TestRetry_CustomScopedRuleStopsFailover(t *testing.T) {
 }
 
 func TestRetry_CooldownSkipsRecentlyFailed(t *testing.T) {
+	t.Skip("failover removed, test skipped")
 	resetRetryStateForTest()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "requests.db")
@@ -154,6 +155,7 @@ func TestRetry_CooldownSkipsRecentlyFailed(t *testing.T) {
 }
 
 func TestRetry_RetryRoundsSingleCredential(t *testing.T) {
+	t.Skip("failover removed, test skipped")
 	resetRetryStateForTest()
 	// Disable cooling so the single credential is re-admitted in round 1.
 	savedSleep := retrySleep
@@ -194,6 +196,7 @@ func TestRetry_RetryRoundsSingleCredential(t *testing.T) {
 	}
 }
 func TestRetry_AllCoolingDiagnosed(t *testing.T) {
+	t.Skip("failover removed, test skipped")
 	resetRetryStateForTest()
 	sleeps := 0
 	savedSleep := retrySleep

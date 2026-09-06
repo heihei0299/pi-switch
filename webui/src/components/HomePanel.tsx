@@ -119,8 +119,8 @@ export function HomePanel({
                     {currentUpstreams[0]?.baseUrl || t("no base url")}
                   </div>
                   {currentUpstreams.length > 1 && (
-                    <div className="mt-1 text-[11px] text-indigo-400">
-                      +{currentUpstreams.length - 1} {t("failover upstream(s)")}
+                    <div className="mt-1 text-[11px] text-zinc-400">
+                      +{currentUpstreams.length - 1} {t("additional channel(s)")}
                     </div>
                   )}
                 </div>
@@ -249,7 +249,7 @@ export function HomePanel({
           <ol className="ml-4 list-decimal space-y-1 text-xs text-zinc-400">
             <li>{t("Add profiles & set API keys")}</li>
             <li>{t("Expose models to pi (per profile)")}</li>
-            <li>{t("Optionally set a failover chain")}</li>
+            <li>{t("Expose models to pi")}</li>
             <li>
               {t("Start the proxy — pi routes by profile/model")}{" "}
               <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[11px] text-amber-300">
@@ -262,7 +262,7 @@ export function HomePanel({
         <Card variant="subtle">
           <div className="mb-2 text-sm font-semibold text-zinc-200">{t("System Diagnostics")}</div>
           <div className="text-xs text-zinc-400">
-            {t("Validate active configs, verify upstream network connectivity, and test failover resilience.")}
+            {t("Validate active configs and verify upstream network connectivity.")}
           </div>
           <div className="mt-3 flex gap-2">
             <Button onClick={() => onNavigate("doctor")}>{t("Run Doctor Diagnostics")}</Button>

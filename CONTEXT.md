@@ -1,6 +1,6 @@
 # pi-switch Context
 
-pi-switch 是 pi 客户端（Perplexity 的模型客户端）的轻量 profile 切换器：管理多个 provider profile，并提供一个本地代理，把客户端请求路由到当前 profile 的上游服务，支持同模型 failover 与 OpenAI/Anthropic 格式互转。
+pi-switch 是 pi 客户端（Perplexity 的模型客户端）的轻量 profile 切换器：管理多个 provider profile，并提供一个本地代理，把客户端请求路由到当前 profile 的上游服务，支持 OpenAI/Anthropic 格式互转。
 
 ## Language
 

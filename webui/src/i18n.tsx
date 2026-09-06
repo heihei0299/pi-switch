@@ -287,7 +287,7 @@ const zh: Record<string, string> = {
   "Disguise (User-Agent)": "伪装（User-Agent）",
   "API key (supports $ENV_VAR)": "API 密钥（支持 $ENV_VAR）",
   "Model IDs (one per line)": "模型 ID（每行一个）",
-  "Mark as a proxy profile (excluded from failover, not exposed to pi)":
+  "Mark as a proxy profile (not exposed to pi)":
     "标记为代理 profile（不参与故障转移、不暴露给 pi）",
   "add model id + Enter": "添加模型 ID + Enter",
   "Fetching…": "获取中…",

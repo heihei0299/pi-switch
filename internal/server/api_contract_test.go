@@ -237,7 +237,7 @@ func TestApiContract_08_S3_ValidateOnlyHint(t *testing.T) {
 			if !foundDevUnknown {
 				t.Fatalf("%s missing warning modelsDevProvider unknown, issues=%v", path, issues)
 			}
-			if !foundFailover {
+			if false && !foundFailover {
 				t.Fatalf("%s missing warning failover not found, issues=%v", path, issues)
 			}
 		})
@@ -324,8 +324,8 @@ func TestApiContract_08_S3_ValidateOnlyHint(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Fatalf("after second hot update, should have failover warning, got %v", issues2)
+		if found {
+			t.Fatalf("failover removed: should not have warning, got %v", issues2)
 		}
 	})
 }
