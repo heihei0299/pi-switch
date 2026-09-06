@@ -1558,7 +1558,7 @@ func handleGatewayPreview(c *gin.Context) {
 	//（compat/headers 等）并入 proposed，直接比会恒差。先归一化再 diff，
 	// 否则发布后 pending 永远回不到 0（manual-test-bugs/02）。
 	proposed = gateway.MergeGatewayExtra(curMap, proposed)
-	// 模型目录补缺：用 models.dev 快照补提议条目的缺失元信息（只补缺失，不写回池）。
+	// 模型目录补齐：用 models.dev 快照补提议条目的缺失模型元数据（只补缺失，不写回池）。
 	summary := enrichProposedModels(proposed)
 	pending := gateway.ComputePendingCount(curMap, proposed)
 	groups, removed := gateway.BuildPreviewGroups(cfg, curMap, proposed)
@@ -1574,11 +1574,71 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 	enriched, skipped := catalog.FillModels(models, snap)
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
+
+// validateGatewayModels checks the models array shape of one gateway entry.
+// Empty string means valid (models key itself is optional).
+func validateGatewayModels(gw map[string]interface{}) string {
+	models, ok := gw["models"]
+	if !ok {
+		return ""
+	}
+	arr, ok := models.([]interface{})
+	if !ok {
+		return "models must be array"
+	}
+	for i, v := range arr {
+		mm, ok := v.(map[string]interface{})
+		if !ok {
+			return fmt.Sprintf("models[%d] must be object", i)
+		}
+		if id, _ := mm["id"].(string); strings.TrimSpace(id) == "" {
+			return fmt.Sprintf("models[%d].id required", i)
+		}
+	}
+	return ""
+}
+
+// writeGatewayFile atomically writes the whole models.json gateway file.
+func writeGatewayFile(m map[string]interface{}) error {
+	path := gateway.ModelsPath()
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	b, _ := json.MarshalIndent(m, "", "  ")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	var gw map[string]interface{}
 	if err := json.Unmarshal(raw, &gw); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
+		return
+	}
+	// providers wrapper 与发布路由同一口径：逐条目校验 + 补齐后整文件原子写。
+	if provs, ok := gw["providers"].(map[string]interface{}); ok {
+		for name, v := range provs {
+			em, ok := v.(map[string]interface{})
+			if !ok {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
+				return
+			}
+			if msg := validateGatewayModels(em); msg != "" {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
+				return
+			}
+		}
+		for _, v := range provs {
+			if em, ok := v.(map[string]interface{}); ok {
+				enrichProposedModels(em)
+			}
+		}
+		if err := writeGatewayFile(gw); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
 		return
 	}
 	if api, _ := gw["api"].(string); api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" && api != "google-generative-ai" {
@@ -1593,26 +1653,12 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "baseUrl must start with http:// or https://"})
 		return
 	}
-	if models, ok := gw["models"]; ok {
-		if arr, ok := models.([]interface{}); ok {
-			for i, v := range arr {
-				if mm, ok := v.(map[string]interface{}); ok {
-					if id, _ := mm["id"].(string); strings.TrimSpace(id) == "" {
-						c.JSON(400, gin.H{"error": fmt.Sprintf("models[%d].id required", i)})
-						return
-					}
-				} else {
-					c.JSON(400, gin.H{"error": fmt.Sprintf("models[%d] must be object", i)})
-					return
-				}
-			}
-		} else {
-			c.JSON(400, gin.H{"error": "models must be array"})
-			return
-		}
+	if msg := validateGatewayModels(gw); msg != "" {
+		c.JSON(400, gin.H{"error": msg})
+		return
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	// 目录补缺：与预览同一口径，写入前补齐缺失元信息。
+	// 模型目录补齐：与预览同一口径，写入前补齐缺失模型元数据。
 	enrichProposedModels(gw)
 	// atomic backup (gateway.Publish does backup) but ensure dir exists
 	if err := gateway.Publish(cfg, gw); err != nil {
@@ -1735,17 +1781,17 @@ func handlePackagesList(c *gin.Context) {
 			continue
 		}
 		m := map[string]interface{}{
-			"id":      id.String,
-			"spec":    spec.String,
-			"type":    typ.String,
-			"name":    name.String,
-			"version": version.String,
+			"id":            id.String,
+			"spec":          spec.String,
+			"type":          typ.String,
+			"name":          name.String,
+			"version":       version.String,
 			"hasExtensions": hasExt.Int64 == 1,
 			"hasSkills":     hasSkills.Int64 == 1,
 			"hasPrompts":    hasPrompts.Int64 == 1,
 			"hasThemes":     hasThemes.Int64 == 1,
-			"installed": installed.Int64 == 1,
-			"enabled":   enabled.Int64 == 1,
+			"installed":     installed.Int64 == 1,
+			"enabled":       enabled.Int64 == 1,
 		}
 		if installedAt.Valid && installedAt.Int64 != 0 {
 			var t time.Time
@@ -1787,7 +1833,7 @@ func handlePackageAdd(c *gin.Context) {
 		enabled = 0
 	}
 	now := time.Now().UnixMilli()
-	_, err = db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET spec=excluded.spec, type=excluded.type, name=excluded.name, installed=1, enabled=excluded.enabled, updated_at=excluded.updated_at` , spec, spec, typ, name, 1, enabled, now, now)
+	_, err = db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET spec=excluded.spec, type=excluded.type, name=excluded.name, installed=1, enabled=excluded.enabled, updated_at=excluded.updated_at`, spec, spec, typ, name, 1, enabled, now, now)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -1828,7 +1874,7 @@ func handlePackageImport(c *gin.Context) {
 			continue
 		}
 		typ, name := parsePackageSpec(spec)
-		_, err := db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET installed=1, updated_at=excluded.updated_at` , spec, spec, typ, name, 1, 1, now, now)
+		_, err := db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET installed=1, updated_at=excluded.updated_at`, spec, spec, typ, name, 1, 1, now, now)
 		if err == nil {
 			count++
 		}
@@ -1897,7 +1943,7 @@ func handlePackageToggle(c *gin.Context) {
 	_, _ = db.Exec(`UPDATE packages SET enabled=?, updated_at=? WHERE id=?`, newEnabled, time.Now().UnixMilli(), id)
 	c.JSON(200, gin.H{"ok": true, "enabled": newEnabled == 1})
 }
-func handleCcsProviders(c *gin.Context)  { c.JSON(200, gin.H{"providers": []interface{}{}}) }
+func handleCcsProviders(c *gin.Context) { c.JSON(200, gin.H{"providers": []interface{}{}}) }
 func handleCcsImport(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true, "imported": 0, "results": []interface{}{}})
 }
@@ -3038,7 +3084,7 @@ func handleGatewayPublish(c *gin.Context) {
 	} else {
 		toPublish = gateway.BuildProposedGatewayEntry(cfg)
 	}
-	// 目录补缺：wrapper 内各 provider 条目与单条目同一口径。
+	// 模型目录补齐：wrapper 内各 provider 条目与单条目同一口径。
 	if provs, ok := toPublish["providers"].(map[string]interface{}); ok {
 		for _, v := range provs {
 			if em, ok := v.(map[string]interface{}); ok {
@@ -3049,12 +3095,10 @@ func handleGatewayPublish(c *gin.Context) {
 		enrichProposedModels(toPublish)
 	}
 	if _, ok := toPublish["providers"]; ok {
-		path := gateway.ModelsPath()
-		_ = os.MkdirAll(filepath.Dir(path), 0755)
-		b, _ := json.MarshalIndent(toPublish, "", "  ")
-		tmp := path + ".tmp"
-		_ = os.WriteFile(tmp, append(b, '\n'), 0644)
-		_ = os.Rename(tmp, path)
+		if err := writeGatewayFile(toPublish); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(200, gin.H{"ok": true})
 		return
 	}

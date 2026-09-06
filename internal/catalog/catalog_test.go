@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -247,5 +248,78 @@ func TestCatalog_NoCacheAndFailureWarns(t *testing.T) {
 	}
 	if _, ok := snap.Lookup("gpt-4o-mini"); ok {
 		t.Fatalf("empty snapshot must not match")
+	}
+}
+
+func TestCatalog_FillMissingKeepsTypedNumbers(t *testing.T) {
+	tempCache(t)
+	var hits int
+	srv := fixtureServer(t, &hits)
+	defer srv.Close()
+	t.Setenv("PI_SWITCH_CATALOG_URL", srv.URL)
+	snap, _, _ := Ensure()
+	meta, ok := snap.Lookup("gpt-4o-mini")
+	if !ok {
+		t.Fatal("lookup missed")
+	}
+	// Go 侧提议值为 uint32/int 等非 float64 类型：非零值不得被覆盖。
+	entry := map[string]interface{}{
+		"id":            "sup/gpt-4o-mini",
+		"contextWindow": uint32(64000),
+		"maxTokens":     0,
+		"cost":          map[string]interface{}{"input": 9, "output": 9.0, "cacheRead": 0.0},
+	}
+	if !FillMissing(entry, meta) {
+		t.Fatal("want changes (maxTokens/cacheRead)")
+	}
+	if entry["contextWindow"] != uint32(64000) {
+		t.Fatalf("contextWindow overwritten: %v (%T)", entry["contextWindow"], entry["contextWindow"])
+	}
+	cost := entry["cost"].(map[string]interface{})
+	if cost["input"] != 9 {
+		t.Fatalf("cost.input overwritten: %v", cost["input"])
+	}
+	if cost["cacheRead"] != 0.075 {
+		t.Fatalf("cacheRead = %v, want 0.075", cost["cacheRead"])
+	}
+}
+
+func TestCatalog_CacheWriteNormalizationNotCounted(t *testing.T) {
+	tempCache(t)
+	var hits int
+	srv := fixtureServer(t, &hits)
+	defer srv.Close()
+	t.Setenv("PI_SWITCH_CATALOG_URL", srv.URL)
+	snap, _, _ := Ensure()
+	meta, _ := snap.Lookup("gpt-4o-mini")
+	// 存量 cost 齐全仅缺 cacheWrite：补零归一（保 pending 收敛）但不计 enriched。
+	entry := map[string]interface{}{
+		"id":            "sup/gpt-4o-mini",
+		"name":          "GPT-4o mini",
+		"contextWindow": float64(128000),
+		"maxTokens":     float64(16384),
+		"input":         []interface{}{"text", "image"},
+		"reasoning":     false,
+		"cost":          map[string]interface{}{"input": 0.15, "output": 0.6, "cacheRead": 0.075},
+	}
+	if FillMissing(entry, meta) {
+		t.Fatalf("pure cacheWrite normalization must not count as filled")
+	}
+	cost := entry["cost"].(map[string]interface{})
+	if _, ok := cost["cacheWrite"]; !ok {
+		t.Fatalf("cacheWrite normalization missing: %v", cost)
+	}
+}
+
+func TestCatalog_WarningCarriesStatus(t *testing.T) {
+	tempCache(t) // 文件不存在
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+	t.Setenv("PI_SWITCH_CATALOG_URL", srv.URL)
+	_, _, warn := Ensure()
+	if warn == "" || !strings.Contains(warn, "503") {
+		t.Fatalf("warn = %q, want status 503 mentioned", warn)
 	}
 }

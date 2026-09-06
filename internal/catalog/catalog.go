@@ -133,51 +133,79 @@ func (s Snapshot) Lookup(id string) (Meta, bool) {
 // Empty reports whether the snapshot holds no entries.
 func (s Snapshot) Empty() bool { return len(s.byBare) == 0 }
 
-func asFloat(v interface{}) (float64, bool) {
-	if f, ok := v.(float64); ok {
-		return f, true
+// asNumber reads any JSON/Go numeric value as float64.
+func asNumber(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		if f, err := n.Float64(); err == nil {
+			return f, true
+		}
+		return 0, false
 	}
 	return 0, false
 }
 
-// FillMissing 只补缺失字段，已有值不覆盖，返回是否改动。
+// fillFloat sets m[key] when the catalog value is non-zero and the entry
+// value is missing or zero. Numbers normalize to float64 (JSON domain).
+func fillFloat(m map[string]interface{}, key string, val float64) bool {
+	if val == 0 {
+		return false
+	}
+	if f, ok := asNumber(m[key]); ok && f != 0 {
+		return false
+	}
+	m[key] = val
+	return true
+}
+
+// FillMissing 只补缺失字段，已有值不覆盖，返回是否有目录数据补入。
 // 数值一律写 float64（JSON 域归一，避免与落盘 float64 序列化分叉）。
 //   - name 为空补；contextWindow/maxTokens 缺失或 0 且目录非 0 则补
 //   - input 缺失或空补；reasoning 缺键则按目录值补（含 false）
 //   - cost 缺失整设（含显式 cacheWrite:0，保 pending 收敛）；已存在则补 0 值子字段
+//   - 存量 cost 缺 cacheWrite 键时补零归一（保 pending 收敛），该归一不计入返回值
 func FillMissing(entry map[string]interface{}, meta Meta) bool {
-	changed := false
+	filled := false
 	if s, _ := entry["name"].(string); strings.TrimSpace(s) == "" && strings.TrimSpace(meta.Name) != "" {
 		entry["name"] = meta.Name
-		changed = true
+		filled = true
 	}
-	if f, ok := asFloat(entry["contextWindow"]); (!ok || f == 0) && meta.ContextWindow != 0 {
-		entry["contextWindow"] = float64(meta.ContextWindow)
-		changed = true
+	if fillFloat(entry, "contextWindow", float64(meta.ContextWindow)) {
+		filled = true
 	}
-	if f, ok := asFloat(entry["maxTokens"]); (!ok || f == 0) && meta.MaxTokens != 0 {
-		entry["maxTokens"] = float64(meta.MaxTokens)
-		changed = true
+	if fillFloat(entry, "maxTokens", float64(meta.MaxTokens)) {
+		filled = true
 	}
-	fillInput := false
-	if entry["input"] == nil {
-		fillInput = true
-	} else if arr, ok := entry["input"].([]interface{}); ok && len(arr) == 0 {
-		fillInput = true
-	} else if arr, ok := entry["input"].([]string); ok && len(arr) == 0 {
-		fillInput = true
-	}
-	if fillInput && len(meta.Input) > 0 {
-		in := make([]interface{}, 0, len(meta.Input))
-		for _, v := range meta.Input {
-			in = append(in, v)
-		}
-		entry["input"] = in
-		changed = true
+	if fillInput(entry, meta.Input) {
+		filled = true
 	}
 	if _, has := entry["reasoning"]; !has {
 		entry["reasoning"] = meta.Reasoning
-		changed = true
+		filled = true
 	}
 	if raw, ok := entry["cost"]; !ok || raw == nil {
 		if meta.CostInput != 0 || meta.CostOutput != 0 || meta.CacheRead != 0 {
@@ -187,27 +215,45 @@ func FillMissing(entry map[string]interface{}, meta Meta) bool {
 				"cacheRead":  meta.CacheRead,
 				"cacheWrite": float64(0),
 			}
-			changed = true
+			filled = true
 		}
 	} else if cm, ok := raw.(map[string]interface{}); ok {
-		if f, ok := asFloat(cm["input"]); (!ok || f == 0) && meta.CostInput != 0 {
-			cm["input"] = meta.CostInput
-			changed = true
+		if fillFloat(cm, "input", meta.CostInput) {
+			filled = true
 		}
-		if f, ok := asFloat(cm["output"]); (!ok || f == 0) && meta.CostOutput != 0 {
-			cm["output"] = meta.CostOutput
-			changed = true
+		if fillFloat(cm, "output", meta.CostOutput) {
+			filled = true
 		}
-		if f, ok := asFloat(cm["cacheRead"]); (!ok || f == 0) && meta.CacheRead != 0 {
-			cm["cacheRead"] = meta.CacheRead
-			changed = true
+		if fillFloat(cm, "cacheRead", meta.CacheRead) {
+			filled = true
 		}
 		if _, has := cm["cacheWrite"]; !has {
 			cm["cacheWrite"] = float64(0)
-			changed = true
 		}
 	}
-	return changed
+	return filled
+}
+
+// fillInput fills entry input when missing or empty. Numbers normalize to
+// []interface{} (JSON domain).
+func fillInput(entry map[string]interface{}, input []string) bool {
+	empty := false
+	if entry["input"] == nil {
+		empty = true
+	} else if arr, ok := entry["input"].([]interface{}); ok && len(arr) == 0 {
+		empty = true
+	} else if arr, ok := entry["input"].([]string); ok && len(arr) == 0 {
+		empty = true
+	}
+	if !empty || len(input) == 0 {
+		return false
+	}
+	in := make([]interface{}, 0, len(input))
+	for _, v := range input {
+		in = append(in, v)
+	}
+	entry["input"] = in
+	return true
 }
 
 // FillModels fills a gateway models array in place, returning per-entry counts.
@@ -301,7 +347,30 @@ func statusErr(code int) error {
 	if code >= 200 && code < 300 {
 		return nil
 	}
-	return errString("models.dev: unexpected status")
+	return errString("models.dev: unexpected status " + itoa(code))
+}
+
+// itoa without fmt (this package stays stdlib-light).
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [8]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
 }
 
 var errNoCache = errString("no cache and refresh failed")

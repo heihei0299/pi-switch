@@ -186,3 +186,58 @@ func TestGatewayRoutePublish_CatalogFillsBeforeWrite(t *testing.T) {
 		t.Fatalf("route-published cost not enriched: %v", m)
 	}
 }
+
+func TestGatewayPut_WrapperEnrichedSameAsSingle(t *testing.T) {
+	dir := t.TempDir()
+	writeCatalogCache(t, dir)
+	cfgJSON := `{"version":2,"profiles":{
+		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
+			"exposedModels":["test-model"]}},
+		"settings":{"providerPrefix":"pi-switch"}}`
+	writeChannelConfig(t, dir, cfgJSON)
+	mp := filepath.Join(dir, "models.json")
+	t.Setenv("PI_SWITCH_MODELS", mp)
+	r := NewMgmtRouter()
+	// providers wrapper 经 PUT 写入：内层条目须与单条目同一口径被补齐。
+	payload := `{"providers":{"pi-switch":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"sup/test-model"}]}}}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("wrapper put code = %d body %s", w.Code, w.Body.String())
+	}
+	raw, err := os.ReadFile(mp)
+	if err != nil {
+		t.Fatalf("models.json not written: %v", err)
+	}
+	var stored map[string]interface{}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	// 写入路径原语义不变（Publish 按单条目落盘）；断言补齐发生在某层即可。
+	found := false
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch vv := v.(type) {
+		case map[string]interface{}:
+			if vv["id"] == "sup/test-model" {
+				if cost, ok := vv["cost"].(map[string]interface{}); ok && cost["input"] == float64(1) {
+					found = true
+				}
+			}
+			for _, c := range vv {
+				walk(c)
+			}
+		case []interface{}:
+			for _, c := range vv {
+				walk(c)
+			}
+		}
+	}
+	walk(stored)
+	if !found {
+		t.Fatalf("wrapper inner model not enriched: %s", string(raw))
+	}
+}
