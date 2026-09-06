@@ -35,6 +35,8 @@ type Upstream struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	Weight  *uint32           `json:"weight,omitempty"`
 	Name    *string           `json:"name,omitempty"`
+	API           string `json:"api,omitempty"`
+	ResponsesMode string `json:"responsesMode,omitempty"`
 	// RequestRetry overrides the profile/global retry budget for attempts
 	// through this channel. Nil or negative inherits; explicit 0 admits round 0 only.
 	RequestRetry *int `json:"requestRetry,omitempty"`
@@ -44,6 +46,51 @@ type Upstream struct {
 	// Nil/empty = unpartitioned (falls back to profile top-level legacy fields).
 	Models        []ModelEntry `json:"models,omitempty"`
 	ExposedModels []string     `json:"exposedModels,omitempty"`
+}
+
+func (u Upstream) EffectiveAPI(fallback string) string {
+	if u.API != "" {
+		return u.API
+	}
+	return fallback
+}
+
+func (u Upstream) EffectiveResponsesMode(fallback string) string {
+	if u.ResponsesMode != "" {
+		return u.ResponsesMode
+	}
+	return fallback
+}
+
+func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
+	effectiveAPI := u.EffectiveAPI(profile.API)
+	effectiveMode := u.EffectiveResponsesMode(profile.ResponsesMode)
+	if u.API != "" {
+		allowed := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
+		if !allowed[u.API] {
+			return fmt.Errorf("unsupported api %s", u.API)
+		}
+	}
+	if effectiveMode == "" {
+		effectiveMode = "auto"
+	}
+	if effectiveMode == "auto" {
+		return nil
+	}
+	if effectiveMode == "passthrough" && effectiveAPI != "openai-responses" {
+		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", effectiveAPI)
+	}
+	if effectiveMode == "convert" && effectiveAPI != "openai-completions" {
+		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", effectiveAPI)
+	}
+	if effectiveMode != "passthrough" && effectiveMode != "convert" {
+		return fmt.Errorf("invalid responsesMode %q", effectiveMode)
+	}
+	return nil
+}
+
+func validateUpstreamAPI(u Upstream, profile ProviderProfile) error {
+	return ValidateUpstreamAPI(u, profile)
 }
 
 type ProviderProfile struct {

@@ -1427,6 +1427,9 @@ func validateProviderProfile(p config.ProviderProfile) error {
 			return fmt.Errorf("duplicate upstream name %q", name)
 		}
 		seenChannel[name] = true
+		if err := config.ValidateUpstreamAPI(u, p); err != nil {
+			return err
+		}
 		// 分区校验：池内 id 去重；暴露 id 必须归属本渠道池。
 		poolSeen := map[string]bool{}
 		for _, m := range u.Models {
@@ -1491,6 +1494,11 @@ func handleValidate(c *gin.Context) {
 		}
 		if err := validateRetryFields(prof); err != nil {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.retry", name), "message": err.Error()})
+		}
+		for idx, u := range prof.Upstreams {
+			if err := config.ValidateUpstreamAPI(u, prof); err != nil {
+				issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.upstreams[%d].api", name, idx), "message": err.Error()})
+			}
 		}
 	}
 	// failover check removed (transitional)
