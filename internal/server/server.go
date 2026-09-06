@@ -2866,13 +2866,7 @@ func handleChatCompletions(c *gin.Context) {
 	var successHeaders http.Header
 	var successProvider string
 	var successModelEntry *config.ModelEntry
-	attempts := expandAttempts(candidates, func(n string) int {
-		p, ok := cfg.Profiles[n]
-		if !ok {
-			return 0
-		}
-		return effectiveRequestRetry(&cfg, &p)
-	}, cfg.Settings.Proxy.MaxRetryCredentials)
+	attempts := expandAttempts(candidates, &cfg, cfg.Settings.Proxy.MaxRetryCredentials)
 	prevRound := -1
 	for _, att := range attempts {
 		name := att.name
@@ -2886,6 +2880,9 @@ func handleChatCompletions(c *gin.Context) {
 		if !ok {
 			continue
 		}
+		// Narrow to the attempt channel so base/apiKey/headers and the
+		// primary-channel policy helpers all evaluate per attempt.
+		prof = narrowToChannel(prof, att.ups)
 		base := prof.PrimaryBaseURL()
 		if isCooling(cooldownKey(name, base)) {
 			continue
@@ -3050,13 +3047,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	var lastErr string
 	var lastStatus int = 502
 	triedUpstream := false
-	attempts := expandAttempts(candidates, func(n string) int {
-		p, ok := cfg.Profiles[n]
-		if !ok {
-			return 0
-		}
-		return effectiveRequestRetry(&cfg, &p)
-	}, cfg.Settings.Proxy.MaxRetryCredentials)
+	attempts := expandAttempts(candidates, &cfg, cfg.Settings.Proxy.MaxRetryCredentials)
 	prevRound := -1
 	for _, att := range attempts {
 		name := att.name
@@ -3070,6 +3061,8 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		if !ok {
 			continue
 		}
+		// Narrow to the attempt channel (see non-streaming loop).
+		prof = narrowToChannel(prof, att.ups)
 		base := prof.PrimaryBaseURL()
 		if isCooling(cooldownKey(name, base)) {
 			continue
@@ -3185,12 +3178,11 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
 			return
 		}
-		// Streaming conversion is Responses-via-Chat only. The reverse direction
-		// (chat client against a Responses upstream) intentionally passes SSE
-		// through unconverted: there is no Responses-SSE-to-Chat-SSE translator yet.
-		// Anthropic SSE is likewise passed through (pre-existing behavior).
-		if proto == "responses" && upstreamPath == "/v1/chat/completions" {
-			streamConvertChatToResponses(c, resp, name, realModel, modelEntry, convID, convName, start)
+		// Streaming conversion comes from the translator registry,
+		// keyed by upstream-to-downstream direction. Anthropic SSE has no
+		// registered converter and passes through (pre-existing behavior).
+		if conv := plan.StreamConverter(realModel); conv != nil {
+			streamConvert(c, resp, conv, plan.From == translator.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
 			return
 		}
 		streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
@@ -3256,9 +3248,11 @@ func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel 
 	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
 }
 
-func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+// streamConvert relays an upstream SSE stream through a registry converter.
+// responsesStyle selects Responses event lines ("event: <type>") versus Chat
+// bare data lines (terminated with "data: [DONE]").
+func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEventConverter, responsesStyle bool, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
 	defer resp.Body.Close()
-	converter := translator.NewChatSseToResponses(realModel)
 	parser := usage.NewSseUsageParser()
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -3273,6 +3267,20 @@ func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider,
 	c.Header("Connection", "keep-alive")
 	c.Status(resp.StatusCode)
 	flusher, _ := c.Writer.(http.Flusher)
+	emit := func(ev map[string]interface{}) {
+		b, _ := json.Marshal(ev)
+		var line string
+		if responsesStyle {
+			typ, _ := ev["type"].(string)
+			line = fmt.Sprintf("event: %s\ndata: %s\n\n", typ, string(b))
+		} else {
+			line = fmt.Sprintf("data: %s\n\n", string(b))
+		}
+		_, _ = c.Writer.Write([]byte(line))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
 	for {
@@ -3301,15 +3309,9 @@ func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider,
 				if err := json.Unmarshal([]byte(data), &v); err != nil {
 					continue
 				}
-				events, _ := converter.PushFrame(v)
+				events, _ := conv.PushEvent(v)
 				for _, ev := range events {
-					b, _ := json.Marshal(ev)
-					typ, _ := ev["type"].(string)
-					line := fmt.Sprintf("event: %s\ndata: %s\n\n", typ, string(b))
-					_, _ = c.Writer.Write([]byte(line))
-					if flusher != nil {
-						flusher.Flush()
-					}
+					emit(ev)
 				}
 			}
 		}
@@ -3317,11 +3319,11 @@ func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider,
 			break
 		}
 	}
-	for _, ev := range converter.Finish() {
-		b, _ := json.Marshal(ev)
-		typ, _ := ev["type"].(string)
-		line := fmt.Sprintf("event: %s\ndata: %s\n\n", typ, string(b))
-		_, _ = c.Writer.Write([]byte(line))
+	for _, ev := range conv.Finish() {
+		emit(ev)
+	}
+	if !responsesStyle {
+		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -3335,15 +3337,13 @@ func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider,
 		cached = int(usageSum.CachedTokens)
 		reasoning = int(usageSum.ReasoningTokens)
 		cost = computeCost(modelEntry, prompt, completion, cached)
-	} else if converter.Usage != nil {
-		if m, ok := converter.Usage.(map[string]interface{}); ok {
-			if s := usage.ExtractUsage(map[string]interface{}{"usage": m}); s != nil {
-				prompt = int(s.PromptTokens)
-				completion = int(s.CompletionTokens)
-				cached = int(s.CachedTokens)
-				reasoning = int(s.ReasoningTokens)
-				cost = computeCost(modelEntry, prompt, completion, cached)
-			}
+	} else if m, ok := conv.UsagePayload().(map[string]interface{}); ok {
+		if s := usage.ExtractUsage(map[string]interface{}{"usage": m}); s != nil {
+			prompt = int(s.PromptTokens)
+			completion = int(s.CompletionTokens)
+			cached = int(s.CachedTokens)
+			reasoning = int(s.ReasoningTokens)
+			cost = computeCost(modelEntry, prompt, completion, cached)
 		}
 	}
 	latMs := time.Since(start).Milliseconds()

@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -10,8 +11,8 @@ import (
 )
 
 // Retry scheduling modeled on CLIProxyAPI's credential retry rounds, adapted
-// to pi-switch's Supplier/Channel model (one attempt = one profile's primary
-// channel). Pure policy: no I/O here, so it stays unit-testable.
+// to pi-switch's Supplier/Channel model (one attempt = one profile channel,
+// narrowed via narrowToChannel). Pure policy: no I/O here, so it stays unit-testable.
 //
 // Semantics:
 //   - Round 0 is the initial round; round r only admits credentials whose
@@ -114,6 +115,49 @@ func primaryChannel(prof *config.ProviderProfile) *config.Upstream {
 		return &u
 	}
 	return nil
+}
+
+// narrowToChannel returns a copy of prof limited to its upsIdx-th resolved
+// channel. Downstream policy helpers only understand the primary channel,
+// so narrowing lets one attempt carry its own channel-level overrides
+// (requestRetry, disableCooling) plus its baseUrl/apiKey/headers.
+// Out-of-range idx returns prof unchanged; base resolution below then
+// reports missing baseUrl as before.
+func narrowToChannel(prof config.ProviderProfile, upsIdx int) config.ProviderProfile {
+	ups := prof.ResolvedUpstreams()
+	if upsIdx < 0 || upsIdx >= len(ups) {
+		return prof
+	}
+	prof.Upstreams = []config.Upstream{ups[upsIdx]}
+	return prof
+}
+
+func channelWeight(u config.Upstream) uint32 {
+	if u.Weight == nil {
+		return 1
+	}
+	return *u.Weight
+}
+
+// orderedChannels lists ResolvedUpstreams indices heaviest-first (nil weight
+// counts 1, ties keep config order). An explicit weight of 0 excludes the
+// channel, mirroring CLIProxyAPI weighted routing.
+func orderedChannels(prof *config.ProviderProfile) []int {
+	if prof == nil {
+		return nil
+	}
+	ups := prof.ResolvedUpstreams()
+	var out []int
+	for i, u := range ups {
+		if u.Weight != nil && *u.Weight == 0 {
+			continue
+		}
+		out = append(out, i)
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		return channelWeight(ups[out[a]]) > channelWeight(ups[out[b]])
+	})
+	return out
 }
 
 // effectiveRequestRetry resolves channel -> profile -> global -> default.
@@ -233,33 +277,55 @@ func classifyTransportError(prof *config.ProviderProfile, cfg *config.PiSwitchCo
 	return actionContinueAndCooldown
 }
 
-// attempt plans one candidate pass in round-major order.
+// attempt plans one candidate pass in round-major order. ups indexes the
+// profile's orderedChannels; the relay narrows the profile to it.
 type attempt struct {
 	name  string
+	ups   int
 	round int
 }
 
-// expandAttempts lists (candidate, round) pairs: round 0 admits every
-// candidate, round r only those with effective retry >= r, capped per round
-// by maxCreds (<=0 = all).
-func expandAttempts(candidates []string, eff func(string) int, maxCreds int) []attempt {
+// expandAttempts lists (profile, channel, round) triples: round 0 admits every
+// channel (profiles in candidate order, channels heaviest-first), round r only
+// those with effective retry >= r, capped per round by maxCreds (<=0 = all).
+func expandAttempts(candidates []string, cfg *config.PiSwitchConfig, maxCreds int) []attempt {
+	type pair struct {
+		name string
+		ups  int
+	}
+	eff := map[pair]int{}
+	var order []pair
 	maxR := 0
 	for _, n := range candidates {
-		if e := eff(n); e > maxR {
-			maxR = e
+		if cfg == nil {
+			continue
+		}
+		prof, ok := cfg.Profiles[n]
+		if !ok {
+			continue
+		}
+		for _, u := range orderedChannels(&prof) {
+			p := pair{name: n, ups: u}
+			np := narrowToChannel(prof, u)
+			e := effectiveRequestRetry(cfg, &np)
+			eff[p] = e
+			if e > maxR {
+				maxR = e
+			}
+			order = append(order, p)
 		}
 	}
 	var out []attempt
 	for r := 0; r <= maxR; r++ {
 		added := 0
-		for _, n := range candidates {
-			if eff(n) < r {
+		for _, p := range order {
+			if eff[p] < r {
 				continue
 			}
 			if maxCreds > 0 && added >= maxCreds {
 				continue
 			}
-			out = append(out, attempt{name: n, round: r})
+			out = append(out, attempt{name: p.name, ups: p.ups, round: r})
 			added++
 		}
 	}
@@ -298,12 +364,18 @@ func waitForRound(keys []string, maxWait time.Duration) bool {
 	return true
 }
 
-// candidateCooldownKeys lists cooldown keys for candidates present in cfg.
+// candidateCooldownKeys lists cooldown keys for every channel of the
+// candidates present in cfg.
 func candidateCooldownKeys(candidates []string, cfg *config.PiSwitchConfig) []string {
 	var keys []string
+	if cfg == nil {
+		return nil
+	}
 	for _, n := range candidates {
 		if p, ok := cfg.Profiles[n]; ok {
-			keys = append(keys, cooldownKey(n, p.PrimaryBaseURL()))
+			for _, u := range p.ResolvedUpstreams() {
+				keys = append(keys, cooldownKey(n, u.BaseURL))
+			}
 		}
 	}
 	return keys
