@@ -159,6 +159,7 @@ func handleProxy(args []string) {
 			os.Exit(0)
 		}
 		r := server.NewProxyRouter()
+		server.ImportLegacyOnStartup()
 		addr := host + ":" + strconv.Itoa(port)
 		fmt.Printf("Proxy server listening on http://%s\n", addr)
 		if err := r.Run(addr); err != nil {
@@ -187,6 +188,7 @@ func handleProxy(args []string) {
 			os.Exit(0)
 		}
 		r := server.NewProxyRouter()
+		server.ImportLegacyOnStartup()
 		addr := host + ":" + strconv.Itoa(port)
 		fmt.Printf("Proxy server listening on http://%s\n", addr)
 		if err := r.Run(addr); err != nil {
@@ -221,6 +223,7 @@ func handleWebUI(args []string) {
 			os.Exit(0)
 		}
 		r := server.NewMgmtRouter()
+		server.ImportLegacyOnStartup()
 		addr := host + ":" + strconv.Itoa(port)
 		fmt.Printf("WebUI server listening on http://%s\n", addr)
 		if err := r.Run(addr); err != nil {
@@ -248,6 +251,7 @@ func handleWebUI(args []string) {
 			os.Exit(0)
 		}
 		r := server.NewMgmtRouter()
+		server.ImportLegacyOnStartup()
 		addr := host + ":" + strconv.Itoa(port)
 		fmt.Printf("WebUI server listening on http://%s\n", addr)
 		if err := r.Run(addr); err != nil {

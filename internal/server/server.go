@@ -1649,6 +1649,7 @@ func handleStats(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	ensureLegacyImported(db)
 	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id DESC`)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2060,6 +2061,7 @@ func handleStatsConversations(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	ensureLegacyImported(db)
 	rows, _ := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name FROM requests ORDER BY id DESC`)
 	if rows != nil {
 		defer rows.Close()
@@ -2221,6 +2223,7 @@ func handleConversationRequests(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	ensureLegacyImported(db)
 	rows, _ := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id DESC`)
 	if rows != nil {
 		defer rows.Close()
@@ -2314,6 +2317,7 @@ func handleLogsExport(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	ensureLegacyImported(db)
 	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id ASC`)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2865,6 +2869,7 @@ func handleChatCompletions(c *gin.Context) {
 	triedUpstream := false
 	var successHeaders http.Header
 	var successProvider string
+	var successUpstreamURL string
 	var successModelEntry *config.ModelEntry
 	attempts := expandAttempts(candidates, &cfg)
 	prevRound := -1
@@ -2957,7 +2962,7 @@ func handleChatCompletions(c *gin.Context) {
 			lastErr = err.Error()
 			lastStatus = 502
 			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr)
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr, u)
 			continue
 		}
 		respBody, _ := io.ReadAll(resp.Body)
@@ -2967,12 +2972,12 @@ func handleChatCompletions(c *gin.Context) {
 			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
 			if act.shouldStop() {
 				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody))
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
 				return
 			}
 			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 			lastStatus = resp.StatusCode
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
 			continue
 		}
 		if resp.StatusCode >= 400 {
@@ -2981,11 +2986,11 @@ func handleChatCompletions(c *gin.Context) {
 			if !act.shouldStop() {
 				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 				lastStatus = resp.StatusCode
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
 				continue
 			}
 			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody))
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
 			return
 		}
 		finalBody := respBody
@@ -3004,6 +3009,7 @@ func handleChatCompletions(c *gin.Context) {
 		successResp = finalBody
 		successHeaders = finalHeaders
 		successProvider = name
+		successUpstreamURL = u
 		lastStatus = resp.StatusCode
 		break
 	}
@@ -3029,7 +3035,7 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	cost := computeCost(successModelEntry, usagePrompt, usageCompletion, usageCached)
 	latMs := time.Since(start).Milliseconds()
-	logRequest(successProvider, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, lastStatus, "")
+	logRequest(successProvider, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, lastStatus, "", successUpstreamURL)
 	for k, vv := range successHeaders {
 		for _, v := range vv {
 			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
@@ -3141,7 +3147,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			lastErr = err.Error()
 			lastStatus = 502
 			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr)
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr, u)
 			continue
 		}
 		if resp.StatusCode >= 500 {
@@ -3156,12 +3162,12 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 					}
 				}
 				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes))
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), u)
 				return
 			}
 			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 			lastStatus = resp.StatusCode
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
 			continue
 		}
 		if resp.StatusCode >= 400 {
@@ -3172,7 +3178,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			if !act.shouldStop() {
 				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 				lastStatus = resp.StatusCode
-				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr, u)
 				continue
 			}
 			for k, vv := range resp.Header {
@@ -3250,7 +3256,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel 
 		cost = computeCost(modelEntry, prompt, completion, cached)
 	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
+	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "", requestURLOf(resp))
 }
 
 // streamConvert relays an upstream SSE stream through a registry converter.
@@ -3352,7 +3358,7 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		}
 	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
+	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "", requestURLOf(resp))
 }
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {
@@ -3422,7 +3428,7 @@ func computeCost(entry *config.ModelEntry, prompt, completion, cached int) *floa
 	return &cost
 }
 
-func logRequest(provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, latency int64, status int, errMsg string) {
+func logRequest(provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
 	db, err := store.GetDB()
 	if err != nil {
 		return
@@ -3440,8 +3446,7 @@ func logRequest(provider, model string, success bool, prompt, completion, cached
 	}
 	_, _ = db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency)
-	_ = status
-	_ = errMsg
+	appendLegacyLog(legacyLogEntry(ts, provider, model, success, prompt, completion, cached, reasoning, cost, convID, convName, status, errMsg, upstreamURL))
 	_ = math.Ceil
 }
 
