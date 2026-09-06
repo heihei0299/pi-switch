@@ -23,12 +23,23 @@ type ModelEntry struct {
 	Reasoning     *bool      `json:"reasoning,omitempty"`
 }
 
+type RequestScopedError struct {
+	Status int      `json:"status"`
+	Match  []string `json:"match,omitempty"`
+	Action string   `json:"action"`
+}
+
 type Upstream struct {
 	BaseURL string            `json:"baseUrl"`
 	APIKey  string            `json:"apiKey"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Weight  *uint32           `json:"weight,omitempty"`
 	Name    *string           `json:"name,omitempty"`
+	// RequestRetry overrides the profile/global retry budget for attempts
+	// through this channel. Nil or negative inherits; explicit 0 admits round 0 only.
+	RequestRetry *int `json:"requestRetry,omitempty"`
+	// DisableCooling overrides cooling for this channel when non-nil.
+	DisableCooling *bool `json:"disableCooling,omitempty"`
 }
 
 type ProviderProfile struct {
@@ -45,6 +56,14 @@ type ProviderProfile struct {
 	Preset            *string                `json:"preset,omitempty"`
 	ModelsDevProvider *string                `json:"modelsDevProvider,omitempty"`
 	Proxy             *bool                  `json:"proxy,omitempty"`
+	// RequestRetry overrides the global retry budget. Nil or negative inherits;
+	// explicit 0 admits round 0 only (no additional rounds).
+	RequestRetry *int `json:"requestRetry,omitempty"`
+	// DisableCooling overrides global cooling when non-nil.
+	DisableCooling *bool `json:"disableCooling,omitempty"`
+	// RequestScopedErrors classifies upstream errors for this profile.
+	// Non-empty overrides the global rules.
+	RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
 }
 
 type Settings struct {
@@ -57,6 +76,22 @@ type Settings struct {
 		Port      int      `json:"port"`
 		Failover  []string `json:"failover,omitempty"`
 		UserAgent *string  `json:"userAgent,omitempty"`
+		// RequestRetry is the number of additional credential retry rounds after
+		// round 0 (nil = default 3, negative = default 3, 0 = no additional rounds).
+		RequestRetry *int `json:"requestRetry,omitempty"`
+		// MaxRetryCredentials caps distinct credentials tried per round (0 = all).
+		MaxRetryCredentials int `json:"maxRetryCredentials,omitempty"`
+		// MaxRetryInterval caps the cooldown wait between rounds in seconds
+		// (nil = default 30, <=0 = never wait).
+		MaxRetryInterval *int `json:"maxRetryInterval,omitempty"`
+		// DisableCooling disables cooldown scheduling globally when true.
+		DisableCooling *bool `json:"disableCooling,omitempty"`
+		// TransientErrorCooldownSeconds cools 408/5xx-class and transport failures
+		// (nil or 0 = legacy 60s, negative = disable).
+		TransientErrorCooldownSeconds *int `json:"transientErrorCooldownSeconds,omitempty"`
+		// RequestScopedErrors classifies upstream errors globally; a profile with
+		// non-empty rules overrides these.
+		RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
 	} `json:"proxy"`
 	Web struct {
 		Host string `json:"host"`
@@ -172,10 +207,16 @@ func DefaultConfig() PiSwitchConfig {
 			GatewayAPI:         "openai-completions",
 			ConversationSource: "sessionScan",
 			Proxy: struct {
-				Host      string   `json:"host"`
-				Port      int      `json:"port"`
-				Failover  []string `json:"failover,omitempty"`
-				UserAgent *string  `json:"userAgent,omitempty"`
+				Host                          string               `json:"host"`
+				Port                          int                  `json:"port"`
+				Failover                      []string             `json:"failover,omitempty"`
+				UserAgent                     *string              `json:"userAgent,omitempty"`
+				RequestRetry                  *int                 `json:"requestRetry,omitempty"`
+				MaxRetryCredentials           int                  `json:"maxRetryCredentials,omitempty"`
+				MaxRetryInterval              *int                 `json:"maxRetryInterval,omitempty"`
+				DisableCooling                *bool                `json:"disableCooling,omitempty"`
+				TransientErrorCooldownSeconds *int                 `json:"transientErrorCooldownSeconds,omitempty"`
+				RequestScopedErrors           []RequestScopedError `json:"requestScopedErrors,omitempty"`
 			}{Host: "127.0.0.1", Port: 43112},
 			Web: struct {
 				Host string `json:"host"`

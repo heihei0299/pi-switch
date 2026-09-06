@@ -14,13 +14,13 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"unicode/utf8"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
@@ -29,9 +29,9 @@ import (
 	"github.com/heihei0299/pi-switch/internal/limit"
 	"github.com/heihei0299/pi-switch/internal/scan"
 	"github.com/heihei0299/pi-switch/internal/store"
-	webuiFS "github.com/heihei0299/pi-switch/webui"
 	"github.com/heihei0299/pi-switch/internal/translator"
 	"github.com/heihei0299/pi-switch/internal/usage"
+	webuiFS "github.com/heihei0299/pi-switch/webui"
 )
 
 var webUIFS = webuiFS.FS
@@ -563,7 +563,6 @@ func handleGetProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": pid})
 }
 
-
 func validateProfileResponsesMode(api, mode string) error {
 	if mode == "" {
 		mode = "auto"
@@ -656,6 +655,10 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	if err := validateRetryFields(prof); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
 	// 与“空 exposed = 不暴露”一致。
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -737,6 +740,10 @@ func handlePutProfile(c *gin.Context) {
 		return
 	}
 	if err := validateProviderProfile(prof); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := validateRetryFields(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -942,7 +949,7 @@ func handleFetchModels(c *gin.Context) {
 			}
 		}
 		if len(ids) == 0 {
-			if arr, ok := parsed["data"].([]interface{}); ok && len(arr)==0 {
+			if arr, ok := parsed["data"].([]interface{}); ok && len(arr) == 0 {
 				// empty
 			}
 		}
@@ -950,10 +957,10 @@ func handleFetchModels(c *gin.Context) {
 		models := make([]map[string]interface{}, 0, len(ids))
 		for _, id := range ids {
 			m := map[string]interface{}{
-				"id": id,
+				"id":            id,
 				"contextWindow": uint32(128000),
-				"maxTokens": uint32(16384),
-				"input": []string{"text"},
+				"maxTokens":     uint32(16384),
+				"input":         []string{"text"},
 			}
 			models = append(models, m)
 		}
@@ -973,7 +980,7 @@ func handleFetchModels(c *gin.Context) {
 var modelsDevCatalog = map[string]map[string]map[string]interface{}{
 	"openai": {
 		"gpt-4o-mini": {"cost": map[string]interface{}{"input": 0.15, "output": 0.6, "cacheRead": 0.075}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false, "input": []string{"text"}},
-		"gpt-4o": {"cost": map[string]interface{}{"input": 2.5, "output": 10.0, "cacheRead": 1.25}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false},
+		"gpt-4o":      {"cost": map[string]interface{}{"input": 2.5, "output": 10.0, "cacheRead": 1.25}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false},
 	},
 	"anthropic": {
 		"claude-3-5-sonnet": {"cost": map[string]interface{}{"input": 3.0, "output": 15.0}, "contextWindow": 200000, "maxTokens": 8192},
@@ -985,7 +992,7 @@ func resolveModelsDevProvider(prof config.ProviderProfile) string {
 		return *prof.ModelsDevProvider
 	}
 	if prof.Preset != nil {
-		presetToDev := map[string]string{"openai":"openai","anthropic":"anthropic","google":"google","deepseek":"deepseek","xai":"xai","moonshot":"moonshot","qwen":"qwen","cohere":"cohere","mistral":"mistral","azure":"azure"}
+		presetToDev := map[string]string{"openai": "openai", "anthropic": "anthropic", "google": "google", "deepseek": "deepseek", "xai": "xai", "moonshot": "moonshot", "qwen": "qwen", "cohere": "cohere", "mistral": "mistral", "azure": "azure"}
 		if v, ok := presetToDev[*prof.Preset]; ok {
 			return v
 		}
@@ -1033,7 +1040,6 @@ func enrichModelsWithCatalog(models []map[string]interface{}, prof config.Provid
 	}
 	return enriched, skipped, failed, ""
 }
-
 
 func handlePutModels(c *gin.Context) {
 	name := c.Param("name")
@@ -1143,10 +1149,10 @@ func handleGetCredits(c *gin.Context) {
 
 func handlePresets(c *gin.Context) {
 	presets := []map[string]interface{}{
-		{"id":"openai","name":"OpenAI","description":"OpenAI API","websiteUrl":"https://openai.com","api":"openai-completions","baseUrl":"https://api.openai.com/v1","models":[]string{"gpt-4o-mini","gpt-4o","o1"}},
-		{"id":"anthropic","name":"Anthropic","description":"Anthropic API","websiteUrl":"https://anthropic.com","api":"anthropic-messages","baseUrl":"https://api.anthropic.com","models":[]string{"claude-3-5-sonnet","claude-3-opus"}},
-		{"id":"google","name":"Google","description":"Google Gemini","websiteUrl":"https://ai.google.dev","api":"google-generative-ai","baseUrl":"https://generativelanguage.googleapis.com/v1","models":[]string{"gemini-pro"}},
-		{"id":"deepseek","name":"DeepSeek","description":"DeepSeek","websiteUrl":"https://deepseek.com","api":"openai-completions","baseUrl":"https://api.deepseek.com/v1","models":[]string{"deepseek-chat"}},
+		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": "openai-completions", "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
+		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": "anthropic-messages", "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
+		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": "google-generative-ai", "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
+		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": "openai-completions", "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
 	}
 	c.JSON(200, presets)
 }
@@ -1205,7 +1211,6 @@ func validateProviderProfile(p config.ProviderProfile) error {
 	return nil
 }
 
-
 func handleValidate(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	issues := []map[string]interface{}{}
@@ -1231,12 +1236,18 @@ func handleValidate(c *gin.Context) {
 		if err := validateResponsesMode(prof); err != nil {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.responsesMode", name), "message": err.Error()})
 		}
+		if err := validateRetryFields(prof); err != nil {
+			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.retry", name), "message": err.Error()})
+		}
 	}
 	// failover check
 	for _, f := range cfg.Settings.Proxy.Failover {
 		if _, ok := cfg.Profiles[f]; !ok {
 			issues = append(issues, map[string]interface{}{"level": "warning", "path": "settings.proxy.failover", "message": fmt.Sprintf("failover profile %s not found", f)})
 		}
+	}
+	if err := validateSettingsRetry(cfg.Settings); err != nil {
+		issues = append(issues, map[string]interface{}{"level": "error", "path": "settings.proxy.retry", "message": err.Error()})
 	}
 	if len(issues) == 0 {
 		// ensure at least empty array not null
@@ -1355,15 +1366,19 @@ func handleGatewayStart(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": cfg.Settings.ProviderPrefix})
 }
-func handlePackagesList(c *gin.Context)   { c.JSON(200, gin.H{"packages": []interface{}{}}) }
-func handlePackageAdd(c *gin.Context)     { c.JSON(200, gin.H{"ok": true}) }
-func handlePackageImport(c *gin.Context)  { c.JSON(200, gin.H{"ok": true, "count": 0, "message": "imported 0"}) }
-func handlePackageGet(c *gin.Context)     { c.JSON(404, gin.H{"error": "not found"}) }
-func handlePackageDelete(c *gin.Context)  { c.JSON(200, gin.H{"ok": true}) }
-func handlePackageToggle(c *gin.Context)  { c.JSON(200, gin.H{"ok": true}) }
-func handleCcsProviders(c *gin.Context)   { c.JSON(200, gin.H{"providers": []interface{}{}}) }
-func handleCcsImport(c *gin.Context)      { c.JSON(200, gin.H{"ok": true, "imported": 0, "results": []interface{}{}}) }
-func handleInit(c *gin.Context)           { c.JSON(200, gin.H{"messages": []string{"init ok"}}) }
+func handlePackagesList(c *gin.Context) { c.JSON(200, gin.H{"packages": []interface{}{}}) }
+func handlePackageAdd(c *gin.Context)   { c.JSON(200, gin.H{"ok": true}) }
+func handlePackageImport(c *gin.Context) {
+	c.JSON(200, gin.H{"ok": true, "count": 0, "message": "imported 0"})
+}
+func handlePackageGet(c *gin.Context)    { c.JSON(404, gin.H{"error": "not found"}) }
+func handlePackageDelete(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) }
+func handlePackageToggle(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) }
+func handleCcsProviders(c *gin.Context)  { c.JSON(200, gin.H{"providers": []interface{}{}}) }
+func handleCcsImport(c *gin.Context) {
+	c.JSON(200, gin.H{"ok": true, "imported": 0, "results": []interface{}{}})
+}
+func handleInit(c *gin.Context) { c.JSON(200, gin.H{"messages": []string{"init ok"}}) }
 func handleProxyStart(c *gin.Context) {
 	var body struct {
 		Host   string `json:"host"`
@@ -1449,7 +1464,9 @@ func handleProxyStop(c *gin.Context) {
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid})
 }
 func handlePutFailover(c *gin.Context) {
-	var body struct{ Failover []string `json:"failover"` }
+	var body struct {
+		Failover []string `json:"failover"`
+	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -1469,14 +1486,22 @@ func handlePutSettings(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
+	if err := validateSettingsRetry(s); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	cfg.Settings = s
 	_ = saveConfig(cfg)
 	c.JSON(200, gin.H{"ok": true})
 }
-func handleConfigExportStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "path": "/tmp/export.json"}) }
+func handleConfigExportStub(c *gin.Context) {
+	c.JSON(200, gin.H{"ok": true, "path": "/tmp/export.json"})
+}
 func handleConfigImportStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "message": "imported"}) }
-func handleConfigRestoreStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "backup": "/tmp/backup.json"}) }
+func handleConfigRestoreStub(c *gin.Context) {
+	c.JSON(200, gin.H{"ok": true, "backup": "/tmp/backup.json"})
+}
 
 func saveConfig(cfg config.PiSwitchConfig) error {
 	cfg = config.MigratedForSave(cfg)
@@ -1631,18 +1656,18 @@ func handleStats(c *gin.Context) {
 	}
 	defer rows.Close()
 	type row struct {
-		TS         sql.NullString
-		Provider   sql.NullString
-		Model      sql.NullString
-		Success    sql.NullInt64
-		PT         sql.NullInt64
-		CT         sql.NullInt64
-		Cached     sql.NullInt64
-		Reasoning  sql.NullInt64
-		Cost       sql.NullFloat64
-		ConvID     sql.NullString
-		ConvName   sql.NullString
-		Latency    sql.NullInt64
+		TS        sql.NullString
+		Provider  sql.NullString
+		Model     sql.NullString
+		Success   sql.NullInt64
+		PT        sql.NullInt64
+		CT        sql.NullInt64
+		Cached    sql.NullInt64
+		Reasoning sql.NullInt64
+		Cost      sql.NullFloat64
+		ConvID    sql.NullString
+		ConvName  sql.NullString
+		Latency   sql.NullInt64
 	}
 	var all []row
 	for rows.Next() {
@@ -1992,21 +2017,21 @@ func handleStats(c *gin.Context) {
 	paged := recent[start:end]
 	// legacy rows alias
 	c.JSON(200, gin.H{
-		"totalRequests":      totalRequests,
-		"okRequests":         okRequests,
-		"failedRequests":     failedRequests,
-		"successRate":        successRate,
-		"avgLatencyMs":       avgLatency,
-		"byProvider":         byProvider,
-		"byModel":            byModel,
-		"totalTokens":        totalTokens,
-		"cacheHitRate":       cacheHitRate,
-		"totalCost":          totalCost,
-		"costUnknown":        costUnknown,
-		"byConversation":     byConvList,
-		"recentRequests":     paged,
-		"recentRequestTotal": totalRecent,
-		"rows":               paged,
+		"totalRequests":        totalRequests,
+		"okRequests":           okRequests,
+		"failedRequests":       failedRequests,
+		"successRate":          successRate,
+		"avgLatencyMs":         avgLatency,
+		"byProvider":           byProvider,
+		"byModel":              byModel,
+		"totalTokens":          totalTokens,
+		"cacheHitRate":         cacheHitRate,
+		"totalCost":            totalCost,
+		"costUnknown":          costUnknown,
+		"byConversation":       byConvList,
+		"recentRequests":       paged,
+		"recentRequestTotal":   totalRecent,
+		"rows":                 paged,
 		"recent_request_total": totalRecent,
 	})
 
@@ -2296,18 +2321,18 @@ func handleLogsExport(c *gin.Context) {
 	}
 	defer rows.Close()
 	type rec struct {
-		TS         sql.NullString
-		Provider   sql.NullString
-		Model      sql.NullString
-		Success    sql.NullInt64
-		PT         sql.NullInt64
-		CT         sql.NullInt64
-		Cached     sql.NullInt64
-		Reasoning  sql.NullInt64
-		Cost       sql.NullFloat64
-		ConvID     sql.NullString
-		ConvName   sql.NullString
-		Latency    sql.NullInt64
+		TS        sql.NullString
+		Provider  sql.NullString
+		Model     sql.NullString
+		Success   sql.NullInt64
+		PT        sql.NullInt64
+		CT        sql.NullInt64
+		Cached    sql.NullInt64
+		Reasoning sql.NullInt64
+		Cost      sql.NullFloat64
+		ConvID    sql.NullString
+		ConvName  sql.NullString
+		Latency   sql.NullInt64
 	}
 	var recs []rec
 	for rows.Next() {
@@ -2714,7 +2739,6 @@ func findModelEntry(prof config.ProviderProfile, realModel string) *config.Model
 	return nil
 }
 
-
 func incomingProtocol(path string) string {
 	switch path {
 	case "/v1/responses":
@@ -2753,122 +2777,6 @@ func buildUpstreamURL(base, path string) string {
 		return u + strings.TrimPrefix(path, "/v1")
 	}
 	return u + path
-}
-
-func chatToResponses(body map[string]interface{}) map[string]interface{} {
-	var input []interface{}
-	if msgs, ok := body["messages"].([]interface{}); ok {
-		for _, m := range msgs {
-			if pm, ok := m.(map[string]interface{}); ok {
-				role, _ := pm["role"].(string)
-				content := pm["content"]
-				if role == "system" {
-					continue
-				}
-				input = append(input, map[string]interface{}{"role": role, "content": content})
-			}
-		}
-	}
-	out := map[string]interface{}{
-		"model": body["model"],
-		"input": input,
-	}
-	if v, ok := body["max_tokens"]; ok {
-		out["max_output_tokens"] = v
-	}
-	for _, k := range []string{"temperature", "top_p", "stream", "stop"} {
-		if v, ok := body[k]; ok {
-			out[k] = v
-		}
-	}
-	if msgs, ok := body["messages"].([]interface{}); ok {
-		for _, m := range msgs {
-			if pm, ok := m.(map[string]interface{}); ok {
-				if pm["role"] == "system" {
-					if t, ok := pm["content"].(string); ok && t != "" {
-						out["instructions"] = t
-						break
-					}
-				}
-			}
-		}
-	}
-	if tools, ok := body["tools"]; ok {
-		out["tools"] = tools
-	}
-	return out
-}
-
-func anthropicToChat(body map[string]interface{}) map[string]interface{} {
-	model, _ := body["model"].(string)
-	anthMsgs, _ := body["messages"].([]interface{})
-	var chatMsgs []interface{}
-	if system, ok := body["system"]; ok {
-		var text string
-		switch v := system.(type) {
-		case string:
-			text = v
-		case []interface{}:
-			for _, p := range v {
-				if pm, ok := p.(map[string]interface{}); ok {
-					if t, ok := pm["text"].(string); ok {
-						if text != "" {
-							text += "\n"
-						}
-						text += t
-					}
-				}
-			}
-		}
-		if text != "" {
-			chatMsgs = append(chatMsgs, map[string]interface{}{"role": "system", "content": text})
-		}
-	}
-	for _, m := range anthMsgs {
-		if pm, ok := m.(map[string]interface{}); ok {
-			role, _ := pm["role"].(string)
-			content := pm["content"]
-			var text string
-			switch c := content.(type) {
-			case string:
-				text = c
-			case []interface{}:
-				for _, part := range c {
-					if pmm, ok := part.(map[string]interface{}); ok {
-						if t, ok := pmm["text"].(string); ok {
-							if text != "" {
-								text += "\n"
-							}
-							text += t
-						}
-					}
-				}
-			default:
-				text = fmt.Sprintf("%v", content)
-			}
-			chatMsgs = append(chatMsgs, map[string]interface{}{"role": role, "content": text})
-		}
-	}
-	out := map[string]interface{}{
-		"model":    model,
-		"messages": chatMsgs,
-	}
-	if v, ok := body["max_tokens"]; ok {
-		out["max_tokens"] = v
-	}
-	if v, ok := body["temperature"]; ok {
-		out["temperature"] = v
-	}
-	if v, ok := body["stream"]; ok {
-		out["stream"] = v
-	}
-	if v, ok := body["stop_sequences"]; ok {
-		out["stop"] = v
-	}
-	if chatMsgs == nil {
-		out["messages"] = []interface{}{}
-	}
-	return out
 }
 
 func findFrameEnd(buf []byte) (int, int) {
@@ -2954,15 +2862,34 @@ func handleChatCompletions(c *gin.Context) {
 	var lastErr string
 	var lastStatus int = 502
 	var successResp []byte
+	triedUpstream := false
 	var successHeaders http.Header
 	var successProvider string
 	var successModelEntry *config.ModelEntry
-	for _, name := range candidates {
+	attempts := expandAttempts(candidates, func(n string) int {
+		p, ok := cfg.Profiles[n]
+		if !ok {
+			return 0
+		}
+		return effectiveRequestRetry(&cfg, &p)
+	}, cfg.Settings.Proxy.MaxRetryCredentials)
+	prevRound := -1
+	for _, att := range attempts {
+		name := att.name
+		if att.round != prevRound {
+			if prevRound >= 0 {
+				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
+			}
+			prevRound = att.round
+		}
 		prof, ok := cfg.Profiles[name]
 		if !ok {
 			continue
 		}
 		base := prof.PrimaryBaseURL()
+		if isCooling(cooldownKey(name, base)) {
+			continue
+		}
 		if base == "" {
 			lastErr = "missing baseUrl"
 			continue
@@ -2977,56 +2904,20 @@ func handleChatCompletions(c *gin.Context) {
 		clampBody(bcopy, modelEntry, rawLen)
 		var upstreamBody map[string]interface{}
 		var upstreamPath string
-		var needRespToChat bool
-		var needChatToAnthropic bool
-		switch proto {
-		case "responses":
-			if translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/responses"
-			} else if translator.IsChatConvert(prof.API, prof.ResponsesMode) {
-				convBody, err := translator.ResponsesToChat(bcopy)
-				if err != nil {
-					lastErr = err.Error()
-					continue
-				}
-				clampBody(convBody, modelEntry, rawLen)
-				upstreamBody = convBody
-				upstreamPath = "/v1/chat/completions"
-				needRespToChat = true
-			} else {
-				lastErr = fmt.Sprintf("profile %s api %s does not support responses", name, prof.API)
-				continue
-			}
-		case "messages":
-			if prof.API == "anthropic-messages" {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/messages"
-			} else if prof.API == "openai-completions" {
-				conv := anthropicToChat(bcopy)
-				clampBody(conv, modelEntry, rawLen)
-				upstreamBody = conv
-				upstreamPath = "/v1/chat/completions"
-			} else {
-				lastErr = fmt.Sprintf("profile %s api %s does not support messages", name, prof.API)
-				continue
-			}
-		default:
-			if prof.API == "anthropic-messages" {
-				upstreamBody = translator.OpenAIToAnthropic(bcopy)
-				clampBody(upstreamBody, modelEntry, rawLen)
-				upstreamPath = "/v1/messages"
-				needChatToAnthropic = true
-			} else if prof.API == "openai-responses" && translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
-				conv := chatToResponses(bcopy)
-				clampBody(conv, modelEntry, rawLen)
-				upstreamBody = conv
-				upstreamPath = "/v1/responses"
-			} else {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/chat/completions"
-			}
+		plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+		if planErr != nil {
+			lastErr = fmt.Sprintf("profile %s: %s", name, planErr.Error())
+			continue
 		}
+		convBody, convErr := plan.TransformRequest(realModel, bcopy)
+		if convErr != nil {
+			lastErr = convErr.Error()
+			continue
+		}
+		clampBody(convBody, modelEntry, rawLen)
+		upstreamBody = convBody
+		upstreamPath = plan.UpstreamPath
+		needRespConvert := plan.NeedsConvert()
 		u := buildUpstreamURL(base, upstreamPath)
 		apiKey := prof.PrimaryAPIKey()
 		// headers merging: Upstream.headers > Profile.headers
@@ -3043,7 +2934,7 @@ func handleChatCompletions(c *gin.Context) {
 			}
 		}
 		// fallback to PrimaryHeaders if empty (covers single baseUrl case already merged)
-		if len(headers)==0 {
+		if len(headers) == 0 {
 			headers = prof.PrimaryHeaders()
 		}
 		bbytes, _ := json.Marshal(upstreamBody)
@@ -3061,23 +2952,34 @@ func handleChatCompletions(c *gin.Context) {
 		}
 		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
 		client := &http.Client{Timeout: 30 * time.Second}
+		triedUpstream = true
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err.Error()
 			lastStatus = 502
+			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
 			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr)
 			continue
 		}
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
+			act := classifyUpstreamError(resp.StatusCode, respBody, &prof, &cfg)
+			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
+			if act.shouldStop() {
+				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody))
+				return
+			}
 			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 			lastStatus = resp.StatusCode
 			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
 			continue
 		}
 		if resp.StatusCode >= 400 {
-			if resp.StatusCode == 429 {
+			act := classifyUpstreamError(resp.StatusCode, respBody, &prof, &cfg)
+			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
+			if !act.shouldStop() {
 				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 				lastStatus = resp.StatusCode
 				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
@@ -3089,24 +2991,16 @@ func handleChatCompletions(c *gin.Context) {
 		}
 		finalBody := respBody
 		finalHeaders := resp.Header
-		if needRespToChat {
-			var chatResp map[string]interface{}
-			if err := json.Unmarshal(respBody, &chatResp); err == nil {
-				if conv, err := translator.ChatResponseToResponses(chatResp, realModel, nil); err == nil {
+		if needRespConvert {
+			var upstreamObj map[string]interface{}
+			if err := json.Unmarshal(respBody, &upstreamObj); err == nil {
+				if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
 					b, _ := json.Marshal(conv)
 					finalBody = b
 					finalHeaders = http.Header{}
 					finalHeaders.Set("Content-Type", "application/json")
 				}
 			}
-		} else if needChatToAnthropic {
-			var anth map[string]interface{}
-			_ = json.Unmarshal(respBody, &anth)
-			converted := translator.AnthropicToOpenAIResponse(anth)
-			b, _ := json.Marshal(converted)
-			finalBody = b
-			finalHeaders = http.Header{}
-			finalHeaders.Set("Content-Type", "application/json")
 		}
 		successResp = finalBody
 		successHeaders = finalHeaders
@@ -3115,7 +3009,9 @@ func handleChatCompletions(c *gin.Context) {
 		break
 	}
 	if successResp == nil {
-		if lastErr == "" {
+		if hint := coolingHint(candidateCooldownKeys(candidates, &cfg)); !triedUpstream && hint != "" {
+			lastErr = "All candidates cooling" + hint
+		} else if lastErr == "" {
 			lastErr = "All upstream attempts failed"
 		}
 		c.JSON(lastStatus, gin.H{"error": gin.H{"message": lastErr, "type": "failover_exhausted"}})
@@ -3153,12 +3049,31 @@ func handleChatCompletions(c *gin.Context) {
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, convID, convName, proto string, rawLen int, start time.Time) {
 	var lastErr string
 	var lastStatus int = 502
-	for _, name := range candidates {
+	triedUpstream := false
+	attempts := expandAttempts(candidates, func(n string) int {
+		p, ok := cfg.Profiles[n]
+		if !ok {
+			return 0
+		}
+		return effectiveRequestRetry(&cfg, &p)
+	}, cfg.Settings.Proxy.MaxRetryCredentials)
+	prevRound := -1
+	for _, att := range attempts {
+		name := att.name
+		if att.round != prevRound {
+			if prevRound >= 0 {
+				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
+			}
+			prevRound = att.round
+		}
 		prof, ok := cfg.Profiles[name]
 		if !ok {
 			continue
 		}
 		base := prof.PrimaryBaseURL()
+		if isCooling(cooldownKey(name, base)) {
+			continue
+		}
 		if base == "" {
 			lastErr = "missing baseUrl"
 			continue
@@ -3173,53 +3088,20 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		clampBody(bcopy, modelEntry, rawLen)
 		var upstreamBody map[string]interface{}
 		var upstreamPath string
-		switch proto {
-		case "responses":
-			if translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/responses"
-			} else if translator.IsChatConvert(prof.API, prof.ResponsesMode) {
-				convBody, err := translator.ResponsesToChat(bcopy)
-				if err != nil {
-					lastErr = err.Error()
-					continue
-				}
-				convBody["stream"] = true
-				clampBody(convBody, modelEntry, rawLen)
-				upstreamBody = convBody
-				upstreamPath = "/v1/chat/completions"
-			} else {
-				lastErr = fmt.Sprintf("no support for responses on %s", prof.API)
-				continue
-			}
-		case "messages":
-			if prof.API == "anthropic-messages" {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/messages"
-			} else {
-				conv := anthropicToChat(bcopy)
-				conv["stream"] = true
-				clampBody(conv, modelEntry, rawLen)
-				upstreamBody = conv
-				upstreamPath = "/v1/chat/completions"
-			}
-		default:
-			if prof.API == "anthropic-messages" {
-				upstreamBody = translator.OpenAIToAnthropic(bcopy)
-				clampBody(upstreamBody, modelEntry, rawLen)
-				upstreamBody["stream"] = true
-				upstreamPath = "/v1/messages"
-			} else if prof.API == "openai-responses" && translator.IsNativeResponsesPassthrough(prof.API, prof.ResponsesMode) {
-				conv := chatToResponses(bcopy)
-				conv["stream"] = true
-				clampBody(conv, modelEntry, rawLen)
-				upstreamBody = conv
-				upstreamPath = "/v1/responses"
-			} else {
-				upstreamBody = bcopy
-				upstreamPath = "/v1/chat/completions"
-			}
+		plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+		if planErr != nil {
+			lastErr = fmt.Sprintf("profile %s: %s", name, planErr.Error())
+			continue
 		}
+		convBody, convErr := plan.TransformRequest(realModel, bcopy)
+		if convErr != nil {
+			lastErr = convErr.Error()
+			continue
+		}
+		convBody["stream"] = true
+		clampBody(convBody, modelEntry, rawLen)
+		upstreamBody = convBody
+		upstreamPath = plan.UpstreamPath
 		u := buildUpstreamURL(base, upstreamPath)
 		apiKey := prof.PrimaryAPIKey()
 		headers := prof.PrimaryHeaders()
@@ -3247,7 +3129,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 				break
 			}
 		}
-		if len(mergedHeaders)==0 {
+		if len(mergedHeaders) == 0 {
 			mergedHeaders = headers
 		}
 		for k, v := range mergedHeaders {
@@ -3255,32 +3137,46 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		}
 		req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
 		client := &http.Client{Timeout: 0}
+		triedUpstream = true
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err.Error()
 			lastStatus = 502
+			coolForAttempt(cooldownKey(name, base), classifyTransportError(&prof, &cfg), &cfg, &prof)
 			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, lastErr)
 			continue
 		}
 		if resp.StatusCode >= 500 {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
 			resp.Body.Close()
+			act := classifyUpstreamError(resp.StatusCode, bodyBytes, &prof, &cfg)
+			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
+			if act.shouldStop() {
+				for k, vv := range resp.Header {
+					for _, v := range vv {
+						c.Header(k, v)
+					}
+				}
+				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
+				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes))
+				return
+			}
 			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 			lastStatus = resp.StatusCode
 			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
-			_ = bodyBytes
 			continue
 		}
 		if resp.StatusCode >= 400 {
-			if resp.StatusCode == 429 {
-				resp.Body.Close()
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
+			resp.Body.Close()
+			act := classifyUpstreamError(resp.StatusCode, bodyBytes, &prof, &cfg)
+			coolForAttempt(cooldownKey(name, base), act, &cfg, &prof)
+			if !act.shouldStop() {
 				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 				lastStatus = resp.StatusCode
 				logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, lastErr)
 				continue
 			}
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
 			for k, vv := range resp.Header {
 				for _, v := range vv {
 					c.Header(k, v)
@@ -3289,6 +3185,10 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
 			return
 		}
+		// Streaming conversion is Responses-via-Chat only. The reverse direction
+		// (chat client against a Responses upstream) intentionally passes SSE
+		// through unconverted: there is no Responses-SSE-to-Chat-SSE translator yet.
+		// Anthropic SSE is likewise passed through (pre-existing behavior).
 		if proto == "responses" && upstreamPath == "/v1/chat/completions" {
 			streamConvertChatToResponses(c, resp, name, realModel, modelEntry, convID, convName, start)
 			return
@@ -3296,7 +3196,9 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
 		return
 	}
-	if lastErr == "" {
+	if hint := coolingHint(candidateCooldownKeys(candidates, &cfg)); !triedUpstream && hint != "" {
+		lastErr = "All candidates cooling" + hint
+	} else if lastErr == "" {
 		lastErr = "All upstream attempts failed"
 	}
 	c.JSON(lastStatus, gin.H{"error": gin.H{"message": lastErr, "type": "failover_exhausted"}})
@@ -3447,7 +3349,6 @@ func streamConvertChatToResponses(c *gin.Context, resp *http.Response, provider,
 	latMs := time.Since(start).Milliseconds()
 	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "")
 }
-
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {
 	b, _ := json.Marshal(m)

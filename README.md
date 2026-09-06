@@ -262,7 +262,7 @@ Requests are routed by the model name in the request body — no out-of-band sta
 
 - **Model-name routing** — `"model": "provider-a/gpt-5.4"` resolves to profile `provider-a`, real model `gpt-5.4`; the proxy rewrites the body before forwarding upstream
 - **Single gateway provider** — pi sees one `pi-switch` provider advertising every exposed model as `profile/realModelId`; switching model in pi = sending a different model string = instant routing change
-- **Automatic failover** — same-model fallback across the configured chain on 429/5xx errors or network failures
+- **Automatic failover** — same-model fallback across the configured chain on 429/5xx errors or network failures; retryable failures (403/408/429/5xx) also cool the credential down (default 60s, skipped while cooling). Extra rounds (`settings.proxy.requestRetry`, default 3), per-profile/channel `requestRetry` overrides, and `requestScopedErrors` (status + body-match → stop|stop-and-cooldown|continue|continue-and-cooldown) tune the policy
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token; upstream response headers (Content-Type, etc.) are preserved
 - **OpenAI ↔ Anthropic** — transparently converts between chat completions and messages APIs
