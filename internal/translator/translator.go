@@ -394,6 +394,33 @@ func joinStrings(a []string, sep string) string {
 	return out
 }
 
+// chatReasoningText extracts thinking/reasoning text (DeepSeek
+// reasoning_content and friends) so it survives conversion instead of
+// being silently dropped when content is empty.
+func chatReasoningText(msg map[string]interface{}) string {
+	raw, ok := msg["reasoning_content"]
+	if !ok || raw == nil {
+		return ""
+	}
+	switch c := raw.(type) {
+	case string:
+		return c
+	case []interface{}:
+		var texts []string
+		for _, p := range c {
+			if pm, ok := p.(map[string]interface{}); ok {
+				if t, ok := pm["text"].(string); ok && t != "" {
+					texts = append(texts, t)
+				}
+			}
+		}
+		return joinStrings(texts, "\n")
+	default:
+		b, _ := json.Marshal(raw)
+		return string(b)
+	}
+}
+
 func ChatResponseToResponses(chat map[string]interface{}, model string, created *uint64) (map[string]interface{}, error) {
 	choices, ok := chat["choices"].([]interface{})
 	if !ok {
@@ -409,6 +436,12 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 		if msg == nil {
 			continue
 		}
+		var parts []interface{}
+		if reasoning := chatReasoningText(msg); reasoning != "" {
+			parts = append(parts, map[string]interface{}{
+				"type": "output_text", "text": reasoning, "annotations": []interface{}{},
+			})
+		}
 		if content := msg["content"]; content != nil && content != "" {
 			text := ""
 			switch c := content.(type) {
@@ -419,14 +452,17 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 				text = string(b)
 			}
 			if text != "" {
-				output = append(output, map[string]interface{}{
-					"type": "message", "role": "assistant",
-					"content": []interface{}{map[string]interface{}{
-						"type": "output_text", "text": text, "annotations": []interface{}{},
-					}},
-					"status": "completed",
+				parts = append(parts, map[string]interface{}{
+					"type": "output_text", "text": text, "annotations": []interface{}{},
 				})
 			}
+		}
+		if len(parts) > 0 {
+			output = append(output, map[string]interface{}{
+				"type": "message", "role": "assistant",
+				"content": parts,
+				"status":  "completed",
+			})
 		}
 		if tc, ok := msg["tool_calls"].([]interface{}); ok {
 			for _, call := range tc {
@@ -439,11 +475,11 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 					fun = map[string]interface{}{}
 				}
 				output = append(output, map[string]interface{}{
-					"type": "function_call",
-					"call_id": m["id"],
-					"name": fun["name"],
+					"type":      "function_call",
+					"call_id":   m["id"],
+					"name":      fun["name"],
 					"arguments": fun["arguments"],
-					"status": "completed",
+					"status":    "completed",
 				})
 			}
 		}
@@ -554,16 +590,13 @@ func (c *ChatSseToResponses) PushFrame(data map[string]interface{}) ([]map[strin
 	if !ok {
 		return events, nil
 	}
+	if reasoning, ok := delta["reasoning_content"].(string); ok && reasoning != "" {
+		events = append(events, c.openText()...)
+		c.Text += reasoning
+		events = append(events, c.emitTextDelta(reasoning))
+	}
 	if content, ok := delta["content"].(string); ok && content != "" {
-		if !c.ResponseStarted {
-			c.ResponseStarted = true
-			events = append(events, c.emitCreated())
-		}
-		if !c.MessageOpen {
-			c.MessageOpen = true
-			events = append(events, c.emitMessageAdded())
-			events = append(events, c.emitContentPartAdded())
-		}
+		events = append(events, c.openText()...)
 		c.Text += content
 		events = append(events, c.emitTextDelta(content))
 	}
@@ -696,7 +729,7 @@ func toolCallItem(call *ChatToolCallState, status string) map[string]interface{}
 
 func (c *ChatSseToResponses) emitCreated() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "response.created",
+		"type":     "response.created",
 		"response": map[string]interface{}{"id": c.ResponseID, "object": "response", "created_at": float64(c.CreatedAt), "status": "in_progress", "model": c.Model, "output": []interface{}{}},
 	}
 }
@@ -718,6 +751,21 @@ func (c *ChatSseToResponses) emitContentPartAdded() map[string]interface{} {
 	}
 }
 
+// openText emits the response/message/part opening events once, shared by
+// content and reasoning deltas.
+func (c *ChatSseToResponses) openText() []map[string]interface{} {
+	var events []map[string]interface{}
+	if !c.ResponseStarted {
+		c.ResponseStarted = true
+		events = append(events, c.emitCreated())
+	}
+	if !c.MessageOpen {
+		c.MessageOpen = true
+		events = append(events, c.emitMessageAdded())
+		events = append(events, c.emitContentPartAdded())
+	}
+	return events
+}
 func (c *ChatSseToResponses) emitTextDelta(delta string) map[string]interface{} {
 	return map[string]interface{}{
 		"type": "response.output_text.delta", "item_id": c.MessageItemID, "output_index": c.MessageOutputIndex, "content_index": 0, "delta": delta,
