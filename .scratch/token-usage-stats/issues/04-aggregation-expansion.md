@@ -11,7 +11,7 @@
 
 **Blocked by:** 01 — Prefactor：抽出聚合纯函数
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 统计接口返回 `totalTokens` / `cacheHitRate` / `byConversation` 与 by-provider token 列，旧字段不变
 - [ ] 聚合单测全绿：累计、缓存率口径、Top 20 截断、unlabeled 合并、失败行不计、旧行兼容

@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 聚合逻辑可独立调用：给定请求日志行列表即可得到统计结果，不触碰文件系统
 - [ ] 重构前后统计结果一致（现有用例：总量/成功率/平均延迟/by-provider/by-model/熔断状态）

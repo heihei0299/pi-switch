@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — 聚合扩展
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 四个统计展示元素（两卡片 + by-provider 列 + 对话列表）在无数据/有数据/仅有旧数据三种状态下渲染正确
 - [ ] 缓存率无数据时显示 `-`，不显示误导的 `0%`

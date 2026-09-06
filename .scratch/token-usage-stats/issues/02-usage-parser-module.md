@@ -6,7 +6,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 非流式提取覆盖三种字段风格，探测顺序正确，只认第一个存在的
 - [ ] 流式解析覆盖 OpenAI 与 Anthropic 格式；跨块任意切分（每次喂半帧）结果一致

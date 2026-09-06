@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — 聚合扩展
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] TUI 统计页显示累计输入 token、累计输出 token、缓存命中率
 - [ ] 无 token 数据时显示 `-`，不崩溃、不错位

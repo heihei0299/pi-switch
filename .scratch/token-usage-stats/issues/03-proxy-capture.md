@@ -9,7 +9,7 @@
 
 **Blocked by:** 02 — Token 解析模块
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 流式请求转发体验不变（逐 token 输出，无缓冲延迟）
 - [ ] 流式请求结束后，请求日志行含 token 使用量与对话标识（若有）
