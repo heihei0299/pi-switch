@@ -109,3 +109,77 @@ func TestResponsesSseToChat_FailedEndsStop(t *testing.T) {
 		t.Fatal("failed stream should finish with finish_reason stop")
 	}
 }
+
+// RED c1: a failure AFTER tool calls must still end with stop, not tool_calls.
+func TestResponsesSseToChat_FailedAfterToolsEndsStop(t *testing.T) {
+	c := NewResponsesSseToChat("gpt-4o-mini")
+	feed := []map[string]interface{}{
+		{"type": "response.output_item.added", "output_index": float64(0),
+			"item": map[string]interface{}{"id": "fc_1", "type": "function_call",
+				"call_id": "call_1", "name": "get_time", "arguments": ""}},
+		{"type": "response.failed",
+			"response": map[string]interface{}{"error": map[string]interface{}{"message": "boom"}}},
+	}
+	var chunks []map[string]interface{}
+	for _, ev := range feed {
+		out, err := c.PushEvent(ev)
+		if err != nil {
+			t.Fatalf("PushEvent: %v", err)
+		}
+		chunks = append(chunks, out...)
+	}
+	chunks = append(chunks, c.Finish()...)
+	var last map[string]interface{}
+	for _, ch := range chunks {
+		choices, _ := ch["choices"].([]interface{})
+		if len(choices) == 0 {
+			continue
+		}
+		if first, _ := choices[0].(map[string]interface{}); first["finish_reason"] != nil {
+			last = ch
+		}
+	}
+	if last == nil {
+		t.Fatal("no terminal chunk")
+	}
+	choices, _ := last["choices"].([]interface{})
+	first, _ := choices[0].(map[string]interface{})
+	if first["finish_reason"] != "stop" {
+		t.Fatalf("failed-after-tools finish_reason = %v, want stop", first["finish_reason"])
+	}
+}
+
+// RED c2: arguments delta without a preceding added must keep its payload.
+func TestResponsesSseToChat_OrphanArgumentsDeltaKept(t *testing.T) {
+	c := NewResponsesSseToChat("gpt-4o-mini")
+	out, err := c.PushEvent(map[string]interface{}{
+		"type": "response.function_call_arguments.delta", "item_id": "fc_9",
+		"output_index": float64(0), "delta": "{\"x\":1}",
+	})
+	if err != nil {
+		t.Fatalf("PushEvent: %v", err)
+	}
+	joined := ""
+	for _, ch := range out {
+		choices, _ := ch["choices"].([]interface{})
+		if len(choices) == 0 {
+			continue
+		}
+		delta, _ := choices[0].(map[string]interface{})["delta"].(map[string]interface{})
+		if delta == nil {
+			continue
+		}
+		if tcs, ok := delta["tool_calls"].([]interface{}); ok {
+			for _, raw := range tcs {
+				m, _ := raw.(map[string]interface{})
+				fn, _ := m["function"].(map[string]interface{})
+				if args, _ := fn["arguments"].(string); args != "" {
+					joined += args
+				}
+			}
+		}
+	}
+	if joined != "{\"x\":1}" {
+		t.Fatalf("orphan arguments delta lost, got %q", joined)
+	}
+}

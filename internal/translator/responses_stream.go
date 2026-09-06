@@ -109,7 +109,14 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 		if itemID == "" {
 			break
 		}
-		if _, dup := c.calls[itemID]; dup {
+		if old, dup := c.calls[itemID]; dup {
+			// A late added after synthesized state only fills blanks.
+			if old.name == "" {
+				old.name, _ = item["name"].(string)
+			}
+			if old.callID == "" {
+				old.callID, _ = item["call_id"].(string)
+			}
 			break
 		}
 		callID, _ := item["call_id"].(string)
@@ -129,7 +136,13 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 		itemID, _ := data["item_id"].(string)
 		st := c.calls[itemID]
 		if st == nil {
-			break
+			// Upstream skipped output_item.added: synthesize state so the
+			// payload survives. The header is suppressed until a name (or a
+			// late added) arrives; deltas stream headerless.
+			st = &responsesToolCall{index: len(c.order), itemID: itemID}
+			c.calls[itemID] = st
+			c.order = append(c.order, itemID)
+			st.headerSent = true
 		}
 		delta, _ := data["delta"].(string)
 		emit(c.ensureStarted())
@@ -147,7 +160,7 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 			}
 		}
 		c.done = true
-		out = append(out, c.finishChunk())
+		out = append(out, c.finishChunk(c.finishReason()))
 	case "response.failed":
 		if resp, ok := data["response"].(map[string]interface{}); ok {
 			if em, ok := resp["error"].(map[string]interface{}); ok {
@@ -155,7 +168,7 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 			}
 		}
 		c.done = true
-		out = append(out, c.finishChunk())
+		out = append(out, c.finishChunk("stop"))
 	}
 	return out, nil
 }
@@ -192,12 +205,11 @@ func (c *ResponsesSseToChat) finishReason() string {
 	return "stop"
 }
 
-// finishChunk emits the terminal Chat chunk with finish_reason and converted
-// usage. Responses usage maps to Chat usage inline (input->prompt,
+// finishChunk emits the terminal Chat chunk with the given finish_reason and
+// converted usage. Responses usage maps to Chat usage inline (input->prompt,
 // output->completion); richer detail parsing stays in usage.ExtractUsage via
 // the Usage field fallback in the server relay.
-func (c *ResponsesSseToChat) finishChunk() map[string]interface{} {
-	reason := c.finishReason()
+func (c *ResponsesSseToChat) finishChunk(reason string) map[string]interface{} {
 	ch := c.chunk(map[string]interface{}{}, &reason)
 	if m, ok := c.Usage.(map[string]interface{}); ok {
 		num := func(k string) interface{} {
@@ -233,7 +245,7 @@ func (c *ResponsesSseToChat) Finish() []map[string]interface{} {
 		return nil
 	}
 	c.done = true
-	return []map[string]interface{}{c.finishChunk()}
+	return []map[string]interface{}{c.finishChunk("stop")}
 }
 
 // UsagePayload returns the raw Responses usage payload from response.completed.

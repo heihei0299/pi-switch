@@ -190,3 +190,85 @@ func TestOrderChannels_Unit(t *testing.T) {
 		t.Fatalf("orderedChannels = %v want %v (weight desc, nil=1, 0 excluded, stable)", got, want)
 	}
 }
+
+// RED b2: maxCreds budgets distinct PROFILES per round. A has two failing
+// channels, B is healthy; with maxCreds=1 B must still be reached.
+func TestRetry_MaxCredsBudgetsProfiles(t *testing.T) {
+	resetRetryStateForTest()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "requests.db")
+	var hitsA1, hitsA2, hitsB int
+	fail := func(hits *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			*hits++
+			w.WriteHeader(500)
+			_, _ = w.Write([]byte(`{"error":"down"}`))
+		}
+	}
+	mockA1 := httptest.NewServer(fail(&hitsA1))
+	defer mockA1.Close()
+	mockA2 := httptest.NewServer(fail(&hitsA2))
+	defer mockA2.Close()
+	mockB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","model":"gpt-4o-mini","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer mockB.Close()
+	cfgJSON := fmt.Sprintf(`{
+		"version":2,"current":"cap-a",
+		"profiles":{
+			"cap-a":{"api":"openai-completions","responsesMode":"auto",
+				"upstreams":[{"baseUrl":%q,"apiKey":"sk-a1"},{"baseUrl":%q,"apiKey":"sk-a2"}],
+				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"]},
+			"cap-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b",
+				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"]}
+		},
+		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions",
+			"proxy":{"host":"127.0.0.1","port":43112,"failover":["cap-a","cap-b"],"maxRetryCredentials":1},
+			"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
+	}`, mockA1.URL, mockA2.URL, mockB.URL)
+	cfgPath := writeRetryConfig(t, dir, cfgJSON)
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", dbPath)
+	if code := postChat(t, NewProxyRouter(), "gpt-4o-mini"); code != 200 {
+		t.Fatalf("B must be reached despite cap-a eating the round-0 budget, got %d (A1=%d A2=%d B=%d)", code, hitsA1, hitsA2, hitsB)
+	}
+	if hitsB != 1 {
+		t.Fatalf("B hits = %d want 1", hitsB)
+	}
+}
+
+// RED b3: weight-0 channels never take part, including cooldown bookkeeping.
+func TestCooldownKeys_SkipExcludedChannels(t *testing.T) {
+	prof := config.ProviderProfile{Upstreams: []config.Upstream{
+		{BaseURL: "http://keep", APIKey: "k"},
+		{BaseURL: "http://drop", APIKey: "k", Weight: &[]uint32{0}[0]},
+	}}
+	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{"p": prof}}
+	keys := candidateCooldownKeys([]string{"p"}, &cfg)
+	if len(keys) != 1 || keys[0] != cooldownKey("p", "http://keep") {
+		t.Fatalf("cooldown keys = %v, want only the kept channel", keys)
+	}
+}
+
+// RED admit: cooling-skipped profiles must not consume the round budget.
+func TestAdmitForRound_Unit(t *testing.T) {
+	tried := map[int]map[string]bool{}
+	att := func(name string, round int) attempt { return attempt{ref: channelRef{name: name}, round: round} }
+	if !admitForRound(tried, att("a", 0), 1) {
+		t.Fatal("first profile admits")
+	}
+	if admitForRound(tried, att("b", 0), 1) {
+		t.Fatal("second profile blocked by cap")
+	}
+	if !admitForRound(tried, att("a", 0), 1) {
+		t.Fatal("same profile re-admits (channels share the budget)")
+	}
+	if !admitForRound(tried, att("b", 1), 1) {
+		t.Fatal("budget resets each round")
+	}
+	if !admitForRound(tried, att("a", 0), 0) {
+		t.Fatal("cap 0 means unlimited")
+	}
+}

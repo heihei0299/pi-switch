@@ -277,59 +277,91 @@ func classifyTransportError(prof *config.ProviderProfile, cfg *config.PiSwitchCo
 	return actionContinueAndCooldown
 }
 
-// attempt plans one candidate pass in round-major order. ups indexes the
-// profile's orderedChannels; the relay narrows the profile to it.
+// channelRef identifies one attemptable channel: a profile plus its index
+// in that profile's orderedChannels.
+type channelRef struct {
+	name   string
+	upsIdx int
+}
+
+// attempt plans one channelRef pass in round-major order.
 type attempt struct {
-	name  string
-	ups   int
+	ref   channelRef
 	round int
 }
 
-// expandAttempts lists (profile, channel, round) triples: round 0 admits every
-// channel (profiles in candidate order, channels heaviest-first), round r only
-// those with effective retry >= r, capped per round by maxCreds (<=0 = all).
-func expandAttempts(candidates []string, cfg *config.PiSwitchConfig, maxCreds int) []attempt {
-	type pair struct {
-		name string
-		ups  int
+// profForAttempt resolves the candidate profile narrowed to the attempt
+// channel; ok=false when the profile vanished from config.
+func profForAttempt(cfg *config.PiSwitchConfig, att attempt) (prof config.ProviderProfile, ok bool) {
+	if cfg == nil {
+		return config.ProviderProfile{}, false
 	}
-	eff := map[pair]int{}
-	var order []pair
+	p, ok := cfg.Profiles[att.ref.name]
+	if !ok {
+		return config.ProviderProfile{}, false
+	}
+	return narrowToChannel(p, att.ref.upsIdx), true
+}
+
+// expandAttempts lists round-major attempts: round 0 admits every channel
+// (profiles in candidate order, channels heaviest-first), round r only
+// those with effective retry >= r. The per-round budget is enforced
+// dynamically by admitForRound so cooling-skipped profiles never starve
+// healthy ones behind it.
+func expandAttempts(candidates []string, cfg *config.PiSwitchConfig) []attempt {
+	eff := map[channelRef]int{}
+	var order []channelRef
 	maxR := 0
-	for _, n := range candidates {
-		if cfg == nil {
-			continue
-		}
-		prof, ok := cfg.Profiles[n]
-		if !ok {
-			continue
-		}
-		for _, u := range orderedChannels(&prof) {
-			p := pair{name: n, ups: u}
-			np := narrowToChannel(prof, u)
-			e := effectiveRequestRetry(cfg, &np)
-			eff[p] = e
-			if e > maxR {
-				maxR = e
+	if cfg != nil {
+		for _, n := range candidates {
+			prof, ok := cfg.Profiles[n]
+			if !ok {
+				continue
 			}
-			order = append(order, p)
+			for _, u := range orderedChannels(&prof) {
+				ref := channelRef{name: n, upsIdx: u}
+				np := narrowToChannel(prof, u)
+				e := effectiveRequestRetry(cfg, &np)
+				eff[ref] = e
+				if e > maxR {
+					maxR = e
+				}
+				order = append(order, ref)
+			}
 		}
 	}
 	var out []attempt
 	for r := 0; r <= maxR; r++ {
-		added := 0
-		for _, p := range order {
-			if eff[p] < r {
+		for _, ref := range order {
+			if eff[ref] < r {
 				continue
 			}
-			if maxCreds > 0 && added >= maxCreds {
-				continue
-			}
-			out = append(out, attempt{name: p.name, ups: p.ups, round: r})
-			added++
+			out = append(out, attempt{ref: ref, round: r})
 		}
 	}
 	return out
+}
+
+// admitForRound enforces the per-round distinct-profile budget (<=0 = all).
+// Only fired attempts call it, so cooling-skipped profiles never consume
+// the budget of healthy ones behind them.
+func admitForRound(tried map[int]map[string]bool, att attempt, maxCreds int) bool {
+	if maxCreds <= 0 {
+		return true
+	}
+	m := tried[att.round]
+	if m == nil {
+		m = map[string]bool{}
+		tried[att.round] = m
+	}
+	if m[att.ref.name] {
+		return true
+	}
+	if len(m) >= maxCreds {
+		return false
+	}
+	m[att.ref.name] = true
+	return true
 }
 
 // waitForRound sleeps (bounded by maxWait) until at least one cooling key
@@ -373,8 +405,9 @@ func candidateCooldownKeys(candidates []string, cfg *config.PiSwitchConfig) []st
 	}
 	for _, n := range candidates {
 		if p, ok := cfg.Profiles[n]; ok {
-			for _, u := range p.ResolvedUpstreams() {
-				keys = append(keys, cooldownKey(n, u.BaseURL))
+			ups := p.ResolvedUpstreams()
+			for _, u := range orderedChannels(&p) {
+				keys = append(keys, cooldownKey(n, ups[u].BaseURL))
 			}
 		}
 	}

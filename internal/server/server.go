@@ -2866,25 +2866,27 @@ func handleChatCompletions(c *gin.Context) {
 	var successHeaders http.Header
 	var successProvider string
 	var successModelEntry *config.ModelEntry
-	attempts := expandAttempts(candidates, &cfg, cfg.Settings.Proxy.MaxRetryCredentials)
+	attempts := expandAttempts(candidates, &cfg)
 	prevRound := -1
+	profTried := map[int]map[string]bool{}
+	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
 	for _, att := range attempts {
-		name := att.name
+		name := att.ref.name
 		if att.round != prevRound {
 			if prevRound >= 0 {
 				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
 			}
 			prevRound = att.round
 		}
-		prof, ok := cfg.Profiles[name]
+		prof, ok := profForAttempt(&cfg, att)
 		if !ok {
 			continue
 		}
-		// Narrow to the attempt channel so base/apiKey/headers and the
-		// primary-channel policy helpers all evaluate per attempt.
-		prof = narrowToChannel(prof, att.ups)
 		base := prof.PrimaryBaseURL()
 		if isCooling(cooldownKey(name, base)) {
+			continue
+		}
+		if !admitForRound(profTried, att, maxCreds) {
 			continue
 		}
 		if base == "" {
@@ -3047,24 +3049,27 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	var lastErr string
 	var lastStatus int = 502
 	triedUpstream := false
-	attempts := expandAttempts(candidates, &cfg, cfg.Settings.Proxy.MaxRetryCredentials)
+	attempts := expandAttempts(candidates, &cfg)
 	prevRound := -1
+	profTried := map[int]map[string]bool{}
+	maxCreds := cfg.Settings.Proxy.MaxRetryCredentials
 	for _, att := range attempts {
-		name := att.name
+		name := att.ref.name
 		if att.round != prevRound {
 			if prevRound >= 0 {
 				waitForRound(candidateCooldownKeys(candidates, &cfg), maxRetryWait(&cfg))
 			}
 			prevRound = att.round
 		}
-		prof, ok := cfg.Profiles[name]
+		prof, ok := profForAttempt(&cfg, att)
 		if !ok {
 			continue
 		}
-		// Narrow to the attempt channel (see non-streaming loop).
-		prof = narrowToChannel(prof, att.ups)
 		base := prof.PrimaryBaseURL()
 		if isCooling(cooldownKey(name, base)) {
+			continue
+		}
+		if !admitForRound(profTried, att, maxCreds) {
 			continue
 		}
 		if base == "" {
