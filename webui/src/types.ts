@@ -273,6 +273,14 @@ export interface PreviewGroup {
   channel: string;
   models: PreviewGroupItem[];
 }
+
+// 网关预览 enrich 摘要（与后端 enrich gin.H 同步）。
+export interface PreviewEnrich {
+  enriched: number;
+  skipped: number;
+  stale: boolean;
+  warning: string;
+}
 export interface PackageEntry {
   id: string;
   name: string;

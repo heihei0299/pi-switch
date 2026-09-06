@@ -1,0 +1,311 @@
+package catalog
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// internal/catalog: models.dev 模型元数据快照（拉取 + 本地缓存 + 查找 + 补缺）。
+// 只依赖标准库。网关预览/发布用它补齐提议条目的缺失模型元数据；池内数据不写回。
+
+const (
+	// FetchURLVar overrides the snapshot source in tests.
+	FetchURLVar = "PI_SWITCH_CATALOG_URL"
+	// CachePathVar overrides the cache file path (tests).
+	CachePathVar = "PI_SWITCH_CATALOG"
+	// DefaultFetchURL is the models.dev snapshot endpoint.
+	DefaultFetchURL = "https://models.dev/api.json"
+	// TTL matches the documented 24h cache.
+	TTL = 24 * time.Hour
+	// FetchTimeout bounds a single refresh attempt.
+	FetchTimeout = 15 * time.Second
+)
+
+func fetchURL() string {
+	if u := os.Getenv(FetchURLVar); u != "" {
+		return u
+	}
+	return DefaultFetchURL
+}
+
+// CachePath returns the snapshot cache file path.
+func CachePath() string {
+	if p := os.Getenv(CachePathVar); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/pi-switch-models-dev.json"
+	}
+	return filepath.Join(home, ".pi-switch", "cache", "models-dev.json")
+}
+
+// Meta is one models.dev model entry, normalized to pi-switch vocabulary.
+type Meta struct {
+	Name          string
+	Reasoning     bool
+	Input         []string
+	ContextWindow uint64
+	MaxTokens     uint64
+	CostInput     float64
+	CostOutput    float64
+	CacheRead     float64
+}
+
+type apiModel struct {
+	Name       string `json:"name"`
+	Reasoning  bool   `json:"reasoning"`
+	Modalities struct {
+		Input []string `json:"input"`
+	} `json:"modalities"`
+	Limit struct {
+		Context uint64 `json:"context"`
+		Output  uint64 `json:"output"`
+	} `json:"limit"`
+	Cost struct {
+		Input     float64 `json:"input"`
+		Output    float64 `json:"output"`
+		CacheRead float64 `json:"cache_read"`
+	} `json:"cost"`
+}
+
+// Snapshot is a parsed models.dev payload indexed by bare model id.
+// A bare id maps to at most one Meta: ambiguous (multi-lab same tail) and
+// missing ids simply miss — never mismatch.
+type Snapshot struct {
+	byBare map[string]Meta
+}
+
+func bareID(id string) string {
+	if idx := strings.LastIndex(id, "/"); idx >= 0 {
+		return id[idx+1:]
+	}
+	return id
+}
+
+// ParseSnapshot indexes a models.dev api.json payload.
+func ParseSnapshot(data []byte) (Snapshot, error) {
+	var providers map[string]struct {
+		Models map[string]apiModel `json:"models"`
+	}
+	if err := json.Unmarshal(data, &providers); err != nil {
+		return Snapshot{}, err
+	}
+	hits := map[string][]Meta{}
+	for _, prov := range providers {
+		for fullID, m := range prov.Models {
+			bare := bareID(fullID)
+			hits[bare] = append(hits[bare], Meta{
+				Name:          m.Name,
+				Reasoning:     m.Reasoning,
+				Input:         m.Modalities.Input,
+				ContextWindow: m.Limit.Context,
+				MaxTokens:     m.Limit.Output,
+				CostInput:     m.Cost.Input,
+				CostOutput:    m.Cost.Output,
+				CacheRead:     m.Cost.CacheRead,
+			})
+		}
+	}
+	snap := Snapshot{byBare: map[string]Meta{}}
+	for bare, list := range hits {
+		if len(list) == 1 {
+			snap.byBare[bare] = list[0]
+		}
+	}
+	return snap, nil
+}
+
+// Lookup finds the unique catalog entry for a (possibly prefixed) model id.
+func (s Snapshot) Lookup(id string) (Meta, bool) {
+	if s.byBare == nil {
+		return Meta{}, false
+	}
+	m, ok := s.byBare[bareID(id)]
+	return m, ok
+}
+
+// Empty reports whether the snapshot holds no entries.
+func (s Snapshot) Empty() bool { return len(s.byBare) == 0 }
+
+func asFloat(v interface{}) (float64, bool) {
+	if f, ok := v.(float64); ok {
+		return f, true
+	}
+	return 0, false
+}
+
+// FillMissing 只补缺失字段，已有值不覆盖，返回是否改动。
+// 数值一律写 float64（JSON 域归一，避免与落盘 float64 序列化分叉）。
+//   - name 为空补；contextWindow/maxTokens 缺失或 0 且目录非 0 则补
+//   - input 缺失或空补；reasoning 缺键则按目录值补（含 false）
+//   - cost 缺失整设（含显式 cacheWrite:0，保 pending 收敛）；已存在则补 0 值子字段
+func FillMissing(entry map[string]interface{}, meta Meta) bool {
+	changed := false
+	if s, _ := entry["name"].(string); strings.TrimSpace(s) == "" && strings.TrimSpace(meta.Name) != "" {
+		entry["name"] = meta.Name
+		changed = true
+	}
+	if f, ok := asFloat(entry["contextWindow"]); (!ok || f == 0) && meta.ContextWindow != 0 {
+		entry["contextWindow"] = float64(meta.ContextWindow)
+		changed = true
+	}
+	if f, ok := asFloat(entry["maxTokens"]); (!ok || f == 0) && meta.MaxTokens != 0 {
+		entry["maxTokens"] = float64(meta.MaxTokens)
+		changed = true
+	}
+	fillInput := false
+	if entry["input"] == nil {
+		fillInput = true
+	} else if arr, ok := entry["input"].([]interface{}); ok && len(arr) == 0 {
+		fillInput = true
+	} else if arr, ok := entry["input"].([]string); ok && len(arr) == 0 {
+		fillInput = true
+	}
+	if fillInput && len(meta.Input) > 0 {
+		in := make([]interface{}, 0, len(meta.Input))
+		for _, v := range meta.Input {
+			in = append(in, v)
+		}
+		entry["input"] = in
+		changed = true
+	}
+	if _, has := entry["reasoning"]; !has {
+		entry["reasoning"] = meta.Reasoning
+		changed = true
+	}
+	if raw, ok := entry["cost"]; !ok || raw == nil {
+		if meta.CostInput != 0 || meta.CostOutput != 0 || meta.CacheRead != 0 {
+			entry["cost"] = map[string]interface{}{
+				"input":      meta.CostInput,
+				"output":     meta.CostOutput,
+				"cacheRead":  meta.CacheRead,
+				"cacheWrite": float64(0),
+			}
+			changed = true
+		}
+	} else if cm, ok := raw.(map[string]interface{}); ok {
+		if f, ok := asFloat(cm["input"]); (!ok || f == 0) && meta.CostInput != 0 {
+			cm["input"] = meta.CostInput
+			changed = true
+		}
+		if f, ok := asFloat(cm["output"]); (!ok || f == 0) && meta.CostOutput != 0 {
+			cm["output"] = meta.CostOutput
+			changed = true
+		}
+		if f, ok := asFloat(cm["cacheRead"]); (!ok || f == 0) && meta.CacheRead != 0 {
+			cm["cacheRead"] = meta.CacheRead
+			changed = true
+		}
+		if _, has := cm["cacheWrite"]; !has {
+			cm["cacheWrite"] = float64(0)
+			changed = true
+		}
+	}
+	return changed
+}
+
+// FillModels fills a gateway models array in place, returning per-entry counts.
+// Non-object entries and empty ids count as skipped.
+func FillModels(models []interface{}, snap Snapshot) (enriched, skipped int) {
+	for _, m := range models {
+		mm, ok := m.(map[string]interface{})
+		if !ok {
+			skipped++
+			continue
+		}
+		id, _ := mm["id"].(string)
+		if id == "" {
+			skipped++
+			continue
+		}
+		meta, ok := snap.Lookup(id)
+		if !ok {
+			skipped++
+			continue
+		}
+		if FillMissing(mm, meta) {
+			enriched++
+		} else {
+			skipped++
+		}
+	}
+	return enriched, skipped
+}
+
+// EnrichSummary mirrors the preview enrich payload.
+type EnrichSummary struct {
+	Enriched int    `json:"enriched"`
+	Skipped  int    `json:"skipped"`
+	Stale    bool   `json:"stale"`
+	Warning  string `json:"warning"`
+}
+
+func writeCache(path string, data []byte) error {
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0755)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// Ensure loads the snapshot, refreshing a missing/stale cache. It never
+// fails hard: refresh failure falls back to stale cache (stale=true + warning),
+// no cache at all yields an empty snapshot with a warning.
+func Ensure() (snap Snapshot, stale bool, warning string) {
+	path := CachePath()
+	client := &http.Client{Timeout: FetchTimeout}
+	if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) < TTL {
+		if data, err := os.ReadFile(path); err == nil {
+			if s, err := ParseSnapshot(data); err == nil {
+				return s, false, ""
+			}
+		}
+	}
+	// fetch fresh (also when cache corrupt/missing)
+	var err error
+	if resp, ferr := client.Get(fetchURL()); ferr == nil {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err = statusErr(resp.StatusCode); err == nil {
+			var s Snapshot
+			if s, err = ParseSnapshot(data); err == nil {
+				_ = writeCache(path, data)
+				return s, false, ""
+			}
+		}
+	} else {
+		err = ferr
+	}
+	// fall back to stale cache
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		if s, perr := ParseSnapshot(data); perr == nil && !s.Empty() {
+			return s, true, "models.dev refresh failed, using stale cache"
+		}
+	}
+	if err == nil {
+		err = errNoCache
+	}
+	return Snapshot{}, false, "models.dev unavailable: " + err.Error()
+}
+
+func statusErr(code int) error {
+	if code >= 200 && code < 300 {
+		return nil
+	}
+	return errString("models.dev: unexpected status")
+}
+
+var errNoCache = errString("no cache and refresh failed")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

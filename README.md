@@ -143,7 +143,7 @@ pi-switch stats                                     # View request statistics
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
 | 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
-| 🗂️ **Model Catalog** | Auto-enrich model metadata (cost/limit/reasoning/input) from https://models.dev with 24h cache, per-profile `modelsDevProvider` mapping & global fallback |
+| 🗂️ **Model Catalog** | Fill missing model metadata (cost/limit/reasoning/input/name) from https://models.dev snapshot cached at `~/.pi-switch/cache/models-dev.json` (24h TTL, stale fallback with warning): fetch-time enrich via per-profile `modelsDevProvider` mapping, plus gateway preview/publish fill-missing (existing values win, pools untouched, ambiguous names skipped) |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
 | 🖥️ **TUI (secondary)** | charmbracelet/bubbletea + lipgloss + bubbles — profile list/switch, gateway publish, stats (totalCost ` - ` / `$0.00` / `$1.2K`), full parity with WebUI/CLI |
 | 🌐 **Bilingual** | English / 中文, persisted to config, toggle in Settings |

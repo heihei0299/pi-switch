@@ -16,6 +16,7 @@ import type {
   UsageStats,
   ValidationIssue,
   PreviewGroup,
+  PreviewEnrich,
 } from "./types";
 import type { ConversationRange, StatsRange } from "./lib/statsWindow";
 import type { NormalizedCredits } from "./lib/credits";
@@ -121,7 +122,7 @@ export const api = {
   setFailover: (failover: string[]) => req("PUT", "/proxy/failover", { failover }),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
   getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
-  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number; groups?: PreviewGroup[]; removed?: string[] }>("GET", "/models/gateway/preview"),
+  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number; groups?: PreviewGroup[]; removed?: string[]; enrich?: PreviewEnrich }>("GET", "/models/gateway/preview"),
   applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
   getGatewayHealth: () => req<{ running: boolean; mode: string; gateway_id: string; has_models_file: boolean; last_notify: string | null; upstreams_total: number; message: string }>("GET", "/gateway/health"),
   startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start"),

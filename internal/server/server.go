@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/heihei0299/pi-switch/internal/catalog"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
@@ -1557,9 +1558,21 @@ func handleGatewayPreview(c *gin.Context) {
 	//（compat/headers 等）并入 proposed，直接比会恒差。先归一化再 diff，
 	// 否则发布后 pending 永远回不到 0（manual-test-bugs/02）。
 	proposed = gateway.MergeGatewayExtra(curMap, proposed)
+	// 模型目录补缺：用 models.dev 快照补提议条目的缺失元信息（只补缺失，不写回池）。
+	summary := enrichProposedModels(proposed)
 	pending := gateway.ComputePendingCount(curMap, proposed)
 	groups, removed := gateway.BuildPreviewGroups(cfg, curMap, proposed)
-	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed})
+	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed,
+		"enrich": gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning}})
+}
+
+// enrichProposedModels fills missing metadata of proposed gateway models from
+// the models.dev snapshot. Pure fill-missing: existing values win, pools untouched.
+func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary {
+	snap, stale, warning := catalog.Ensure()
+	models, _ := proposed["models"].([]interface{})
+	enriched, skipped := catalog.FillModels(models, snap)
+	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
@@ -1599,6 +1612,8 @@ func handlePutGateway(c *gin.Context) {
 		}
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	// 目录补缺：与预览同一口径，写入前补齐缺失元信息。
+	enrichProposedModels(gw)
 	// atomic backup (gateway.Publish does backup) but ensure dir exists
 	if err := gateway.Publish(cfg, gw); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -3022,6 +3037,16 @@ func handleGatewayPublish(c *gin.Context) {
 		}
 	} else {
 		toPublish = gateway.BuildProposedGatewayEntry(cfg)
+	}
+	// 目录补缺：wrapper 内各 provider 条目与单条目同一口径。
+	if provs, ok := toPublish["providers"].(map[string]interface{}); ok {
+		for _, v := range provs {
+			if em, ok := v.(map[string]interface{}); ok {
+				enrichProposedModels(em)
+			}
+		}
+	} else {
+		enrichProposedModels(toPublish)
 	}
 	if _, ok := toPublish["providers"]; ok {
 		path := gateway.ModelsPath()
