@@ -1133,40 +1133,47 @@ func enrichModelsWithCatalog(models []map[string]interface{}, prof config.Provid
 	if providerKey == "" {
 		return 0, len(models), 0, "no modelsDevProvider"
 	}
-	catalog, ok := modelsDevCatalog[providerKey]
-	if !ok || catalog == nil {
-		return 0, 0, len(models), fmt.Sprintf("catalog not found for %s", providerKey)
+	snap, _, snapWarn := catalog.Ensure()
+	if snap.Empty() {
+		if snapWarn == "" {
+			snapWarn = fmt.Sprintf("catalog not found for %s", providerKey)
+		}
+		return 0, 0, len(models), snapWarn
 	}
 	for _, m := range models {
 		id, _ := m["id"].(string)
-		if entry, hit := catalog[id]; hit {
-			// cost
-			if cost, ok := entry["cost"]; ok {
-				m["cost"] = cost
-			}
-			if cw, ok := entry["contextWindow"]; ok {
-				m["contextWindow"] = cw
-			}
-			if mt, ok := entry["maxTokens"]; ok {
-				m["maxTokens"] = mt
-			}
-			if r, ok := entry["reasoning"]; ok {
-				m["reasoning"] = r
-			}
-			if inp, ok := entry["input"]; ok {
-				m["input"] = inp
-			}
-			if name, ok := entry["name"]; ok {
-				if _, exists := m["name"]; !exists {
-					m["name"] = name
-				}
-			}
-			enriched++
-		} else {
+		meta, ok := snap.LookupWithProvider(id, providerKey)
+		if !ok {
 			skipped++
+			continue
 		}
+		if meta.ContextWindow != 0 {
+			m["contextWindow"] = float64(meta.ContextWindow)
+		}
+		if meta.MaxTokens != 0 {
+			m["maxTokens"] = float64(meta.MaxTokens)
+		}
+		m["reasoning"] = meta.Reasoning
+		if len(meta.Input) > 0 {
+			m["input"] = meta.Input
+		}
+		if meta.Name != "" {
+			m["name"] = meta.Name
+		}
+		if meta.CostInput != 0 || meta.CostOutput != 0 || meta.CacheRead != 0 {
+			m["cost"] = map[string]interface{}{
+				"input":      meta.CostInput,
+				"output":     meta.CostOutput,
+				"cacheRead":  meta.CacheRead,
+				"cacheWrite": float64(0),
+			}
+		}
+		enriched++
 	}
-	return enriched, skipped, failed, ""
+	if snapWarn != "" {
+		warning = snapWarn
+	}
+	return enriched, skipped, failed, warning
 }
 
 func handlePutModels(c *gin.Context) {
@@ -1570,12 +1577,57 @@ func handleGatewayPreview(c *gin.Context) {
 		"enrich": gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning}})
 }
 
-// enrichProposedModels fills missing metadata of proposed gateway models from
-// the models.dev snapshot. Pure fill-missing: existing values win, pools untouched.
+// enrichProposedModels fills gateway proposed models from the models.dev snapshot.
+// It prefers provider/bare lookup using the supplier's resolved modelsDevProvider
+// (or supplier name as hint) to disambiguate duplicate bare ids, and overwrites
+// stale defaults (e.g. 128000→1048576) when the catalog provides non-zero values.
 func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary {
 	snap, stale, warning := catalog.Ensure()
 	models, _ := proposed["models"].([]interface{})
-	enriched, skipped := catalog.FillModels(models, snap)
+	// Load config for supplier→provider mapping (best-effort; empty config is fine).
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	enriched, skipped := 0, 0
+	for _, m := range models {
+		mm, ok := m.(map[string]interface{})
+		if !ok {
+			skipped++
+			continue
+		}
+		id, _ := mm["id"].(string)
+		if id == "" {
+			skipped++
+			continue
+		}
+		supplier := ""
+		if idx := strings.Index(id, "/"); idx > 0 {
+			supplier = id[:idx]
+		}
+		var meta catalog.Meta
+		var found bool
+		if supplier != "" {
+			if prof, ok := cfg.Profiles[supplier]; ok {
+				pk := resolveModelsDevProvider(prof)
+				if pk != "" {
+					meta, found = snap.LookupWithProvider(id, pk)
+				}
+			}
+			if !found {
+				meta, found = snap.LookupWithProvider(id, supplier)
+			}
+		}
+		if !found {
+			meta, found = snap.Lookup(id)
+		}
+		if !found {
+			skipped++
+			continue
+		}
+		if catalog.FillOverwrite(mm, meta) {
+			enriched++
+		} else {
+			skipped++
+		}
+	}
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
@@ -3558,6 +3610,22 @@ func handleChatCompletions(c *gin.Context) {
 			return
 		}
 	}
+	if pinnedChannel == "" {
+		for i, ups := range prof.ResolvedUpstreams() {
+			chName := ""
+			if ups.Name != nil {
+				chName = *ups.Name
+			}
+			_, exposed := prof.ChannelView(chName)
+			for _, eid := range exposed {
+				if eid == realModel {
+					prof = narrowToChannel(prof, i)
+					goto channelFound
+				}
+			}
+		}
+	channelFound:
+	}
 	base := prof.PrimaryBaseURL()
 	if base == "" {
 		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
@@ -3787,6 +3855,22 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
 			return
 		}
+	}
+	if pinnedChannel == "" {
+		for i, ups := range prof.ResolvedUpstreams() {
+			chName := ""
+			if ups.Name != nil {
+				chName = *ups.Name
+			}
+			_, exposed := prof.ChannelView(chName)
+			for _, eid := range exposed {
+				if eid == realModel {
+					prof = narrowToChannel(prof, i)
+					goto channelFoundStream
+				}
+			}
+		}
+	channelFoundStream:
 	}
 	base := prof.PrimaryBaseURL()
 	if base == "" {

@@ -78,7 +78,8 @@ type apiModel struct {
 // A bare id maps to at most one Meta: ambiguous (multi-lab same tail) and
 // missing ids simply miss — never mismatch.
 type Snapshot struct {
-	byBare map[string]Meta
+	byBare         map[string]Meta
+	byProviderBare map[string]Meta
 }
 
 func bareID(id string) string {
@@ -97,10 +98,11 @@ func ParseSnapshot(data []byte) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	hits := map[string][]Meta{}
-	for _, prov := range providers {
+	snap := Snapshot{byBare: map[string]Meta{}, byProviderBare: map[string]Meta{}}
+	for provName, prov := range providers {
 		for fullID, m := range prov.Models {
 			bare := bareID(fullID)
-			hits[bare] = append(hits[bare], Meta{
+			meta := Meta{
 				Name:          m.Name,
 				Reasoning:     m.Reasoning,
 				Input:         m.Modalities.Input,
@@ -109,10 +111,11 @@ func ParseSnapshot(data []byte) (Snapshot, error) {
 				CostInput:     m.Cost.Input,
 				CostOutput:    m.Cost.Output,
 				CacheRead:     m.Cost.CacheRead,
-			})
+			}
+			hits[bare] = append(hits[bare], meta)
+			snap.byProviderBare[provName+"/"+bare] = meta
 		}
 	}
-	snap := Snapshot{byBare: map[string]Meta{}}
 	for bare, list := range hits {
 		if len(list) == 1 {
 			snap.byBare[bare] = list[0]
@@ -130,8 +133,19 @@ func (s Snapshot) Lookup(id string) (Meta, bool) {
 	return m, ok
 }
 
+// LookupWithProvider finds the catalog entry for id, preferring provider/bare when provider is given.
+// It tries provider/bare first, then falls back to unique bare.
+func (s Snapshot) LookupWithProvider(id string, provider string) (Meta, bool) {
+	if provider != "" && s.byProviderBare != nil {
+		if m, ok := s.byProviderBare[provider+"/"+bareID(id)]; ok {
+			return m, true
+		}
+	}
+	return s.Lookup(id)
+}
+
 // Empty reports whether the snapshot holds no entries.
-func (s Snapshot) Empty() bool { return len(s.byBare) == 0 }
+func (s Snapshot) Empty() bool { return len(s.byBare) == 0 && len(s.byProviderBare) == 0 }
 
 // asNumber reads any JSON/Go numeric value as float64.
 func asNumber(v interface{}) (float64, bool) {
@@ -256,8 +270,135 @@ func fillInput(entry map[string]interface{}, input []string) bool {
 	return true
 }
 
+func overwriteFloat(m map[string]interface{}, key string, val float64) bool {
+	if val == 0 {
+		return false
+	}
+	if f, ok := asNumber(m[key]); ok && f == val {
+		return false
+	}
+	m[key] = val
+	return true
+}
+
+func overwriteInput(entry map[string]interface{}, input []string) bool {
+	if len(input) == 0 {
+		return false
+	}
+	// compare existing input
+	existing := entry["input"]
+	if existing == nil {
+		in := make([]interface{}, 0, len(input))
+		for _, v := range input {
+			in = append(in, v)
+		}
+		entry["input"] = in
+		return true
+	}
+	var cur []string
+	switch v := existing.(type) {
+	case []interface{}:
+		cur = make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				cur = append(cur, s)
+			}
+		}
+	case []string:
+		cur = v
+	default:
+		// unknown type, overwrite
+		in := make([]interface{}, 0, len(input))
+		for _, e := range input {
+			in = append(in, e)
+		}
+		entry["input"] = in
+		return true
+	}
+	if len(cur) == len(input) {
+		match := true
+		for i := range cur {
+			if cur[i] != input[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return false
+		}
+	}
+	in := make([]interface{}, 0, len(input))
+	for _, v := range input {
+		in = append(in, v)
+	}
+	entry["input"] = in
+	return true
+}
+
+// FillOverwrite overwrites entry fields with catalog meta when catalog has non-zero values.
+// It returns true if any field changed. cacheWrite normalization is not counted.
+func FillOverwrite(entry map[string]interface{}, meta Meta) bool {
+	changed := false
+	if strings.TrimSpace(meta.Name) != "" {
+		if s, _ := entry["name"].(string); strings.TrimSpace(s) != strings.TrimSpace(meta.Name) {
+			entry["name"] = meta.Name
+			changed = true
+		}
+	}
+	if overwriteFloat(entry, "contextWindow", float64(meta.ContextWindow)) {
+		changed = true
+	}
+	if overwriteFloat(entry, "maxTokens", float64(meta.MaxTokens)) {
+		changed = true
+	}
+	if overwriteInput(entry, meta.Input) {
+		changed = true
+	}
+	if _, has := entry["reasoning"]; !has {
+		entry["reasoning"] = meta.Reasoning
+		changed = true
+	} else if entry["reasoning"] != meta.Reasoning {
+		entry["reasoning"] = meta.Reasoning
+		changed = true
+	}
+	if raw, ok := entry["cost"]; !ok || raw == nil {
+		if meta.CostInput != 0 || meta.CostOutput != 0 || meta.CacheRead != 0 {
+			entry["cost"] = map[string]interface{}{
+				"input":      meta.CostInput,
+				"output":     meta.CostOutput,
+				"cacheRead":  meta.CacheRead,
+				"cacheWrite": float64(0),
+			}
+			changed = true
+		}
+	} else if cm, ok := raw.(map[string]interface{}); ok {
+		if overwriteFloat(cm, "input", meta.CostInput) {
+			changed = true
+		}
+		if overwriteFloat(cm, "output", meta.CostOutput) {
+			changed = true
+		}
+		if overwriteFloat(cm, "cacheRead", meta.CacheRead) {
+			changed = true
+		}
+		if _, has := cm["cacheWrite"]; !has {
+			cm["cacheWrite"] = float64(0)
+		}
+	}
+	return changed
+}
+
+func providerHint(id string) string {
+	if idx := strings.Index(id, "/"); idx > 0 {
+		return id[:idx]
+	}
+	return ""
+}
+
 // FillModels fills a gateway models array in place, returning per-entry counts.
 // Non-object entries and empty ids count as skipped.
+// It prefers provider/bare lookup when id contains a supplier prefix (e.g. supplier/model or supplier/channel/model)
+// and overwrites existing values when catalog provides non-zero values (allows correction of stale defaults like 128000→1048576).
 func FillModels(models []interface{}, snap Snapshot) (enriched, skipped int) {
 	for _, m := range models {
 		mm, ok := m.(map[string]interface{})
@@ -270,12 +411,19 @@ func FillModels(models []interface{}, snap Snapshot) (enriched, skipped int) {
 			skipped++
 			continue
 		}
-		meta, ok := snap.Lookup(id)
-		if !ok {
+		var meta Meta
+		var found bool
+		hint := providerHint(id)
+		if hint != "" {
+			meta, found = snap.LookupWithProvider(id, hint)
+		} else {
+			meta, found = snap.Lookup(id)
+		}
+		if !found {
 			skipped++
 			continue
 		}
-		if FillMissing(mm, meta) {
+		if FillOverwrite(mm, meta) {
 			enriched++
 		} else {
 			skipped++
