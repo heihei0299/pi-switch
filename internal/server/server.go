@@ -3303,44 +3303,31 @@ func handleModels(c *gin.Context) {
 	data := []interface{}{}
 	seen := map[string]bool{}
 	for name, prof := range cfg.Profiles {
-		// 空 exposed = 不暴露（与网关发布一致），不回退到全部 Models。
 		if prof.HasChannelPartitions() {
-			// 收集 3 段全限定，并统计短别名唯一性
-			modelToChannels := map[string][]string{}
 			for i := range prof.Upstreams {
 				ch := prof.ChannelName(i)
 				_, exposed := prof.ChannelView(ch)
 				for _, mid := range exposed {
-					id := name + "/" + ch + "/" + mid
-					if seen[id] {
+					providerKey := name + "/" + ch
+					key := providerKey + "/" + mid
+					if seen[key] {
 						continue
 					}
-					seen[id] = true
-					data = append(data, map[string]interface{}{"id": id, "object": "model", "owned_by": name})
-					modelToChannels[mid] = append(modelToChannels[mid], ch)
-				}
-			}
-			// 短别名：仅当模型在单一渠道唯一时暴露 oc/model
-			for mid, chs := range modelToChannels {
-				if len(chs) == 1 {
-					shortID := name + "/" + mid
-					if seen[shortID] {
-						continue
-					}
-					seen[shortID] = true
-					data = append(data, map[string]interface{}{"id": shortID, "object": "model", "owned_by": name})
+					seen[key] = true
+					data = append(data, map[string]interface{}{"id": mid, "object": "model", "owned_by": providerKey})
 				}
 			}
 			continue
 		}
 		exposed := prof.ExposedModels
 		for _, mid := range exposed {
-			id := name + "/" + mid
-			if seen[id] {
+			providerKey := name
+			key := providerKey + "/" + mid
+			if seen[key] {
 				continue
 			}
-			seen[id] = true
-			data = append(data, map[string]interface{}{"id": id, "object": "model", "owned_by": name})
+			seen[key] = true
+			data = append(data, map[string]interface{}{"id": mid, "object": "model", "owned_by": providerKey})
 		}
 	}
 	c.JSON(200, gin.H{"object": "list", "data": data})
@@ -3405,13 +3392,52 @@ func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string
 			return []string{prefix}, rest, ""
 		}
 	}
-	// 裸模型：仅走 current 指向的供应商，否则无路由（不再全量扫描，不再遍历 failover）。
-	if cfg.Current != nil {
-		if name := *cfg.Current; isNonProxy(cfg, name) && exposes(cfg, name, requested) {
-			return []string{name}, requested, ""
+	// 裸模型：全局扫描所有渠道的 exposedModels，按裸 id 唯一命中
+	matches := []struct {
+		supplier string
+		channel  string
+	}{}
+	for name, prof := range cfg.Profiles {
+		if prof.HasChannelPartitions() {
+			for i := range prof.Upstreams {
+				ch := prof.ChannelName(i)
+				_, exposed := prof.ChannelView(ch)
+				for _, eid := range exposed {
+					if eid == requested {
+						matches = append(matches, struct {
+							supplier string
+							channel  string
+						}{name, ch})
+						break
+					}
+				}
+			}
+		} else {
+			for _, eid := range prof.ExposedModels {
+				if eid == requested {
+					chName := ""
+					if len(prof.Upstreams) > 0 {
+						if cn := prof.ChannelName(0); cn != "" {
+							chName = cn
+						}
+					}
+					matches = append(matches, struct {
+						supplier string
+						channel  string
+					}{name, chName})
+					break
+				}
+			}
 		}
 	}
-	return nil, requested, ""
+	if len(matches) == 0 {
+		return nil, requested, ""
+	}
+	if len(matches) == 1 {
+		return []string{matches[0].supplier}, requested, matches[0].channel
+	}
+	// 多处暴露 => ambiguous，需显式消解
+	return nil, requested, "ambiguous"
 }
 
 // pinChannelAttempts keeps only attempts hitting the pinned channel of its
@@ -3709,6 +3735,10 @@ func handleChatCompletions(c *gin.Context) {
 		requestedModel = "gpt-4o-mini"
 	}
 	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
+	if pinnedChannel == "ambiguous" {
+		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "type": "ambiguous"}})
+		return
+	}
 	if len(candidates) == 0 {
 		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
 		return

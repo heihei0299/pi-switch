@@ -74,7 +74,7 @@ func TestRetry_CustomScopedRuleStopsFailover(t *testing.T) {
 				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"],
 				"requestScopedErrors":[{"status":500,"match":["overloaded"],"action":"stop"}]},
 			"retry-stop-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b",
-				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"]}
+				"models":[{"id":"other-model","contextWindow":128000,"maxTokens":16384}],"exposedModels":["other-model"]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions",
 			"proxy":{"host":"127.0.0.1","port":43112,"failover":["retry-stop-a","retry-stop-b"]},

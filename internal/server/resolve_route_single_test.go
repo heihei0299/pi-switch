@@ -56,14 +56,12 @@ func TestResolveRoute_SingleCandidate(t *testing.T) {
 		},
 	}
 
-	// Case 1: bare model -> only current
+	// Case 1: bare model globally unique -> now ambiguous when two suppliers expose same bare
 	cands, real, pinned := resolveRoute(cfg, "gpt-4o")
-	if len(cands) != 1 || cands[0] != "supplier-a" {
-		t.Fatalf("bare model: got candidates %v, want [supplier-a]", cands)
+	if pinned != "ambiguous" {
+		t.Fatalf("bare model ambiguous: got candidates %v pinned %q want ambiguous", cands, pinned)
 	}
-	if real != "gpt-4o" || pinned != "" {
-		t.Fatalf("bare model: real=%q pinned=%q want gpt-4o \"\"", real, pinned)
-	}
+	_ = real
 
 	// Case 2: supplier/model -> only that supplier, no failover append
 	cands, real, pinned = resolveRoute(cfg, "supplier-a/gpt-4o")
@@ -74,7 +72,7 @@ func TestResolveRoute_SingleCandidate(t *testing.T) {
 		t.Fatalf("supplier/model real=%q want gpt-4o", real)
 	}
 
-	// Case 3: bare model when current does not expose -> no_route
+	// Case 3: bare model when current does not expose but other does -> should hit supplier-b (global scan)
 	current2 := "supplier-a"
 	cfg2 := cfg
 	cfg2.Current = &current2
@@ -83,8 +81,8 @@ func TestResolveRoute_SingleCandidate(t *testing.T) {
 	pa.ExposedModels = []string{"other-model"}
 	cfg2.Profiles["supplier-a"] = pa
 	cands, _, _ = resolveRoute(cfg2, "gpt-4o")
-	if len(cands) != 0 {
-		t.Fatalf("bare model no current expose: got %v, want []", cands)
+	if len(cands) != 1 || cands[0] != "supplier-b" {
+		t.Fatalf("bare model global: got %v, want [supplier-b]", cands)
 	}
 
 	// Case 4: supplier/channel/model pin still works (single candidate + pinned)

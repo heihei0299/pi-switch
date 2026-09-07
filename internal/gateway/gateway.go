@@ -583,6 +583,16 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+	// New per-channel: edited is providers wrapper -> full overwrite, no merge, no backup, old providers cleared
+	if provs, ok := edited["providers"].(map[string]interface{}); ok {
+		m["providers"] = provs
+		b, _ := json.MarshalIndent(m, "", "  ")
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+			return err
+		}
+		return os.Rename(tmp, path)
+	}
 	providers, ok := m["providers"].(map[string]interface{})
 	if !ok {
 		providers = map[string]interface{}{}
@@ -607,9 +617,6 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	// backup
 	backupPath := path + ".backup"
 	_ = os.WriteFile(backupPath, b, 0644)
-	// handle atomic rename with pid suffix? Use tmp then rename
-	// To avoid race, we already have tmp, just rename
-	// Also try pid suffix if needed for test? The tmp already.
 	return os.Rename(tmp, path)
 }
 

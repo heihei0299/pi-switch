@@ -10,6 +10,7 @@ import (
 // S9: 代理 GET /v1/models 沿用已暴露聚合，id 保持前缀形态：
 // 已分区 supplier/channel/modelId，未分区 supplier/modelId；空暴露不列出。
 
+// S9: 代理 GET /v1/models 按 Channel 分组返回裸 id，owned_by 为 providerKey
 func TestProxyModels_ChannelPrefixedIDs(t *testing.T) {
 	dir := t.TempDir()
 	cfgJSON := `{"version":2,"current":"sup","profiles":{
@@ -33,18 +34,26 @@ func TestProxyModels_ChannelPrefixedIDs(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	data, _ := resp["data"].([]interface{})
-	ids := map[string]bool{}
+	// New per-channel bare: id is bare, owned_by is providerKey
+	got := map[string]string{} // id -> owned_by
 	for _, m := range data {
-		ids[m.(map[string]interface{})["id"].(string)] = true
+		mm := m.(map[string]interface{})
+		got[mm["id"].(string)] = mm["owned_by"].(string)
 	}
-	for _, want := range []string{"sup/main/m1", "leg/old", "sup/m1"} {
-		if !ids[want] {
-			t.Fatalf("ids = %v, want %q", ids, want)
-		}
+	if got["m1"] != "sup/main" {
+		t.Fatalf("m1 owned_by = %q want sup/main, got %v", got["m1"], got)
 	}
-	for _, absent := range []string{"sup/bk/m1", "empty/hid"} {
-		if ids[absent] {
-			t.Fatalf("ids = %v, must not contain %q", ids, absent)
+	if got["old"] != "leg" {
+		t.Fatalf("old owned_by = %q want leg, got %v", got["old"], got)
+	}
+	if _, ok := got["hid"]; ok {
+		t.Fatalf("empty/hid must not be exposed, got %v", got)
+	}
+	// Ensure no prefixed ids
+	for _, m := range data {
+		id := m.(map[string]interface{})["id"].(string)
+		if id == "sup/main/m1" || id == "leg/old" || id == "sup/m1" {
+			t.Fatalf("should not have prefixed/short id %q, got bare only", id)
 		}
 	}
 }

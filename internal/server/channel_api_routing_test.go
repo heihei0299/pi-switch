@@ -109,18 +109,23 @@ func TestChannelAPI_ModelsList(t *testing.T) {
 	}
 	data, _ := resp["data"].([]interface{})
 	ids := map[string]string{}
+	owned := map[string]string{}
 	for _, m := range data {
 		mm := m.(map[string]interface{})
 		ids[mm["id"].(string)] = mm["owned_by"].(string)
+		owned[mm["id"].(string)] = mm["owned_by"].(string)
 	}
-	if _, ok := ids["oc/chat/mimo-v2.5"]; !ok {
-		t.Fatalf("models ids=%v want oc/chat/mimo-v2.5", ids)
+	if _, ok := ids["mimo-v2.5"]; !ok {
+		t.Fatalf("models ids=%v want mimo-v2.5", ids)
 	}
-	if _, ok := ids["oc/responses/muse-spark-1.2-contributor"]; !ok {
-		t.Fatalf("models ids=%v want oc/responses/muse-spark-1.2-contributor", ids)
+	if _, ok := ids["muse-spark-1.2-contributor"]; !ok {
+		t.Fatalf("models ids=%v want muse-spark-1.2-contributor", ids)
 	}
-	// owned_by should be set (per channel distinction via id prefix already suffices; owned_by holds supplier at least)
-	if ids["oc/chat/mimo-v2.5"] == "" || ids["oc/responses/muse-spark-1.2-contributor"] == "" {
-		t.Fatalf("owned_by empty: %v", ids)
+	// owned_by should be per-channel providerKey
+	if owned["mimo-v2.5"] != "oc/chat" {
+		t.Fatalf("mimo owned_by=%q want oc/chat", owned["mimo-v2.5"])
+	}
+	if owned["muse-spark-1.2-contributor"] != "oc/responses" {
+		t.Fatalf("muse owned_by=%q want oc/responses", owned["muse-spark-1.2-contributor"])
 	}
 }

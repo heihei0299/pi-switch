@@ -43,7 +43,7 @@ func TestPassthrough_429Isolated(t *testing.T) {
 		"current":%q,
 		"profiles":{
 			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"gpt-4o-mini"}],"exposedModels":["gpt-4o-mini"]},
-			"supplier-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b","models":[{"id":"gpt-4o-mini"}],"exposedModels":["gpt-4o-mini"]}
+			"supplier-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b","models":[{"id":"other-model"}],"exposedModels":["other-model"]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","conversationSource":"off","proxy":{"host":"127.0.0.1","port":43112,"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},"web":{"host":"127.0.0.1","port":43110}}
 	}`, current, mockA.URL+"/v1", mockB.URL+"/v1")

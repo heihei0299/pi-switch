@@ -53,15 +53,18 @@ func TestShortAlias_ModelsListContainsShort(t *testing.T) {
 		t.Fatalf("models list code=%d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "oc/mimo-v2.5") {
-		t.Fatalf("models should contain short alias oc/mimo-v2.5, got %s", body)
+	// New per-channel bare: no short alias, only bare ids with owned_by
+	if strings.Contains(body, `"id":"oc/mimo-v2.5"`) {
+		t.Fatalf("models should not contain short alias oc/mimo-v2.5 after bare migration, got %s", body)
 	}
-	if !strings.Contains(body, "oc/muse-spark-1.2-contributor") {
-		t.Fatalf("models should contain short alias oc/muse, got %s", body)
+	if !strings.Contains(body, `"id":"mimo-v2.5"`) {
+		t.Fatalf("models should contain bare mimo-v2.5, got %s", body)
 	}
-	// full 3-segment should still exist
-	if !strings.Contains(body, "oc/chat/mimo-v2.5") {
-		t.Fatalf("models should still contain oc/chat/mimo-v2.5, got %s", body)
+	if !strings.Contains(body, `"id":"muse-spark-1.2-contributor"`) {
+		t.Fatalf("models should contain bare muse, got %s", body)
+	}
+	if !strings.Contains(body, `"owned_by":"oc/chat"`) || !strings.Contains(body, `"owned_by":"oc/responses"`) {
+		t.Fatalf("models should have owned_by per channel, got %s", body)
 	}
 }
 
@@ -90,7 +93,7 @@ func TestShortAlias_Ambiguous(t *testing.T) {
 		t.Fatalf("ambiguous error should contain 'ambiguous', got %s", w.Body.String())
 	}
 
-	// models list should NOT contain short alias for dup
+	// models list should have bare dup with two providers, no short alias
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("GET", "/v1/models", nil)
 	NewProxyRouter().ServeHTTP(w2, req2)
@@ -98,7 +101,15 @@ func TestShortAlias_Ambiguous(t *testing.T) {
 	if strings.Contains(body, `"id":"oc/dup"`) {
 		t.Fatalf("ambiguous dup should not expose short alias oc/dup, got %s", body)
 	}
-	if !strings.Contains(body, "oc/chat/dup") || !strings.Contains(body, "oc/responses/dup") {
-		t.Fatalf("full 3-segment dup should exist, got %s", body)
+	// Should have bare dup twice with different owned_by
+	if !strings.Contains(body, `"id":"dup"`) {
+		t.Fatalf("bare dup should exist, got %s", body)
+	}
+	if !strings.Contains(body, `"owned_by":"oc/chat"`) || !strings.Contains(body, `"owned_by":"oc/responses"`) {
+		t.Fatalf("bare dup should have both channels, got %s", body)
+	}
+	// Full 3-segment should not exist after bare migration
+	if strings.Contains(body, "oc/chat/dup") && strings.Contains(body, `"id":"oc/chat/dup"`) {
+		t.Fatalf("should not have prefixed 3-segment after bare, got %s", body)
 	}
 }
