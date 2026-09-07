@@ -407,6 +407,15 @@ var generatedKeys = map[string]bool{
 // MergeGatewayExtra merges non-generated provider and model fields from current
 // into the proposed providers wrapper.
 func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]interface{} {
+	return mergeGatewayExtra(current, proposed, nil)
+}
+
+// MergeGatewayExtraForConfig also recognizes legacy provider keys derived from config.
+func MergeGatewayExtraForConfig(cfg config.PiSwitchConfig, current, proposed map[string]interface{}) map[string]interface{} {
+	return mergeGatewayExtra(current, proposed, managedProviderKeys(cfg))
+}
+
+func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[string]bool) map[string]interface{} {
 	if current == nil {
 		return proposed
 	}
@@ -491,9 +500,101 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 		propMap["models"] = propModels
 		mergedProvs[key] = propMap
 	}
+	mergeLegacyProviderModels(curProvs, mergedProvs, managed)
 	return merged
 }
 
+func mergeLegacyProviderModels(current, proposed map[string]interface{}, managed map[string]bool) {
+	targetByID := map[string]string{}
+	ambiguous := map[string]bool{}
+	for providerKey, raw := range proposed {
+		if providerKey != gatewayResponsesProvider && providerKey != gatewayChatProvider {
+			continue
+		}
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		models, _ := entry["models"].([]interface{})
+		for _, rawModel := range models {
+			model, ok := rawModel.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			id, _ := model["id"].(string)
+			if id == "" {
+				continue
+			}
+			if previous, exists := targetByID[id]; exists && previous != providerKey {
+				delete(targetByID, id)
+				ambiguous[id] = true
+				continue
+			}
+			if !ambiguous[id] {
+				targetByID[id] = providerKey
+			}
+		}
+	}
+	for key, raw := range current {
+		if key == gatewayResponsesProvider || key == gatewayChatProvider {
+			continue
+		}
+		legacy, ok := raw.(map[string]interface{})
+		if !ok || !isPiSwitchProvider(key, legacy, managed) {
+			continue
+		}
+		models, _ := legacy["models"].([]interface{})
+		for _, rawModel := range models {
+			oldModel, ok := rawModel.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			id, _ := oldModel["id"].(string)
+			if slash := strings.LastIndex(id, "/"); slash >= 0 {
+				id = id[slash+1:]
+			}
+			targetKey, ok := targetByID[id]
+			if !ok {
+				continue
+			}
+			targetEntry, ok := proposed[targetKey].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			targetModels, _ := targetEntry["models"].([]interface{})
+			for _, rawTarget := range targetModels {
+				targetModel, ok := rawTarget.(map[string]interface{})
+				if !ok || targetModel["id"] != id {
+					continue
+				}
+				mergeLegacyModelFields(targetModel, oldModel)
+			}
+		}
+	}
+}
+
+func mergeLegacyModelFields(target, legacy map[string]interface{}) {
+	generated := map[string]bool{"id": true, "contextWindow": true, "maxTokens": true, "cost": true, "input": true, "reasoning": true, "name": true}
+	for field, oldValue := range legacy {
+		if generated[field] {
+			continue
+		}
+		newValue, exists := target[field]
+		if !exists {
+			target[field] = oldValue
+			continue
+		}
+		oldMap, oldOK := oldValue.(map[string]interface{})
+		newMap, newOK := newValue.(map[string]interface{})
+		if oldOK && newOK {
+			for key, value := range oldMap {
+				if _, exists := newMap[key]; !exists {
+					newMap[key] = value
+				}
+			}
+		}
+	}
+}
 func managedProviderKeys(cfg config.PiSwitchConfig) map[string]bool {
 	keys := map[string]bool{}
 	for name, prof := range cfg.Profiles {
@@ -522,22 +623,25 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	path := ModelsPath()
 	dir := filepath.Dir(path)
 	_ = os.MkdirAll(dir, 0755)
-	provs, ok := edited["providers"].(map[string]interface{})
-	if !ok {
+	var current map[string]interface{}
+	if currentBytes, err := os.ReadFile(path); err == nil {
+		var loaded map[string]interface{}
+		if json.Unmarshal(currentBytes, &loaded) == nil {
+			current = loaded
+		}
+	}
+	mergedEdited := MergeGatewayExtraForConfig(cfg, current, edited)
+	provs := getProviders(mergedEdited)
+	if provs == nil {
 		return fmt.Errorf("gateway.providers is required")
 	}
 
 	mergedProvs := map[string]interface{}{}
 	managed := managedProviderKeys(cfg)
-	if currentBytes, err := os.ReadFile(path); err == nil {
-		var current map[string]interface{}
-		if json.Unmarshal(currentBytes, &current) == nil {
-			if currentProvs := getProviders(current); currentProvs != nil {
-				for key, value := range currentProvs {
-					if !isPiSwitchProvider(key, value, managed) {
-						mergedProvs[key] = value
-					}
-				}
+	if currentProvs := getProviders(current); currentProvs != nil {
+		for key, value := range currentProvs {
+			if !isPiSwitchProvider(key, value, managed) {
+				mergedProvs[key] = value
 			}
 		}
 	}
@@ -551,6 +655,7 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+
 }
 
 func gatewayProviderForAPI(api string) string {

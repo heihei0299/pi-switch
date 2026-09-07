@@ -1608,7 +1608,7 @@ func handleGatewayPreview(c *gin.Context) {
 		curWrapper = map[string]interface{}{"providers": map[string]interface{}{}}
 	}
 	// Normalize proposed with current's extra keys (compat/headers etc)
-	mergedWrapper := gateway.MergeGatewayExtra(curWrapper, proposedWrapper)
+	mergedWrapper := gateway.MergeGatewayExtraForConfig(cfg, curWrapper, proposedWrapper)
 	summary := enrichProposedModels(mergedWrapper)
 	pending := gateway.ComputePendingCount(curWrapper, mergedWrapper)
 	groups, removed := gateway.BuildPreviewGroups(cfg, curWrapper, mergedWrapper)

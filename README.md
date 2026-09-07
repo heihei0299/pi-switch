@@ -257,6 +257,7 @@ Requests are routed by the model name in the request body — no out-of-band sta
 - **Bare model routing** — `"model": "gpt-5.4"` resolves to the unique exposed supplier/channel; duplicate exposed IDs are rejected by gateway validation and unresolved duplicates return an ambiguity error
 - **Fixed gateway providers** — pi sees at most `pi-switch-res` and `pi-switch-chat`; their model lists are aggregated by the Channel API contract
 - **Gateway validation** — unsupported Channel APIs are skipped with a preview diagnostic; duplicate exposed bare IDs and additional providers using `pi-switch-proxy` are rejected atomically, while third-party providers remain untouched
+- **Legacy provider migration** — the first fixed-provider publish removes old pi-switch Supplier/Channel entries, migrates uniquely owned model-level fields, prioritizes existing fixed-provider edits, and keeps third-party providers
 - **Source routing** — the proxy keeps Supplier/Channel credentials and routes each bare model id to its unique exposed source
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token, as do Responses↔Chat cross-format routes (converted both directions); upstream response headers (Content-Type, etc.) are preserved
