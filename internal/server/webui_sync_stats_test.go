@@ -248,3 +248,56 @@ func TestWebUISync_Stats_05_CacheRateEdge(t *testing.T) {
 		}
 	}
 }
+
+func TestWebUISync_Stats_SessionScanPopulatesRecentConversation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cleanup := setupWebUISyncDB(t)
+	defer cleanup()
+
+	sessionsDir := filepath.Join(t.TempDir(), "sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	t.Setenv("PI_AGENT_SESSIONS", sessionsDir)
+	now := time.Now().UTC()
+	ts := now.Format(time.RFC3339Nano)
+	const sessionID = "session-for-stats"
+	sessionJSONL := fmt.Sprintf("{\"type\":\"session\",\"id\":%q,\"cwd\":\"/tmp/project\",\"timestamp\":%q}\n{\"type\":\"session_info\",\"name\":\"stats session\"}\n{\"type\":\"message\",\"timestamp\":%q,\"modelId\":\"muse-spark-1.2-contributor\"}\n", sessionID, ts, ts)
+	if err := os.WriteFile(filepath.Join(sessionsDir, "session.jsonl"), []byte(sessionJSONL), 0644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+	insertRequestRow(t, ts, "oc", "muse-spark-1.2-contributor", 1, int64Ptr(10), int64Ptr(5), int64Ptr(0), nil, nil, "")
+
+	r := NewMgmtRouter()
+	from := now.Add(-time.Minute).UnixMilli()
+	to := now.Add(time.Minute).UnixMilli()
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", fmt.Sprintf("/api/stats?range=today&from=%d&to=%d", from, to), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("stats code %d body %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	recent, ok := resp["recentRequests"].([]interface{})
+	if !ok || len(recent) != 1 {
+		t.Fatalf("recentRequests = %#v, want one row", resp["recentRequests"])
+	}
+	row := recent[0].(map[string]interface{})
+	if row["conversationId"] != sessionID {
+		t.Fatalf("recent conversationId = %v, want %s", row["conversationId"], sessionID)
+	}
+	if row["conversationName"] != "stats session" {
+		t.Fatalf("recent conversationName = %v, want stats session", row["conversationName"])
+	}
+	conversations, ok := resp["byConversation"].([]interface{})
+	if !ok || len(conversations) != 1 {
+		t.Fatalf("byConversation = %#v, want one row", resp["byConversation"])
+	}
+	conversation := conversations[0].(map[string]interface{})
+	if conversation["conversationId"] != sessionID {
+		t.Fatalf("conversation id = %v, want %s", conversation["conversationId"], sessionID)
+	}
+}

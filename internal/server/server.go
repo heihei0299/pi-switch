@@ -2356,6 +2356,7 @@ func handleStats(c *gin.Context) {
 	}{}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	source := cfg.Settings.ConversationSource
+	sessions := sessionScanCandidates(source)
 	_ = source
 	var recent []map[string]interface{}
 	for _, r := range all {
@@ -2454,11 +2455,14 @@ func handleStats(c *gin.Context) {
 			}
 		}
 		// byConversation (only if source != off, and need effective id)
+		effID, effName := "", ""
 		if source != "off" {
-			effID, effName := effectiveConversationID(r.ConvID, r.ConvName, r.Provider, r.Model, r.TS, source)
+			effID, effName = effectiveConversationID(r.ConvID, r.ConvName, r.Provider, r.Model, r.TS, source, sessions)
 			if effID == "" {
 				effID = "unlabeled"
 			}
+		}
+		if source != "off" {
 			agg, ok := convAgg[effID]
 			if !ok {
 				agg = &struct {
@@ -2565,12 +2569,18 @@ func handleStats(c *gin.Context) {
 			m["cost"] = r.Cost.Float64
 			m["costTotal"] = r.Cost.Float64
 		}
-		if r.ConvID.Valid {
+		if source != "off" {
+			m["conversationId"] = effID
+			m["conversation_id"] = effID
+			if effName != "" {
+				m["conversationName"] = effName
+				m["conversation_name"] = effName
+			}
+		} else if r.ConvID.Valid {
 			m["conversationId"] = r.ConvID.String
 			m["conversation_id"] = r.ConvID.String
-			// effective id for display? Keep original
 		}
-		if r.ConvName.Valid {
+		if r.ConvName.Valid && r.ConvName.String != "" && (source == "off" || effName == "") {
 			m["conversationName"] = r.ConvName.String
 			m["conversation_name"] = r.ConvName.String
 		}
@@ -2721,6 +2731,7 @@ func handleStatsConversations(c *gin.Context) {
 		defer rows.Close()
 		cfg, _, _ := config.LoadConfigAtPath(configPath())
 		source := cfg.Settings.ConversationSource
+		sessions := sessionScanCandidates(source)
 		if source == "off" {
 			c.JSON(200, gin.H{"conversations": []interface{}{}, "total": 0, "byConversation": []interface{}{}})
 			return
@@ -2745,7 +2756,7 @@ func handleStatsConversations(c *gin.Context) {
 			if !inWindow(ts.String, w) {
 				continue
 			}
-			effID, effName := effectiveConversationID(convID, convName, provider, model, ts, source)
+			effID, effName := effectiveConversationID(convID, convName, provider, model, ts, source, sessions)
 			if effID == "" {
 				effID = "unlabeled"
 			}
@@ -2883,6 +2894,7 @@ func handleConversationRequests(c *gin.Context) {
 		defer rows.Close()
 		cfg, _, _ := config.LoadConfigAtPath(configPath())
 		source := cfg.Settings.ConversationSource
+		sessions := sessionScanCandidates(source)
 		var matched []map[string]interface{}
 		for rows.Next() {
 			var ts, provider, model, convID, convName sql.NullString
@@ -2890,7 +2902,7 @@ func handleConversationRequests(c *gin.Context) {
 			var cost sql.NullFloat64
 			var latency sql.NullInt64
 			_ = rows.Scan(&ts, &provider, &model, &succ, &pt, &ct, &cached, &reasoning, &cost, &convID, &convName, &latency)
-			effID, _ := effectiveConversationID(convID, convName, provider, model, ts, source)
+			effID, _ := effectiveConversationID(convID, convName, provider, model, ts, source, sessions)
 			if effID != id {
 				continue
 			}
@@ -4226,7 +4238,14 @@ func handleDumps(c *gin.Context) {
 	c.JSON(200, out)
 }
 
-func effectiveConversationID(convID, convName sql.NullString, provider, model, ts sql.NullString, source string) (string, string) {
+func sessionScanCandidates(source string) map[string]scan.PiSession {
+	if source != "sessionScan" {
+		return nil
+	}
+	return scan.Scan()
+}
+
+func effectiveConversationID(convID, convName sql.NullString, provider, model, ts sql.NullString, source string, sessions map[string]scan.PiSession) (string, string) {
 	if source == "off" {
 		return "unlabeled", ""
 	}
@@ -4240,7 +4259,9 @@ func effectiveConversationID(convID, convName sql.NullString, provider, model, t
 	if source == "proxy" {
 		return "unlabeled", ""
 	}
-	sessions := scan.Scan()
+	if sessions == nil {
+		sessions = sessionScanCandidates(source)
+	}
 	if !ts.Valid {
 		return "unlabeled", ""
 	}
