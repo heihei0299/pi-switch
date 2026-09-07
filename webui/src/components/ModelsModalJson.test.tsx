@@ -110,4 +110,28 @@ describe("ModelsModal JSON dual editor — T2", () => {
     await waitFor(() => expect(screen.getByDisplayValue("m3")).toBeInTheDocument());
     expect(screen.getByDisplayValue("M3")).toBeInTheDocument();
   });
+  it("uses the main channel for a legacy single unnamed upstream", async () => {
+    const updateModels = vi.spyOn(api, "updateModels").mockResolvedValue({ ok: true } as any);
+    const expose = vi.spyOn(api, "expose").mockResolvedValue({ ok: true } as any);
+    const refresh = vi.fn(async () => {});
+    renderPanel(stateWithProfile({
+      upstreams: [{
+        api: "openai-completions",
+        baseUrl: "https://example.test/v1",
+        apiKey: "key",
+        models: [{ id: "m1", name: "M1", input: ["text"], contextWindow: 1000, maxTokens: 100 }],
+        exposedModels: ["m1"],
+      } as any],
+    }), refresh);
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+    await waitFor(() => expect(screen.getByText(/Model config/)).toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "main" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("m1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateModels).toHaveBeenCalled());
+    expect((updateModels.mock.calls[0] as any[])[2]).toBe("main");
+    await waitFor(() => expect(expose).toHaveBeenCalled());
+    expect((expose.mock.calls[0] as any[])[2]).toBe("main");
+  });
+
 });

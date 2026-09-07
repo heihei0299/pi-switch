@@ -702,20 +702,34 @@ function ModelsModal({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
-  // 模型池始终按具名 channel 编辑。
+  // 正常配置按具名 channel 编辑；旧单渠道配置临时映射到 main，保存时由后端完成迁移。
+  const legacySingleChannel = useMemo(() => {
+    const ups = profile.upstreams ?? [];
+    return ups.length === 0 || (ups.length === 1 && !(ups[0].name ?? "").trim());
+  }, [profile]);
   const channelNames = useMemo(() => {
     const ups = profile.upstreams ?? [];
-    if (ups.length === 0) return [];
+    if (legacySingleChannel) return ["main"];
     const names = ups.map((u) => (u.name ?? "").trim());
     if (names.some((n) => !n)) return [];
     return names;
-  }, [profile]);
+  }, [profile, legacySingleChannel]);
   const [activeChannel, setActiveChannel] = useState<string>(() => "");
   const [pools, setPools] = useState<Record<string, { drafts: ModelDraft[]; exposed: Set<string> }>>(() => {
     const init: Record<string, { drafts: ModelDraft[]; exposed: Set<string> }> = {};
-    for (const u of profile.upstreams ?? []) {
+    const ups = profile.upstreams ?? [];
+    if (legacySingleChannel) {
+      const u = ups[0];
+      const models = u?.models ?? ((profile as any).models ?? []);
+      const exposedModels = u?.exposedModels ?? ((profile as any).exposedModels ?? []);
+      init.main = {
+        drafts: models.map((m: ModelEntry) => draftFromEntry(m)),
+        exposed: new Set(exposedModels),
+      };
+    }
+    for (const u of ups) {
       const n = (u.name ?? "").trim();
-      if (!n) continue;
+      if (!n || legacySingleChannel) continue;
       init[n] = {
         drafts: (u.models ?? []).map((m) => draftFromEntry(m as ModelEntry)),
         exposed: new Set(u.exposedModels ?? []),
@@ -723,7 +737,7 @@ function ModelsModal({
     }
     return init;
   });
-  const poolKey = activeChannel || channelNames?.[0] || "";
+  const poolKey = activeChannel || channelNames[0] || "";
   const drafts = pools[poolKey]?.drafts ?? [];
   const exposed = pools[poolKey]?.exposed ?? new Set<string>();
   function setDrafts(next: ModelDraft[] | ((prev: ModelDraft[]) => ModelDraft[])) {
@@ -747,7 +761,7 @@ function ModelsModal({
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const [text, setText] = useState<string>(() => {
     try {
-      return JSON.stringify((profile.upstreams?.[0]?.models ?? []).map((m) => modelPreview(draftFromEntry(m as ModelEntry))), null, 2);
+      return JSON.stringify(drafts.map((d) => modelPreview(d)), null, 2);
     } catch {
       return "[]";
     }
@@ -1036,7 +1050,7 @@ function ModelsModal({
             )}
           </div>
         </div>
-        {channelNames && (
+        {channelNames.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="渠道">
             {channelNames.map((c) => {
               const n = pools[c]?.drafts.length ?? 0;

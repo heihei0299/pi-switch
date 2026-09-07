@@ -68,6 +68,34 @@ func TestChannelModels_RequiresChannel(t *testing.T) {
 	}
 }
 
+func TestChannelModels_LegacyUnnamedSingleMigratesToMain(t *testing.T) {
+	dir := t.TempDir()
+	p := writeChannelConfig(t, dir, `{"version":2,"profiles":{"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://a","apiKey":"k","upstreams":[{"api":"openai-completions","baseUrl":"http://a","apiKey":"k","models":[{"id":"old","contextWindow":100,"maxTokens":10}],"exposedModels":["old"]}]}},"settings":{}}`)
+	r := NewMgmtRouter()
+	if code := putModels(t, r, "/api/profiles/sup/models", `{"channel":"main","models":[{"id":"m1","contextWindow":100,"maxTokens":10}]}`); code != 200 {
+		t.Fatalf("legacy channel save code = %d, want 200", code)
+	}
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/profiles/sup/expose?channel=main", strings.NewReader(`{"modelIds":["m1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("legacy channel expose code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	cfg := loadCfg(t, p)
+	prof := cfg.Profiles["sup"]
+	if got := prof.ChannelName(0); got != "main" {
+		t.Fatalf("migrated channel name = %q, want main", got)
+	}
+	models, exposed := prof.ChannelView("main")
+	if len(models) != 1 || models[0].ID != "m1" {
+		t.Fatalf("migrated models = %v, want [m1]", models)
+	}
+	if len(exposed) != 1 || exposed[0] != "m1" {
+		t.Fatalf("migrated exposed = %v, want [m1]", exposed)
+	}
+}
+
 func TestChannelValidation_PartitionPoolsChecked(t *testing.T) {
 	// dup within channel pool → 400
 	dup := `{"name":"pp","profile":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://a","apiKey":"k","models":[],"upstreams":[{"name":"c1","api":"openai-completions","baseUrl":"http://a","apiKey":"k","models":[{"id":"x"},{"id":"x"}]}]}}`

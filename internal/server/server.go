@@ -868,7 +868,7 @@ func truncateForTest(b []byte) string {
 // credentials, merges new ids (enriched) into that channel's pool only and
 // persists. Existing entries are never modified; other channels untouched.
 func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name string, prof config.ProviderProfile, channel string) {
-	idx := channelIndex(prof, channel)
+	idx := ensureMutationChannel(&prof, channel)
 	if idx < 0 {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
 		return
@@ -1217,7 +1217,7 @@ func handlePutModels(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "channel is required"})
 		return
 	}
-	idx := channelIndex(prof, body.Channel)
+	idx := ensureMutationChannel(&prof, body.Channel)
 	if idx < 0 {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", body.Channel)})
 		return
@@ -1258,7 +1258,7 @@ func handlePutExpose(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "channel is required"})
 		return
 	}
-	idx := channelIndex(prof, channel)
+	idx := ensureMutationChannel(&prof, channel)
 	if idx < 0 {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
 		return
@@ -1411,6 +1411,53 @@ func isValidChannelName(name string) bool {
 		return false
 	}
 	return true
+}
+
+// ensureMutationChannel resolves a named channel and upgrades a legacy single unnamed upstream to main.
+func ensureMutationChannel(prof *config.ProviderProfile, channel string) int {
+	if channel == "" {
+		return -1
+	}
+	if idx := channelIndex(*prof, channel); idx >= 0 {
+		return idx
+	}
+	if channel != "main" || len(prof.Upstreams) > 1 {
+		return -1
+	}
+	if len(prof.Upstreams) == 0 {
+		name := "main"
+		prof.Upstreams = []config.Upstream{{
+			Name:          &name,
+			API:           prof.API,
+			ResponsesMode: prof.ResponsesMode,
+			BaseURL:       prof.BaseURL,
+			APIKey:        prof.APIKey,
+			Headers:       prof.Headers,
+		}}
+		return 0
+	}
+	if prof.ChannelName(0) != "" {
+		return -1
+	}
+	name := "main"
+	u := &prof.Upstreams[0]
+	u.Name = &name
+	if u.API == "" {
+		u.API = prof.API
+	}
+	if u.ResponsesMode == "" {
+		u.ResponsesMode = prof.ResponsesMode
+	}
+	if u.BaseURL == "" {
+		u.BaseURL = prof.BaseURL
+	}
+	if u.APIKey == "" {
+		u.APIKey = prof.APIKey
+	}
+	if u.Headers == nil {
+		u.Headers = prof.Headers
+	}
+	return 0
 }
 
 // channelIndex returns the upstream index of the named channel, or -1.
