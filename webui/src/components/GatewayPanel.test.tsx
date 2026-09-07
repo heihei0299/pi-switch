@@ -331,7 +331,40 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     expect(allIds).not.toContain("m1");
     expect(allIds).toHaveLength(0);
   });
+  it("uses canonical proposed draft when current gateway contains legacy prefixed ids", async () => {
+    const legacyCurrent = {
+      "pi-switch": {
+        api: "openai-responses",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{ id: "oc/responses/gpt-5.6-luna" }],
+        proxy: false,
+      },
+    };
+    const canonicalProposed = {
+      "oc/responses": {
+        api: "openai-responses",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{ id: "gpt-5.6-luna" }],
+        proxy: false,
+      },
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue({
+      current: legacyCurrent,
+      proposed: canonicalProposed,
+      conflicts: [],
+      pending_count: 1,
+      groups: [],
+      removed: ["pi-switch/oc/responses/gpt-5.6-luna"],
+    } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    const ids = (screen.getAllByLabelText("Model ID") as HTMLInputElement[]).map((input) => input.value);
+    expect(ids).toContain("gpt-5.6-luna");
+    expect(ids).not.toContain("oc/responses/gpt-5.6-luna");
+    expect(screen.queryByText(/must not contain/)).not.toBeInTheDocument();
+  });
 });
+
 
 describe("GatewayPanel unchecked persistence", () => {
   beforeEach(() => {

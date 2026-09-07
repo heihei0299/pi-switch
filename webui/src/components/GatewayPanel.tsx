@@ -15,6 +15,13 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
+function hasLegacyGatewayModelIds(value: Record<string, unknown> | null): boolean {
+  return Object.values(value ?? {}).some((entry) => {
+    const models = asRecord(entry).models;
+    return Array.isArray(models) && models.some((model) => String(asRecord(model).id ?? "").includes("/"));
+  });
+}
+
 const LAST_PUBLISH_KEY = "pi-switch-gateway-last-publish";
 
 export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
@@ -50,7 +57,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setConflicts(conf);
       if (typeof pending === "number") setBackendPending(pending);
       else setBackendPending(null);
-      const src = (cur && Object.keys(cur).length > 0 ? cur : prop ?? {}) as Record<string, unknown>;
+      const src = (cur && Object.keys(cur).length > 0 && !hasLegacyGatewayModelIds(cur) ? cur : prop ?? {}) as Record<string, unknown>;
       setDraft(src);
       let draftModels: unknown[] = [];
       let propIds: string[] = [];
