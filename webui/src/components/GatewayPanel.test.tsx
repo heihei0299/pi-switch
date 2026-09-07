@@ -57,7 +57,10 @@ describe("GatewayPanel gateway-sep", () => {
     const refresh = vi.fn(async () => {});
     renderGateway(refresh);
     await waitFor(() => expect(screen.getByText(/待发布数: 1/)).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    // raw JSON 同步后按钮才可点，避免负载高时点到校验失败的旧状态
+    const applyBtn = screen.getByRole("button", { name: "应用到 Pi" });
+    await waitFor(() => expect(applyBtn).toBeEnabled());
+    fireEvent.click(applyBtn);
     await waitFor(() => expect(apply).toHaveBeenCalled());
     // apply payload should be parseable gateway
     const payload = apply.mock.calls[0][0] as any;
@@ -169,31 +172,33 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     expect(screen.getByText("ghost/x")).toBeInTheDocument();
   });
 
-  it("unchecking a candidate excludes it from the apply payload", async () => {
+  it("pending candidates default unchecked; checking includes them in the apply payload", async () => {
     renderGrouped();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     vi.spyOn(api, "getState").mockResolvedValue({ settings: { gatewayApi: "openai-completions", proxy: { host: "127.0.0.1", port: 43112 } } } as any);
+    // 已发布默认勾选，没发布的默认不勾选
+    expect(screen.getByRole("checkbox", { name: /sup\/main\/m1/ })).toBeChecked();
     const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
-    expect(box).toBeChecked();
+    expect(box).not.toBeChecked();
     fireEvent.click(box);
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
     const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
     expect(ids).toContain("sup/main/m1");
-    expect(ids).not.toContain("sup/bk/b1");
+    expect(ids).toContain("sup/bk/b1");
     expect(ids).not.toContain("ghost/x");
   });
 
   it("subset pending follows the selection", async () => {
     renderGrouped();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
-    // 全选：b1 待发布 → 子集待发布 1
-    expect(screen.getByText(/勾选子集待发布：1/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ }));
-    // 取消 b1：子集与已注入一致 → 0
+    // 默认只勾选已发布：子集与已注入一致 → 0
     await waitFor(() => expect(screen.getByText(/勾选子集待发布：0/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ }));
+    // 勾选 b1：子集多出待发布 → 1
+    await waitFor(() => expect(screen.getByText(/勾选子集待发布：1/)).toBeInTheDocument());
   });
 });
 
@@ -262,9 +267,10 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     // 发布载荷保持全限定形态，不再把剥离后的短 id 写回网关
     expect(ids).toContain("oc/chat/mimo-v2.5");
     expect(ids).toContain("oc/responses/muse-spark-1.3-contributor");
-    expect(ids).toContain("oc/chat/omen-alpha");
+    // omen 只在提议里、没发布过 → 默认不勾选，不进载荷（到分组里勾选才会发）
     // 历史短 id 默认排除（后端 removed），不再复活
     expect(ids).not.toContain("oc/mimo-v2.5");
+    expect(ids).not.toContain("oc/chat/omen-alpha");
   });
 
   it("deleting a draft row removes it from the apply payload", async () => {
@@ -336,29 +342,31 @@ describe("GatewayPanel unchecked persistence", () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(persistPreview as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
-    const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
+    const box = screen.getByRole("checkbox", { name: /sup\/main\/m1/ });
     expect(box).toBeChecked();
+    // 待发布默认不勾选
+    expect(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ })).not.toBeChecked();
     fireEvent.click(box);
     expect(box).not.toBeChecked();
     // 取消（重载）后依然不勾选：排除记忆跨 load 生效
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: /sup\/main\/m1/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /sup\/main\/m1/ })).toBeChecked();
   });
 
   it("re-checking clears the persisted exclusion", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(persistPreview as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
-    const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
+    const box = screen.getByRole("checkbox", { name: /sup\/main\/m1/ });
     fireEvent.click(box);
     expect(box).not.toBeChecked();
     fireEvent.click(box);
     expect(box).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
-    expect(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /sup\/main\/m1/ })).toBeChecked();
   });
 });
 
@@ -430,5 +438,20 @@ describe("GatewayPanel display-to-full id mapping", () => {
     const payload = apply.mock.calls[0][0] as any;
     const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
     expect(ids).toEqual(["oc/chat/omen-alpha"]);
+  });
+
+  it("typing a brand-new id opts it in for publish", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(editPreview as any);
+    const apply = mockApply();
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    const input = screen.getByLabelText("Model ID") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "oc/chat/custom-new" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
+    // 手工输入是显式意图：新 id 自动纳入本次发布
+    expect(ids).toContain("oc/chat/custom-new");
   });
 });

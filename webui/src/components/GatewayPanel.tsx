@@ -44,7 +44,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     try { return typeof window !== "undefined" ? window.localStorage?.getItem(LAST_PUBLISH_KEY) ?? null : null; } catch { return null; }
   });
   const [backendPending, setBackendPending] = useState<number | null>(null);
-  // 二次勾选：按供应商/渠道分组的发布选择（网关 id 粒度），默认全选。
+  // 二次勾选：按供应商/渠道分组的发布选择（网关 id 粒度），默认只勾选已发布。
   const [groups, setGroups] = useState<PreviewGroup[]>([]);
   const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -72,22 +72,29 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
       // 草稿 id 保持网关全限定形态（supplier/channel/model）：仅渲染层做短显示。
       // 曾在此剥掉 channel 段，导致三段式 id 与历史短 id 撞车、发布又把短 id 写回网关。
-      // 分组与二次勾选：groups/removed 透出（旧后端缺省为空），默认全选并集。
-      // checked 全程使用网关全限定 id，与分组复选框的键一致；后端 removed 的
-      // 历史 id 默认排除，否则每次发布都会把待清理条目写回去。
+      // 分组与二次勾选：groups/removed 透出（旧后端缺省为空）。
+      // 勾选规则：默认只勾选已发布（已注入网关）的 id，没发布的统一不勾选；
+      // 显式动作（打勾/改 ID/改 raw JSON）才加入，checked 全程使用全限定 id。
       const propList = asRecord(prop ?? {}).models;
       const propArr = Array.isArray(propList) ? propList : [];
       const propIds = propArr.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
       const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      const curList = asRecord(cur ?? {}).models;
+      const curArr = Array.isArray(curList) ? curList : [];
+      const publishedIds = new Set(
+        curArr.map((m) => String((m as any)?.id ?? "")).filter(Boolean),
+      );
       const removedList = (preview as any).removed;
       const removedArr = Array.isArray(removedList) ? removedList.map((id) => String(id)) : [];
       const removedSet = new Set(removedArr);
-      // 用户的历史取消勾选：跨 load 持久，新 id 默认仍勾选。
+      // 用户的历史取消勾选：跨 load 持久。
       const knownIds = new Set([...propIds, ...draftIds]);
       const persistedUnchecked = loadUncheckedIds(knownIds);
       setChecked(
         new Set(
-          [...propIds, ...draftIds].filter((id) => !removedSet.has(id) && !persistedUnchecked.has(id)),
+          [...propIds, ...draftIds].filter(
+            (id) => publishedIds.has(id) && !removedSet.has(id) && !persistedUnchecked.has(id),
+          ),
         ),
       );
       setGroups(Array.isArray((preview as any).groups) ? ((preview as any).groups as PreviewGroup[]) : []);
@@ -199,19 +206,14 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     }, 50);
   }
 
-  // 新出现的模型 id 默认纳入发布选择；用户显式取消的不再补回。
+  // 显式 raw JSON 编辑的 id 视为用户意图，纳入发布选择（跳过集除外）。
+  // 提议/草稿 id 永不自动补勾：没发布的默认不勾选，只认打勾与改 ID。
   const skipAutoCheck = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const ids = new Set<string>();
-    for (const d of drafts) if (d.id.trim()) ids.add(d.id);
-    const propModels = asRecord(proposed ?? {}).models;
-    if (Array.isArray(propModels)) {
-      for (const m of propModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
-    }
     const rawModels = rawValidation.value?.models;
-    if (Array.isArray(rawModels)) {
-      for (const m of rawModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
-    }
+    if (!Array.isArray(rawModels)) return;
+    const ids = new Set<string>();
+    for (const m of rawModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
     ids.delete("");
     setChecked((prev) => {
       let changed = false;
@@ -219,7 +221,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       for (const id of ids) if (!next.has(id) && !skipAutoCheck.current.has(id)) { next.add(id); changed = true; }
       return changed ? next : prev;
     });
-  }, [drafts, proposed, rawValidation.value]);
+  }, [rawValidation.value]);
 
 
   // 输入框短显示 ↔ 全限定数据的映射基准：提议与已注入的全部全量 id。
@@ -238,9 +240,16 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }, [proposed, current]);
 
   // 草稿行 id 写回：输入框给的是短显示文本，映射回全限定 id 再落草稿。
+  // 手工改 ID 是显式意图，直接纳入勾选（没发布的默认不勾选只针对自动行为）。
   function handleDraftChange(prev: ModelDraft, next: ModelDraft) {
     if (next.id !== prev.id) {
       next = { ...next, id: resolveGatewayId(next.id, prev.id, knownGatewayIds) };
+      if (next.id.trim()) {
+        const checkedId = next.id;
+        skipAutoCheck.current.delete(checkedId);
+        removeUncheckedId(checkedId);
+        setChecked((prevChecked) => new Set(prevChecked).add(checkedId));
+      }
     }
     const mapped = next;
     setDrafts((drafts) => drafts.map((x) => (x.key === prev.key ? mapped : x)));
