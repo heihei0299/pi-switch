@@ -3525,6 +3525,25 @@ func resolveUserAgent(prof config.ProviderProfile, cfg config.PiSwitchConfig) st
 	return "curl/8.5.0"
 }
 
+func applyOpenCodeSessionAffinityHeader(baseURL string, incoming, outgoing http.Header) {
+	if !strings.Contains(strings.ToLower(baseURL), "opencode.ai") {
+		return
+	}
+	sessionID := incoming.Get("x-opencode-session")
+	if sessionID == "" {
+		sessionID = incoming.Get("x-session-affinity")
+	}
+	if sessionID == "" {
+		sessionID = incoming.Get("x-client-request-id")
+	}
+	if sessionID != "" {
+		outgoing.Set("x-opencode-session", sessionID)
+	}
+	if client := incoming.Get("x-opencode-client"); client != "" {
+		outgoing.Set("x-opencode-client", client)
+	}
+}
+
 func handleChatCompletions(c *gin.Context) {
 	start := time.Now()
 	raw, _ := io.ReadAll(c.Request.Body)
@@ -3667,6 +3686,7 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
 	client := &http.Client{Timeout: 30 * time.Second}
+	applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req.Header)
 	resp, err := client.Do(req)
 	if err != nil {
 		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), u)
@@ -3921,6 +3941,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
+	applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req.Header)
 	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(req)
 	if err != nil {
