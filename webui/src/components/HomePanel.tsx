@@ -40,7 +40,7 @@ export function HomePanel({
       </SectionTitle>
 
       {/* Primary Metrics Grid */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatCard
           label={t("Profiles")}
           value={String(profiles.length)}
@@ -53,14 +53,6 @@ export function HomePanel({
           subtext={t("ready for gateway")}
           tone="sky"
           onClick={() => onNavigate("gateway")}
-        />
-        <StatCard
-          label={t("Current")}
-          value={state.current || "—"}
-          subtext={currentProfile?.api || t("No profile selected")}
-          tone="amber"
-          monoValue
-          onClick={() => onNavigate("profiles")}
         />
         <StatCard
           label={t("Proxy")}
