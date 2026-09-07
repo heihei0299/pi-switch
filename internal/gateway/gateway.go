@@ -27,6 +27,92 @@ const (
 	gatewayChatProvider      = "pi-switch-chat"
 )
 
+// GatewayDiagnostic explains why a configured channel is not published.
+type GatewayDiagnostic struct {
+	Code     string `json:"code"`
+	Supplier string `json:"supplier"`
+	Channel  string `json:"channel"`
+	API      string `json:"api"`
+	Message  string `json:"message"`
+}
+
+// BuildGatewayDiagnostics reports configured channels that cannot belong to one of
+// the two fixed gateway providers.
+func BuildGatewayDiagnostics(cfg config.PiSwitchConfig) []GatewayDiagnostic {
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	diagnostics := []GatewayDiagnostic{}
+	for _, supplier := range names {
+		prof := cfg.Profiles[supplier]
+		for i, channel := range prof.Upstreams {
+			if gatewayProviderForAPI(channel.API) != "" {
+				continue
+			}
+			channelName := prof.ChannelName(i)
+			diagnostics = append(diagnostics, GatewayDiagnostic{
+				Code: "unsupported-api", Supplier: supplier, Channel: channelName, API: channel.API,
+				Message: fmt.Sprintf("%s/%s uses unsupported API %q and is skipped", supplier, channelName, channel.API),
+			})
+		}
+	}
+	return diagnostics
+}
+
+// ValidateProposedGateway enforces the fixed-provider boundary before any file write.
+func ValidateProposedGateway(cfg config.PiSwitchConfig, proposed map[string]interface{}) error {
+	provs, ok := proposed["providers"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("providers is required")
+	}
+	for key, raw := range provs {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("providers[%s] must be object", key)
+		}
+		api, _ := entry["api"].(string)
+		switch key {
+		case gatewayResponsesProvider:
+			if api != "openai-responses" {
+				return fmt.Errorf("providers[%s] must use api openai-responses", key)
+			}
+		case gatewayChatProvider:
+			if api != "openai-completions" {
+				return fmt.Errorf("providers[%s] must use api openai-completions", key)
+			}
+		default:
+			if apiKey, _ := entry["apiKey"].(string); apiKey == "pi-switch-proxy" {
+				return fmt.Errorf("providers[%s] is an unsupported third pi-switch provider", key)
+			}
+		}
+	}
+	sources := map[string][]string{}
+	for supplier, prof := range cfg.Profiles {
+		for i, channel := range prof.Upstreams {
+			channelName := prof.ChannelName(i)
+			source := supplier + "/" + channelName
+			for _, id := range channel.ExposedModels {
+				if strings.TrimSpace(id) != "" {
+					sources[id] = append(sources[id], source)
+				}
+			}
+		}
+	}
+	ids := make([]string, 0, len(sources))
+	for id, sourceList := range sources {
+		if len(sourceList) > 1 {
+			ids = append(ids, fmt.Sprintf("%s (%s)", id, strings.Join(sourceList, ", ")))
+		}
+	}
+	if len(ids) > 0 {
+		sort.Strings(ids)
+		return fmt.Errorf("duplicate exposed model ids: %s", strings.Join(ids, "; "))
+	}
+	return nil
+}
+
 func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{} {
 	host := cfg.Settings.Proxy.Host
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {

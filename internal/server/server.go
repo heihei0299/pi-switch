@@ -1612,6 +1612,14 @@ func handleGatewayPreview(c *gin.Context) {
 	summary := enrichProposedModels(mergedWrapper)
 	pending := gateway.ComputePendingCount(curWrapper, mergedWrapper)
 	groups, removed := gateway.BuildPreviewGroups(cfg, curWrapper, mergedWrapper)
+	diagnostics := gateway.BuildGatewayDiagnostics(cfg)
+	conflicts := []string{}
+	if err := gateway.ValidateProposedGateway(cfg, mergedWrapper); err != nil {
+		conflicts = append(conflicts, err.Error())
+	}
+	for _, diagnostic := range diagnostics {
+		conflicts = append(conflicts, diagnostic.Message)
+	}
 	// Response uses inner providers maps for current/proposed (nil if empty)
 	var currentForResp interface{}
 	var proposedForResp interface{}
@@ -1630,7 +1638,7 @@ func handleGatewayPreview(c *gin.Context) {
 	} else {
 		proposedForResp = nil
 	}
-	c.JSON(200, gin.H{"current": currentForResp, "proposed": proposedForResp, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed,
+	c.JSON(200, gin.H{"current": currentForResp, "proposed": proposedForResp, "conflicts": conflicts, "pending_count": pending, "groups": groups, "removed": removed,
 		"enrich": gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning}})
 }
 
@@ -1779,6 +1787,10 @@ func handlePutGateway(c *gin.Context) {
 		}
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	if err := gateway.ValidateProposedGateway(cfg, gw); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	enrichProposedModels(gw)
 	if err := gateway.Publish(cfg, gw); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -3216,6 +3228,10 @@ func handleGatewayPublish(c *gin.Context) {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
 			return
 		}
+	}
+	if err := gateway.ValidateProposedGateway(cfg, toPublish); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	enrichProposedModels(toPublish)
 	if err := gateway.Publish(cfg, toPublish); err != nil {

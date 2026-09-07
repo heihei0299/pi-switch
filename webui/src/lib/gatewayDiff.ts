@@ -164,6 +164,15 @@ export function validateGatewayJson(text: string): ValidateResult {
       if (!SUPPORTED_APIS.includes(api as string)) {
         return { ok: false, error: `gateway.providers[${key}].api is not supported: ${api}` };
       }
+      if (key === "pi-switch-res" && api !== "openai-responses") {
+        return { ok: false, error: `gateway.providers[${key}].api must be openai-responses` };
+      }
+      if (key === "pi-switch-chat" && api !== "openai-completions") {
+        return { ok: false, error: `gateway.providers[${key}].api must be openai-completions` };
+      }
+      if (key !== "pi-switch-res" && key !== "pi-switch-chat" && rec["apiKey"] === "pi-switch-proxy") {
+        return { ok: false, error: `gateway.providers[${key}] cannot use the pi-switch proxy identity` };
+      }
       const baseUrl = rec["baseUrl"];
       if (typeof baseUrl !== "string" || !baseUrl) {
         return { ok: false, error: `gateway.providers[${key}].baseUrl is required` };

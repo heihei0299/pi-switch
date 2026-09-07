@@ -25,7 +25,7 @@ func TestGatewayPublish_SubsetInjectsOnlySelected(t *testing.T) {
 	_ = p
 	r := NewMgmtRouter()
 
-	payload := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"m1","contextWindow":100,"maxTokens":10}]}}}`
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"m1","contextWindow":100,"maxTokens":10}]}}}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -42,7 +42,7 @@ func TestGatewayPublish_SubsetInjectsOnlySelected(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	provs := stored["providers"].(map[string]interface{})
-	entry := provs["sup/main"].(map[string]interface{})
+	entry := provs["pi-switch-chat"].(map[string]interface{})
 	models := entry["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("stored models = %v, want exactly [m1]", models)
