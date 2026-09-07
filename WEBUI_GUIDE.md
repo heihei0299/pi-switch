@@ -177,7 +177,7 @@ change only if the feature has a TUI screen.
 | `GET /api/backups` · `/stats` | `store::backups` · `stats` |
 | `POST /api/profiles` · `PUT /api/profiles/:name` | `config::upsert` |
 | `DELETE /api/profiles/:name` | `config::remove` |
-| `POST /api/profiles/:name/{duplicate,use,test,fetch-models}` | `config::*` |
+| `POST /api/profiles/:name/{duplicate,test,fetch-models}` | `config::*` |
 | `PUT /api/profiles/:name/{models,expose,spoof}` | `config::*` |
 | `GET /api/profiles/:name/credits` | `credits` (5s 超时, 仅主上游) |
 | `POST /api/proxy/{start,stop}` | `daemon::proxy` |

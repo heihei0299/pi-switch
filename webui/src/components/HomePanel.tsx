@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { AppState, DaemonResult } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { api } from "../api";
-import { Badge, Button, Card, SectionTitle, cx, useAction } from "./ui";
+import { Badge, Button, Card, SectionTitle, cx } from "./ui";
 import { useI18n } from "../i18n";
 
 export function HomePanel({
@@ -15,7 +15,6 @@ export function HomePanel({
   onNavigate: (k: any) => void;
 }) {
   const { t } = useI18n();
-  const run = useAction();
   const [proxy, setProxy] = useState<DaemonResult | null>(null);
   const profiles = Object.entries(state.profiles);
   const exposedCount = profiles.filter(
@@ -33,15 +32,6 @@ export function HomePanel({
     api.proxyStatus().then(setProxy).catch(() => setProxy(null));
   }, []);
 
-  const handleQuickSwitch = async (name: string) => {
-    await run(
-      async () => {
-        await api.useProfile(name);
-        await refresh();
-      },
-      `${t("Switched to")} ${name}`,
-    );
-  };
 
   return (
     <div className="space-y-5">
@@ -141,30 +131,12 @@ export function HomePanel({
               </div>
             ) : (
               <div className="py-6 text-center text-sm text-zinc-400">
-                {t("No profile selected yet.")} {t("Choose one below or create a new profile.")}
+                {t("No profile selected yet.")} {t("Create a new profile to get started.")}
               </div>
             )}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-400">{t("Quick Switch:")}</span>
-              {profiles.slice(0, 4).map(([name]) => (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => handleQuickSwitch(name)}
-                  className={cx(
-                    "rounded border px-2 py-0.5 font-mono text-[11px] transition-all cursor-pointer",
-                    state.current === name
-                      ? "border-amber-500/40 bg-amber-500/20 text-amber-200"
-                      : "border-white/10 bg-white/5 text-zinc-300 hover:border-white/20 hover:bg-white/10",
-                  )}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
+          <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-white/10 pt-3">
             <div className="flex gap-2">
               <Button variant="primary" onClick={() => onNavigate("profiles")}>
                 {t("Manage profiles")}

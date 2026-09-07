@@ -199,7 +199,6 @@ func NewMgmtRouter() *gin.Engine {
 		api.PUT("/profiles/:name", handlePutProfile)
 		api.DELETE("/profiles/:name", handleDeleteProfile)
 		api.POST("/profiles/:name/duplicate", handleDuplicateProfile)
-		api.POST("/profiles/:name/use", handleUseProfile)
 		api.POST("/profiles/:name/test", handleTestProfile)
 		api.POST("/profiles/:name/fetch-models", handleFetchModels)
 		api.PUT("/profiles/:name/models", handlePutModels)
@@ -808,17 +807,6 @@ func handleDuplicateProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
-func handleUseProfile(c *gin.Context) {
-	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	if _, ok := cfg.Profiles[name]; !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	cfg.Current = &name
-	_ = saveConfig(cfg)
-	c.JSON(200, gin.H{"ok": true, "name": name, "providerId": cfg.Settings.ProviderPrefix})
-}
 
 func handleTestProfile(c *gin.Context) {
 	name := c.Param("name")

@@ -130,17 +130,6 @@ export function ProfilesPanel({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
-                  {!isCurrent && (
-                    <Button
-                      variant="subtle"
-                      className="border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/50"
-                      onClick={() =>
-                        run(() => api.useProfile(name), `${t("Switched to")} ${name}`, refresh)
-                      }
-                    >
-                      {t("Use")}
-                    </Button>
-                  )}
                   <Button onClick={() => setModels(name)}>{t("Models")}</Button>
                   <Button onClick={() => setEditing({ name })}>{t("Edit")}</Button>
                   <ProfileCardMenu
