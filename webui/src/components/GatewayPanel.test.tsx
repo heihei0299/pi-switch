@@ -41,15 +41,6 @@ describe("GatewayPanel gateway-sep", () => {
     expect(screen.getByText(/上次发布时间/)).toBeInTheDocument();
   });
 
-  it("shows mismatch banner on first entry when diff non-empty, not auto apply", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
-    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
-    renderGateway();
-    await waitFor(() => expect(screen.getByText(/检测到本地与 Pi 网关不一致/)).toBeInTheDocument());
-    expect(screen.getByText("立即同步")).toBeInTheDocument();
-    // default not auto write
-    expect(apply).not.toHaveBeenCalled();
-  });
 
   it("does not show mismatch banner when no diff", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: currentGw, conflicts: [] } as any);
@@ -117,15 +108,6 @@ describe("GatewayPanel gateway-sep", () => {
     await waitFor(() => expect(screen.queryByText(/上次发布时间: 尚未发布/)).not.toBeInTheDocument());
   });
 
-  it("dismissing mismatch banner does not auto apply", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
-    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
-    renderGateway();
-    await waitFor(() => expect(screen.getByText(/检测到本地与 Pi 网关不一致/)).toBeInTheDocument());
-    fireEvent.click(screen.getByText("稍后"));
-    await waitFor(() => expect(screen.queryByText(/检测到本地与 Pi 网关不一致/)).not.toBeInTheDocument());
-    expect(apply).not.toHaveBeenCalled();
-  });
 
   it("shows conflicts when preview returns conflicts", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: { ...proposedGw, baseUrl: "http://127.0.0.1:43113/v1" }, conflicts: ["baseUrl", "models"] } as any);

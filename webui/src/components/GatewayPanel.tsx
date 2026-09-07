@@ -42,8 +42,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [lastPublishAt, setLastPublishAt] = useState<string | null>(() => {
     try { return typeof window !== "undefined" ? window.localStorage?.getItem(LAST_PUBLISH_KEY) ?? null : null; } catch { return null; }
   });
-  const [showMismatchBanner, setShowMismatchBanner] = useState(false);
-  const [hasCheckedMismatch, setHasCheckedMismatch] = useState(false);
   const [backendPending, setBackendPending] = useState<number | null>(null);
   // 二次勾选：按供应商/渠道分组的发布选择（网关 id 粒度），默认全选。
   const [groups, setGroups] = useState<PreviewGroup[]>([]);
@@ -91,20 +89,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       // 会立刻把它们加回 checked（清理永远发不出去）。用户在“已撤回”区
       // 显式勾选时 toggleChecked 会将其移出跳过集，仍可复活。
       for (const id of removedSet) skipAutoCheck.current.add(id);
-      // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
-      if (!hasCheckedMismatch) {
-        const curForDiff = cur as Record<string, unknown> | null;
-        const propForDiff = prop as Record<string, unknown>;
-        if (propForDiff) {
-          const pendingVal = typeof pending === "number" ? pending : null;
-          const hasDiff = pendingVal !== null ? pendingVal > 0 : (() => {
-            const d = diffGateway(curForDiff, propForDiff);
-            return d.added.length > 0 || d.removed.length > 0 || d.changed.length > 0;
-          })();
-          if (hasDiff) setShowMismatchBanner(true);
-        }
-        setHasCheckedMismatch(true);
-      }
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     } finally {
@@ -176,12 +160,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }, [current, proposed]);
 
   const pendingCount = backendPending ?? (statusDiff.added.length + statusDiff.removed.length + statusDiff.changed.length);
-
-  // preview diff for mismatch banner (current vs proposed before edits)
-  const previewDiff = useMemo(() => {
-    if (!proposed) return null;
-    return diffGateway(current, proposed);
-  }, [current, proposed]);
 
   function addModel() {
     const empty = drafts.find((d) => !d.id.trim());
@@ -380,7 +358,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       const now = new Date().toISOString();
       try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
       setLastPublishAt(now);
-      setShowMismatchBanner(false);
       toast("ok", t("Saved") || "Saved");
       await mutateAfterGatewayPublish();
       await load();
@@ -427,20 +404,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         )}
       </div>
 
-      {/* 首次进入不一致提示，默认不自动写 */}
-      {showMismatchBanner && previewDiff && (previewDiff.added.length + previewDiff.removed.length + previewDiff.changed.length > 0) && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          <span className="text-sm text-amber-200">检测到本地与 Pi 网关不一致，是否立即同步</span>
-          <div className="flex gap-2">
-            <Button variant="primary" onClick={() => void run(() => handleApplyToPi(), undefined)} className="h-7 text-xs">
-              立即同步
-            </Button>
-            <Button onClick={() => setShowMismatchBanner(false)} className="h-7 text-xs">
-              稍后
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* 已暴露候选分组 + 二次勾选：只读归属，暴露编辑仍在供应商页 */}
       {groups.length > 0 && (
