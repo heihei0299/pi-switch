@@ -214,3 +214,95 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     await waitFor(() => expect(screen.getByText(/勾选子集待发布：0/)).toBeInTheDocument());
   });
 });
+
+describe("GatewayPanel gateway id-shape + delete", () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage?.clear();
+  });
+
+  // current 混入历史短 id + 三段式 id：strip channel 后全部撞成 oc/mimo-v2.5
+  const mixedPreview = {
+    current: {
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:43112/v1",
+      models: [
+        { id: "oc/mimo-v2.5" },
+        { id: "oc/chat/mimo-v2.5" },
+        { id: "oc/responses/muse-spark-1.3-contributor" },
+      ],
+      proxy: false,
+    },
+    proposed: {
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:43112/v1",
+      models: [
+        { id: "oc/chat/mimo-v2.5" },
+        { id: "oc/responses/muse-spark-1.3-contributor" },
+        { id: "oc/chat/omen-alpha" },
+      ],
+      proxy: false,
+    },
+    conflicts: [],
+    pending_count: 2,
+    groups: [],
+    removed: ["oc/mimo-v2.5"],
+  };
+
+  function mockApply() {
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    vi.spyOn(api, "getState").mockResolvedValue({ settings: { gatewayApi: "openai-completions", proxy: { host: "127.0.0.1", port: 43112 } } } as any);
+    return apply;
+  }
+
+  it("keeps full three-segment ids end to end (no short-id collapse)", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(mixedPreview as any);
+    const apply = mockApply();
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    // 草稿行必须保留全限定 id：两行 oc/chat/mimo-v2.5 与 oc/mimo-v2.5 不得撞车
+    const idInputs = screen.getAllByLabelText("Model ID") as HTMLInputElement[];
+    const values = idInputs.map((el) => el.value);
+    expect(values).toContain("oc/chat/mimo-v2.5");
+    expect(values).toContain("oc/responses/muse-spark-1.3-contributor");
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
+    // 发布载荷保持全限定形态，不再把剥离后的短 id 写回网关
+    expect(ids).toContain("oc/chat/mimo-v2.5");
+    expect(ids).toContain("oc/responses/muse-spark-1.3-contributor");
+    expect(ids).toContain("oc/chat/omen-alpha");
+    // 历史短 id 默认排除（后端 removed），不再复活
+    expect(ids).not.toContain("oc/mimo-v2.5");
+  });
+
+  it("deleting a draft row removes it from the apply payload", async () => {
+    const singlePreview = {
+      current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+      proposed: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+      conflicts: [],
+      pending_count: 0,
+      groups: [],
+      removed: [],
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue(singlePreview as any);
+    const apply = mockApply();
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe("sup/main/m1");
+    fireEvent.click(screen.getByRole("button", { name: "remove" }));
+    await waitFor(() => expect(screen.queryByLabelText("Model ID")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
+    expect(ids).not.toContain("sup/main/m1");
+    expect(ids).toHaveLength(0);
+  });
+});

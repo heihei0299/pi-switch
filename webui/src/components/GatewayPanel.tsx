@@ -69,25 +69,27 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setBaseUrl((rec.baseUrl as string) || "");
       setApiKey((rec.apiKey as string) || "");
       const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
-      setDrafts(
-        models.map((m) => {
-          const e = m as ModelEntry;
-          const parts = e.id.split("/");
-          const displayId = parts.length === 3 ? `${parts[0]}/${parts[2]}` : e.id;
-          return draftFromEntry({ ...e, id: displayId } as ModelEntry);
-        }),
-      );
+      setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+      // 草稿 id 保持网关全限定形态（supplier/channel/model）：仅渲染层做短显示。
+      // 曾在此剥掉 channel 段，导致三段式 id 与历史短 id 撞车、发布又把短 id 写回网关。
       // 分组与二次勾选：groups/removed 透出（旧后端缺省为空），默认全选并集。
-      const toShort = (id: string) => {
-        const p = id.split("/");
-        return p.length === 3 ? `${p[0]}/${p[2]}` : id;
-      };
-      const propIds = propModels.map((m) => String((m as any)?.id ?? "")).filter(Boolean).map(toShort);
-      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean).map(toShort);
+      // checked 全程使用网关全限定 id，与分组复选框的键一致；后端 removed 的
+      // 历史 id 默认排除，否则每次发布都会把待清理条目写回去。
+      const propList = asRecord(prop ?? {}).models;
+      const propArr = Array.isArray(propList) ? propList : [];
+      const propIds = propArr.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
+      const removedList = (preview as any).removed;
+      const removedArr = Array.isArray(removedList) ? removedList.map((id) => String(id)) : [];
+      const removedSet = new Set(removedArr);
+      setChecked(new Set([...propIds, ...draftIds].filter((id) => !removedSet.has(id))));
       setGroups(Array.isArray((preview as any).groups) ? ((preview as any).groups as PreviewGroup[]) : []);
-      setRemovedIds(Array.isArray((preview as any).removed) ? ((preview as any).removed as string[]) : []);
-      setChecked(new Set([...propIds, ...draftIds]));
+      setRemovedIds(removedArr);
       skipAutoCheck.current.clear();
+      // 后端 removed 的历史 id 同样记入跳过集，否则下面的自动补勾 effect
+      // 会立刻把它们加回 checked（清理永远发不出去）。用户在“已撤回”区
+      // 显式勾选时 toggleChecked 会将其移出跳过集，仍可复活。
+      for (const id of removedSet) skipAutoCheck.current.add(id);
       // 首次进入若 preview diff 非空，顶部提示是否立即同步，默认不自动写
       if (!hasCheckedMismatch) {
         const curForDiff = cur as Record<string, unknown> | null;
@@ -537,9 +539,17 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 hideExposed
                 onToggleExposed={() => {}}
                 onChange={(next) => setDrafts((prev) => prev.map((x) => (x.key === d.key ? next : x)))}
-                onRemove={() =>
-                  setDrafts((prev) => prev.filter((x) => x.key !== d.key))
-                }
+                onRemove={() => {
+                  // 删行等价于取消勾选：否则 buildSelectedModels 会从
+                  // proposed/current 按 id 取回该行，删了也发回去（删不掉）。
+                  setChecked((prev) => {
+                    const ns = new Set(prev);
+                    ns.delete(d.id);
+                    return ns;
+                  });
+                  skipAutoCheck.current.add(d.id);
+                  setDrafts((prev) => prev.filter((x) => x.key !== d.key));
+                }}
                 expanded={expandedKeys.has(d.key)}
                 onToggleExpanded={() =>
                   setExpandedKeys((s) => {
