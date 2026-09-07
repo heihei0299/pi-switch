@@ -81,6 +81,28 @@ describe("GatewayPanel gateway-sep", () => {
     expect(screen.queryByText(/检测到本地与 Pi 网关不一致/)).not.toBeInTheDocument();
   });
 
+  it("does not mutate proxy settings from the gateway base URL", async () => {
+    const gateway = {
+      "oc/chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        models: [{ id: "new-model" }],
+        proxy: false,
+      },
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: gateway, proposed: gateway, conflicts: [] } as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    const getState = vi.spyOn(api, "getState").mockResolvedValue({
+      settings: { proxy: { host: "127.0.0.1", port: 43112 } },
+    } as any);
+    const updateSettings = vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByRole("button", { name: "应用到 Pi" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    expect(getState).not.toHaveBeenCalled();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
 
   it("preserves provider compat when applying a gateway", async () => {
     const gateway = {

@@ -357,45 +357,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     }
     const selectedProviders = buildSelectedProviders();
     const payloadToSend: Record<string, unknown> = { providers: selectedProviders };
-    const providerValues = Object.values(asRecord(activeVal.providers));
-    const newBaseUrl = typeof asRecord(providerValues[0]).baseUrl === "string" ? String(asRecord(providerValues[0]).baseUrl) : "";
     try {
       await api.applyGateway(payloadToSend);
-      // 仅同步本地 proxy host:port；每个 gateway provider 的 API 来自 channel.api。
-      try {
-        const state = await api.getState();
-        const curHost = state.settings.proxy.host;
-        const curPort = state.settings.proxy.port;
-        let needUpdate = false;
-        const nextSettings = JSON.parse(JSON.stringify(state.settings)) as typeof state.settings;
-        if (newBaseUrl) {
-          try {
-            const u = new URL(newBaseUrl);
-            const newHost = u.hostname;
-            const rawPort = u.port;
-            // 仅当解析出的 host/port 与当前不一致时同步；0.0.0.0 归一化为 127.0.0.1 与后端一致
-            const normalizedNewHost = newHost === "0.0.0.0" || newHost === "::" || newHost === "[::]" ? "127.0.0.1" : newHost;
-            const normalizedCurHost = curHost === "0.0.0.0" || curHost === "::" || curHost === "[::]" ? "127.0.0.1" : curHost;
-            if (normalizedNewHost && normalizedNewHost !== normalizedCurHost) {
-              nextSettings.proxy.host = normalizedNewHost;
-              needUpdate = true;
-            }
-            if (rawPort) {
-              const newPort = parseInt(rawPort, 10);
-              if (newPort && newPort !== curPort) {
-                nextSettings.proxy.port = newPort;
-                needUpdate = true;
-              }
-            }
-          } catch {}
-        }
-        if (needUpdate) {
-          await api.updateSettings(nextSettings);
-        }
-      } catch (e) {
-        // Settings 同步失败不阻断已成功的 gateway 写入，仅提示
-        console.warn("[gateway] sync settings failed", e);
-      }
       const now = new Date().toISOString();
       try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
       setLastPublishAt(now);
