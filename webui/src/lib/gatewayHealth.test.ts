@@ -3,15 +3,15 @@ import { diffGateway, validateGatewayJson } from "./gatewayDiff";
 
 describe("gateway preview/apply lifecycle placeholder", () => {
   it("diffGateway drives status bar pending count", () => {
-    const cur = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1" }], proxy: false };
-    const prop = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1" }, { id: "p/m2" }], proxy: false };
+    const cur = { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } };
+    const prop = { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }, { id: "m2" }], proxy: false } };
     const d = diffGateway(cur, prop);
-    expect(d.changed).toContain("models");
+    expect(d.added).toContain("sup/chat/m2");
     expect(d.added.length + d.removed.length + d.changed.length).toBe(1);
   });
 
   it("validateGatewayJson accepts valid gateway with models", () => {
-    const valid = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1" }], proxy: false };
+    const valid = { providers: { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } } };
     const res = validateGatewayJson(JSON.stringify(valid));
     expect(res.ok).toBe(true);
     expect(res.value).toEqual(valid);
@@ -29,8 +29,8 @@ describe("gateway preview/apply lifecycle placeholder", () => {
   });
 
   it("preview is dry-run does not mutate current (pure)", () => {
-    const cur = { api: "openai-completions", baseUrl: "http://a/v1", models: [] as any[] };
-    const prop = { api: "openai-completions", baseUrl: "http://b/v1", models: [] as any[] };
+    const cur = { "sup/chat": { api: "openai-completions", baseUrl: "http://a/v1", models: [] as any[] } };
+    const prop = { "sup/chat": { api: "openai-completions", baseUrl: "http://b/v1", models: [] as any[] } };
     const before = JSON.stringify(cur);
     const _d = diffGateway(cur, prop);
     expect(JSON.stringify(cur)).toBe(before);

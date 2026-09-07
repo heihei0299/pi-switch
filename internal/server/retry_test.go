@@ -70,16 +70,16 @@ func TestRetry_CustomScopedRuleStopsFailover(t *testing.T) {
 	cfgJSON := fmt.Sprintf(`{
 		"version":2,"current":"retry-stop-a",
 		"profiles":{
-			"retry-stop-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a",
-				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"],
+			"retry-stop-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","upstreams":[{"name":"main","api":"openai-completions","baseUrl":%q,"apiKey":"sk-a",
+				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"]}],
 				"requestScopedErrors":[{"status":500,"match":["overloaded"],"action":"stop"}]},
-			"retry-stop-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b",
-				"models":[{"id":"other-model","contextWindow":128000,"maxTokens":16384}],"exposedModels":["other-model"]}
+			"retry-stop-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b","upstreams":[{"name":"main","api":"openai-completions","baseUrl":%q,"apiKey":"sk-b",
+				"models":[{"id":"other-model","contextWindow":128000,"maxTokens":16384}],"exposedModels":["other-model"]}]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions",
 			"proxy":{"host":"127.0.0.1","port":43112,"failover":["retry-stop-a","retry-stop-b"]},
 			"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
-	}`, mockA.URL, mockB.URL)
+	}`, mockA.URL, mockA.URL, mockB.URL, mockB.URL)
 	cfgPath := writeRetryConfig(t, dir, cfgJSON)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", dbPath)

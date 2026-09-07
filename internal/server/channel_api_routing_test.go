@@ -39,22 +39,22 @@ func TestChannelAPI_RoutingDirect(t *testing.T) {
 	dir := t.TempDir()
 	writeChannelConfig(t, dir, newOCConfig(chatMock.URL, respMock.URL))
 
-	// chat via oc/chat/mimo -> 200 (chat path on chat channel)
+	// chat via bare mimo -> 200 (chat path on chat channel, bare id)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"oc/chat/mimo-v2.5","messages":[{"role":"user","content":"hi"}]}`))
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w, req)
 	if w.Code != 200 {
-		t.Fatalf("chat direct oc/chat/mimo code=%d body=%s, want 200", w.Code, w.Body.String())
+		t.Fatalf("chat direct mimo code=%d body=%s, want 200", w.Code, w.Body.String())
 	}
 
-	// responses via oc/responses/muse-spark -> 200 (responses path on responses channel)
+	// responses via bare muse -> 200 (responses path on responses channel, bare id)
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"oc/responses/muse-spark-1.2-contributor","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`))
+	req2, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"muse-spark-1.2-contributor","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`))
 	req2.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w2, req2)
 	if w2.Code != 200 {
-		t.Fatalf("responses direct oc/responses/muse-spark code=%d body=%s, want 200", w2.Code, w2.Body.String())
+		t.Fatalf("responses direct muse-spark code=%d body=%s, want 200", w2.Code, w2.Body.String())
 	}
 }
 
@@ -69,22 +69,22 @@ func TestChannelAPI_CrossConversion(t *testing.T) {
 	dir := t.TempDir()
 	writeChannelConfig(t, dir, newOCConfig(chatMock.URL, respMock.URL))
 
-	// cross: chat proto via responses channel (oc/responses/muse-spark) -> convert chat->responses, hit /v1/responses 200
+	// cross: chat proto via responses channel (bare muse) -> convert chat->responses, hit /v1/responses 200
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"oc/responses/muse-spark-1.2-contributor","messages":[{"role":"user","content":"hi"}]}`))
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"muse-spark-1.2-contributor","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w, req)
 	if w.Code != 200 {
-		t.Fatalf("cross chat->responses oc/responses/muse-spark code=%d body=%s, want 200", w.Code, w.Body.String())
+		t.Fatalf("cross chat->responses muse-spark code=%d body=%s, want 200", w.Code, w.Body.String())
 	}
 
-	// cross: responses proto via chat channel (oc/chat/mimo) -> convert responses->chat, hit /v1/chat/completions 200
+	// cross: responses proto via chat channel (bare mimo) -> convert responses->chat, hit /v1/chat/completions 200
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"oc/chat/mimo-v2.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`))
+	req2, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"mimo-v2.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`))
 	req2.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w2, req2)
 	if w2.Code != 200 {
-		t.Fatalf("cross responses->chat oc/chat/mimo code=%d body=%s, want 200", w2.Code, w2.Body.String())
+		t.Fatalf("cross responses->chat mimo code=%d body=%s, want 200", w2.Code, w2.Body.String())
 	}
 }
 

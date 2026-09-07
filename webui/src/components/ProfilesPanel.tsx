@@ -82,7 +82,8 @@ export function ProfilesPanel({
         )}
         {entries.map(([name, p]) => {
           const isCurrent = state.current === name;
-          const exposed = p.exposedModels?.length ?? 0;
+          const exposed = (p.upstreams ?? []).reduce((n, u) => n + (u.exposedModels?.length ?? 0), 0);
+          const modelCount = (p.upstreams ?? []).reduce((n, u) => n + (u.models?.length ?? 0), 0);
           const upstreamsList = hasUpstreams(p) ? resolvedUpstreams(p) : [];
           const mainUrl = (upstreamsList[0]?.baseUrl || p.baseUrl) || t("no base url");
           return (
@@ -120,7 +121,7 @@ export function ProfilesPanel({
                       {mainUrl}
                     </span>
                     <span className="text-zinc-600">·</span>
-                    <span>{p.models?.length ?? 0} {t("models")}</span>
+                    <span>{modelCount} {t("models")}</span>
                     {hasUpstreams(p) && (
                       <>
                         <span className="text-zinc-600">·</span>
@@ -240,22 +241,26 @@ function ProfileForm({
     return {};
   });
   // Upstream 列表：基于 has_upstreams/resolved_upstreams 回退，单字段兼容
-  const [upstreams, setUpstreams] = useState<Array<{ key: string; baseUrl: string; apiKey: string; weight: string; name: string; headers: Record<string, string> }>>(() => {
+  const [upstreams, setUpstreams] = useState<Array<{ key: string; baseUrl: string; apiKey: string; api: string; responsesMode: ResponsesMode; weight: string; name: string; headers: Record<string, string>; models: ModelEntry[]; exposedModels: string[] }>>(() => {
     const existingUps = (existing as any)?.upstreams as Upstream[] | undefined;
     if (existingUps && existingUps.length > 0) {
       return existingUps.map((u, idx) => ({
         key: `us-${idx}-${u.baseUrl.slice(0, 8)}`,
         baseUrl: u.baseUrl ?? "",
         apiKey: u.apiKey ?? "",
+        api: u.api ?? existing?.api ?? "openai-completions",
+        responsesMode: u.responsesMode ?? existing?.responsesMode ?? "auto",
         weight: u.weight != null ? String(u.weight) : "",
         name: u.name ?? "",
         headers: (u.headers as Record<string, string>) ?? {},
+        models: u.models ?? [],
+        exposedModels: u.exposedModels ?? [],
       }));
     }
     return [];
   });
   const [modelIds, setModelIds] = useState(
-    (existing?.models ?? []).map((m) => m.id).join("\n"),
+    (existing?.upstreams?.[0]?.models ?? []).map((m) => m.id).join("\n"),
   );
   const debouncedSpoof = useDebounce(spoof, 300);
   const debouncedHeaders = useDebounce(headers, 300);
@@ -310,7 +315,7 @@ function ProfileForm({
       apiKey: apiKey.trim(),
       ...(Object.keys(headers).length ? { headers } : {}),
       ...(Object.keys(compat).length ? { compat } : {}),
-      ...(upstreams.length ? { upstreams: upstreams.map((u) => ({ baseUrl: u.baseUrl.trim(), apiKey: u.apiKey.trim(), headers: Object.keys(u.headers).length ? u.headers : undefined, weight: u.weight.trim() ? Number(u.weight) : undefined, name: u.name.trim() || undefined })) } : {}),
+      ...(upstreams.length ? { upstreams: upstreams.map((u) => ({ api: u.api || apiType, responsesMode: u.responsesMode || "auto", baseUrl: u.baseUrl.trim(), apiKey: u.apiKey.trim(), headers: Object.keys(u.headers).length ? u.headers : undefined, weight: u.weight.trim() ? Number(u.weight) : undefined, name: u.name.trim() || undefined, models: u.models, exposedModels: u.exposedModels })) } : {}),
       ...(proxy ? { proxy } : {}),
       ...(preset ? { preset } : {}),
       ...(modelsDevProvider.trim() ? { modelsDevProvider: modelsDevProvider.trim() } : {}),
@@ -331,7 +336,7 @@ function ProfileForm({
     if (v.compat && typeof v.compat === "object" && !Array.isArray(v.compat)) setCompat(v.compat as Record<string, unknown>);
     else if (!v.compat) setCompat({});
     if (Array.isArray(v.upstreams)) {
-      setUpstreams((v.upstreams as Upstream[]).map((u, idx) => ({ key: `us-${idx}-${String(u.baseUrl).slice(0,8)}`, baseUrl: (u as any).baseUrl ?? "", apiKey: (u as any).apiKey ?? "", weight: (u as any).weight != null ? String((u as any).weight) : "", name: (u as any).name ?? "", headers: (u as any).headers ?? {} })));
+      setUpstreams((v.upstreams as Upstream[]).map((u, idx) => ({ key: `us-${idx}-${String(u.baseUrl).slice(0,8)}`, baseUrl: u.baseUrl ?? "", apiKey: u.apiKey ?? "", api: u.api ?? (v.api as string) ?? "openai-completions", responsesMode: u.responsesMode ?? (v.responsesMode as ResponsesMode) ?? "auto", weight: u.weight != null ? String(u.weight) : "", name: u.name ?? "", headers: u.headers ?? {}, models: u.models ?? [], exposedModels: u.exposedModels ?? [] })));
     } else if (!v.upstreams) setUpstreams([]);
     if (typeof v.proxy === "boolean") setProxy(v.proxy);
     if (typeof v.preset === "string") setPreset(v.preset);
@@ -362,33 +367,33 @@ function ProfileForm({
       .split(/[\n,]/)
       .map((s) => s.trim())
       .filter(Boolean);
-    // Preserve existing model metadata by id; default for new ids.
-    const prevById = new Map((existing?.models ?? []).map((m) => [m.id, m]));
+    // A new profile starts with one named channel; existing channel pools remain
+    // owned by their channel and are edited in the Models modal.
+    const prevById = new Map<string, ModelEntry>();
     const models = ids.map((id) => prevById.get(id) ?? defaultModel(id));
-    const prevIds = new Set((existing?.models ?? []).map((m) => m.id));
-    const filteredOld = (existing?.exposedModels ?? []).filter((id) => ids.includes(id));
+    const prevIds = new Set<string>();
+    const filteredOld: string[] = [];
     const newIds = ids.filter((id) => !prevIds.has(id));
     const exposedModels = [...new Set([...filteredOld, ...newIds])];
-    // Upstream 回退：有 upstreams 时持久化多上游，否则回退单字段（兼容旧配置）
-    let upstreamPayload: Upstream[] | undefined;
+    let upstreamPayload: Upstream[];
     let effectiveBaseUrl = baseUrl.trim();
     let effectiveApiKey = apiKey.trim();
     let effectiveHeaders: Record<string, string> | undefined = Object.keys(headers).length ? headers : undefined;
     if (upstreams.length > 0) {
       upstreamPayload = upstreams.map((u) => ({
+        api: u.api || apiType,
+        responsesMode: u.responsesMode || "auto",
         baseUrl: u.baseUrl.trim(),
         apiKey: u.apiKey.trim(),
         headers: Object.keys(u.headers).length ? u.headers : undefined,
         weight: u.weight.trim() ? Number(u.weight) : undefined,
         name: u.name.trim() || undefined,
+        models: u.models,
+        exposedModels: u.exposedModels,
       } as Upstream)).filter((u) => u.baseUrl || u.apiKey);
-      if (upstreamPayload.length === 0) upstreamPayload = undefined;
-      else {
-        // 单字段同步首个 upstream，保持 has_upstreams=false 读者兼容
-        effectiveBaseUrl = upstreamPayload[0]?.baseUrl ?? effectiveBaseUrl;
-        effectiveApiKey = upstreamPayload[0]?.apiKey ?? effectiveApiKey;
-        effectiveHeaders = (upstreamPayload[0]?.headers as Record<string, string>) ?? effectiveHeaders;
-      }
+      if (upstreamPayload.length === 0) upstreamPayload = [];
+    } else {
+      upstreamPayload = [{ api: apiType, responsesMode, baseUrl: effectiveBaseUrl, apiKey: effectiveApiKey, headers: effectiveHeaders, name: "main", models, exposedModels }];
     }
     return {
       ...(existing ?? {}),
@@ -397,9 +402,7 @@ function ProfileForm({
       baseUrl: effectiveBaseUrl,
       apiKey: effectiveApiKey,
       upstreams: upstreamPayload,
-      models,
       proxy,
-      exposedModels,
       preset: preset || undefined,
       modelsDevProvider: modelsDevProvider.trim() || undefined,
       userAgent: spoof || undefined,
@@ -432,8 +435,6 @@ function ProfileForm({
         preset: v.preset as string | undefined,
         modelsDevProvider: v.modelsDevProvider as string | undefined,
         userAgent: v.userAgent as string | undefined,
-        models: existing?.models ?? [],
-        exposedModels: existing?.exposedModels ?? [],
         updatedAt: new Date().toISOString(),
       } as unknown as ProviderProfile;
       if (original) {
@@ -561,7 +562,7 @@ function ProfileForm({
                     <Button
                       type="button"
                       onClick={() => {
-                        const first: any = { key: `us-${Date.now()}`, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), weight: "", name: "", headers: { ...headers } };
+                        const first: any = { key: `us-${Date.now()}`, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), api: apiType, responsesMode, weight: "", name: "main", headers: { ...headers }, models: [], exposedModels: [] };
                         setUpstreams([first]);
                       }}
                     >
@@ -572,7 +573,7 @@ function ProfileForm({
                     <>
                       <Button
                         type="button"
-                        onClick={() => setUpstreams((prev) => [...prev, { key: `us-${Date.now()}-${prev.length}`, baseUrl: "", apiKey: "", weight: "", name: "", headers: {} }])}
+                        onClick={() => setUpstreams((prev) => [...prev, { key: `us-${Date.now()}-${prev.length}`, baseUrl: "", apiKey: "", api: apiType, responsesMode, weight: "", name: "", headers: {}, models: [], exposedModels: [] }])}
                       >
                         + {t("Add upstream")}
                       </Button>
@@ -595,7 +596,7 @@ function ProfileForm({
               </div>
               {upstreams.length > 0 && (
                 <div className="space-y-3 rounded-lg border border-white/10 bg-zinc-900/30 p-3">
-                  <div className="text-xs text-zinc-500">{t("has_upstreams / resolved_upstreams 回退，多上游为空时使用单 Base URL/API Key。增删即时生效，保存后需到网关发布。")}</div>
+                  <div className="text-xs text-zinc-500">{t("每个 channel 都需要名称和 API 类型；模型池在 Models 中按 channel 管理。")}</div>
                   {upstreams.map((u, idx) => (
                     <div key={u.key} className="rounded-lg border border-white/10 bg-zinc-950 p-3">
                       <div className="mb-2 flex items-center justify-between">
@@ -614,6 +615,11 @@ function ProfileForm({
                         </Field>
                         <Field label={t("Name")}>
                           <Input value={u.name} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, name: e.target.value } : x))} placeholder="upstream-a" />
+                        </Field>
+                        <Field label={t("API type")}>
+                          <Select value={u.api} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, api: e.target.value } : x))}>
+                            {API_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </Select>
                         </Field>
                       </div>
                       <div className="mt-2">
@@ -696,23 +702,17 @@ function ModelsModal({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
-  // 渠道分区：upstreams 全员具名时按渠道分池编辑（键=渠道名），否则沿用顶层单池（键=""）。
-  // 未具名渠道回退单池，避免不可寻址渠道产生写丢失。
+  // 模型池始终按具名 channel 编辑。
   const channelNames = useMemo(() => {
     const ups = profile.upstreams ?? [];
-    if (ups.length === 0) return null;
+    if (ups.length === 0) return [];
     const names = ups.map((u) => (u.name ?? "").trim());
-    if (names.some((n) => !n)) return null;
+    if (names.some((n) => !n)) return [];
     return names;
   }, [profile]);
   const [activeChannel, setActiveChannel] = useState<string>(() => "");
   const [pools, setPools] = useState<Record<string, { drafts: ModelDraft[]; exposed: Set<string> }>>(() => {
-    const init: Record<string, { drafts: ModelDraft[]; exposed: Set<string> }> = {
-      "": {
-        drafts: (profile.models ?? []).map((m) => draftFromEntry(m)),
-        exposed: new Set(profile.exposedModels ?? []),
-      },
-    };
+    const init: Record<string, { drafts: ModelDraft[]; exposed: Set<string> }> = {};
     for (const u of profile.upstreams ?? []) {
       const n = (u.name ?? "").trim();
       if (!n) continue;
@@ -723,7 +723,7 @@ function ModelsModal({
     }
     return init;
   });
-  const poolKey = channelNames ? activeChannel || channelNames[0] : "";
+  const poolKey = activeChannel || channelNames?.[0] || "";
   const drafts = pools[poolKey]?.drafts ?? [];
   const exposed = pools[poolKey]?.exposed ?? new Set<string>();
   function setDrafts(next: ModelDraft[] | ((prev: ModelDraft[]) => ModelDraft[])) {
@@ -740,15 +740,14 @@ function ModelsModal({
       return { ...prevPools, [poolKey]: { ...cur, exposed } };
     });
   }
-  // 渠道定向参数：单池（""）不传，后端走顶层旧语义。
-  const activeChannelParam = channelNames ? poolKey : undefined;
+  const activeChannelParam = poolKey || undefined;
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const [text, setText] = useState<string>(() => {
     try {
-      return JSON.stringify((profile.models ?? []).map((m) => modelPreview(draftFromEntry(m as ModelEntry))), null, 2);
+      return JSON.stringify((profile.upstreams?.[0]?.models ?? []).map((m) => modelPreview(draftFromEntry(m as ModelEntry))), null, 2);
     } catch {
       return "[]";
     }
@@ -1086,7 +1085,7 @@ function ModelsModal({
             </div>
             <div className="mt-2 text-xs text-zinc-500">
               {t("Configure available models and display names") || "配置可用的模型及其显示名称"} ·{" "}
-              <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;id&gt;</code>
+              <span className="text-zinc-400">{t("Checked = exposed to pi as")}</span> <code>{name}/&lt;channel&gt;/&lt;id&gt;</code>
             </div>
             {validationError && (
               <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200">

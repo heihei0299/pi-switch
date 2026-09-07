@@ -72,10 +72,10 @@ func TestRootAndApiConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("settings not map")
 	}
-	if settings["providerPrefix"] != "pi-switch" {
-		t.Fatalf("providerPrefix = %v, want pi-switch", settings["providerPrefix"])
+	if _, ok := settings["providerPrefix"]; ok {
+		t.Fatalf("removed providerPrefix must not be emitted: %v", settings)
 	}
-	_ = os.WriteFile(path, []byte(`{"version":2,"profiles":{},"settings":{"providerPrefix":"hot-reload-test"}}`), 0644)
+	_ = os.WriteFile(path, []byte(`{"version":2,"profiles":{},"settings":{"writeMode":"gateway"}}`), 0644)
 	w3 := httptest.NewRecorder()
 	req3, _ := http.NewRequest("GET", "/api/config", nil)
 	r.ServeHTTP(w3, req3)
@@ -83,7 +83,7 @@ func TestRootAndApiConfig(t *testing.T) {
 	_ = json.Unmarshal(w3.Body.Bytes(), &resp3)
 	cfg3 := resp3["config"].(map[string]interface{})
 	settings3 := cfg3["settings"].(map[string]interface{})
-	if settings3["providerPrefix"] != "hot-reload-test" {
-		t.Fatalf("hot reload failed: %v", settings3["providerPrefix"])
+	if _, ok := settings3["providerPrefix"]; ok {
+		t.Fatalf("hot reload emitted removed providerPrefix: %v", settings3)
 	}
 }

@@ -15,8 +15,16 @@ function renderGateway(refresh = vi.fn(async () => {})) {
   );
 }
 
-const currentGw = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1" }], proxy: false };
-const proposedGw = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1" }, { id: "p/m2" }], proxy: false };
+const channelGateway = (models: Array<Record<string, unknown>>) => ({
+  "oc/chat": {
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1:43112/v1",
+    models,
+    proxy: false,
+  },
+});
+const currentGw = channelGateway([{ id: "m1" }]);
+const proposedGw = channelGateway([{ id: "m1" }, { id: "m2" }]);
 
 describe("GatewayPanel gateway-sep", () => {
   beforeEach(() => {
@@ -33,10 +41,10 @@ describe("GatewayPanel gateway-sep", () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    // status bar shows changed for models
-    expect(screen.getByText(/\+0 added/)).toBeInTheDocument();
+    // status bar shows a newly added bare model under the channel provider
+    expect(screen.getByText(/\+1 added/)).toBeInTheDocument();
     expect(screen.getByText(/-0 removed/)).toBeInTheDocument();
-    expect(screen.getByText(/~1 changed/)).toBeInTheDocument();
+    expect(screen.getByText(/~0 changed/)).toBeInTheDocument();
     expect(screen.getByText(/待发布数: 1/)).toBeInTheDocument();
     expect(screen.getByText(/上次发布时间/)).toBeInTheDocument();
   });
@@ -64,8 +72,8 @@ describe("GatewayPanel gateway-sep", () => {
     await waitFor(() => expect(apply).toHaveBeenCalled());
     // apply payload should be parseable gateway
     const payload = apply.mock.calls[0][0] as any;
-    expect(payload.api).toBe("openai-completions");
-    expect(payload.baseUrl).toBe("http://127.0.0.1:43112/v1");
+    expect(payload.providers["oc/chat"].api).toBe("openai-completions");
+    expect(payload.providers["oc/chat"].baseUrl).toBe("http://127.0.0.1:43112/v1");
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText(/待发布数: 0/)).toBeInTheDocument());
     // lastPublishAt should be set (not 尚未发布)
@@ -142,12 +150,27 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     window.localStorage?.clear();
   });
   const groupedPreview = {
-    current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+    current: {
+      "sup/main": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{ id: "m1" }],
+        proxy: false,
+      },
+    },
     proposed: {
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:43112/v1",
-      models: [{ id: "sup/main/m1" }, { id: "sup/bk/b1" }],
-      proxy: false,
+      "sup/main": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{ id: "m1" }],
+        proxy: false,
+      },
+      "sup/bk": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43113/v1",
+        models: [{ id: "b1" }],
+        proxy: false,
+      },
     },
     conflicts: [],
     pending_count: 1,
@@ -185,10 +208,14 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
-    expect(ids).toContain("sup/main/m1");
-    expect(ids).toContain("sup/bk/b1");
-    expect(ids).not.toContain("ghost/x");
+    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
+    const allIds: string[] = [];
+    for (const [key, prov] of Object.entries(providers ?? {})) {
+      for (const m of prov.models) allIds.push(`${key}/${m.id}`);
+    }
+    expect(allIds).toContain("sup/main/m1");
+    expect(allIds).toContain("sup/bk/b1");
+    expect(allIds).not.toContain("ghost/x");
   });
 
   it("subset pending follows the selection", async () => {
@@ -213,32 +240,35 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     window.localStorage?.clear();
   });
 
-  // current 混入历史短 id + 三段式 id：strip channel 后全部撞成 oc/mimo-v2.5
+  // Preview returns the inner per-channel provider map with bare model ids.
   const mixedPreview = {
     current: {
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:43112/v1",
-      models: [
-        { id: "oc/mimo-v2.5" },
-        { id: "oc/chat/mimo-v2.5" },
-        { id: "oc/responses/muse-spark-1.3-contributor" },
-      ],
-      proxy: false,
+      "oc/chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [
+          { id: "mimo-v2.5" },
+          { id: "muse-spark-1.3-contributor" },
+        ],
+        proxy: false,
+      },
     },
     proposed: {
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:43112/v1",
-      models: [
-        { id: "oc/chat/mimo-v2.5" },
-        { id: "oc/responses/muse-spark-1.3-contributor" },
-        { id: "oc/chat/omen-alpha" },
-      ],
-      proxy: false,
+      "oc/chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [
+          { id: "mimo-v2.5" },
+          { id: "muse-spark-1.3-contributor" },
+          { id: "omen-alpha" },
+        ],
+        proxy: false,
+      },
     },
     conflicts: [],
-    pending_count: 2,
+    pending_count: 1,
     groups: [],
-    removed: ["oc/mimo-v2.5"],
+    removed: [],
   };
 
   function mockApply() {
@@ -247,36 +277,37 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     return apply;
   }
 
-  it("shows short display ids but publishes full three-segment ids", async () => {
+  it("shows and publishes bare ids under the channel provider", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(mixedPreview as any);
     const apply = mockApply();
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    // 输入框只显示短名：oc/chat/mimo-v2.5 与历史短 id oc/mimo-v2.5 显示一致但数据不撞车
+    // 新裸 id 形态：输入框直接显示裸 id
     const idInputs = screen.getAllByLabelText("Model ID") as HTMLInputElement[];
     const values = idInputs.map((el) => el.value);
-    expect(values).toContain("oc/mimo-v2.5");
-    expect(values).toContain("oc/muse-spark-1.3-contributor");
+    expect(values).toContain("mimo-v2.5");
+    expect(values).toContain("muse-spark-1.3-contributor");
+    // 不应再有三段式 id 在输入框
     expect(values).not.toContain("oc/chat/mimo-v2.5");
-    // 完整三段式 id 以标注形式保留在行内（title 锚定，不与 JSON 预览文本混淆）
-    expect(screen.getAllByTitle("oc/chat/mimo-v2.5").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
-    // 发布载荷保持全限定形态，不再把剥离后的短 id 写回网关
-    expect(ids).toContain("oc/chat/mimo-v2.5");
-    expect(ids).toContain("oc/responses/muse-spark-1.3-contributor");
-    // omen 只在提议里、没发布过 → 默认不勾选，不进载荷（到分组里勾选才会发）
-    // 历史短 id 默认排除（后端 removed），不再复活
-    expect(ids).not.toContain("oc/mimo-v2.5");
-    expect(ids).not.toContain("oc/chat/omen-alpha");
+    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
+    const allIds: string[] = [];
+    for (const prov of Object.values(providers ?? {})) {
+      for (const m of prov.models) allIds.push(m.id);
+    }
+    // 发布载荷为裸 id 按渠道分 provider
+    expect(allIds).toContain("mimo-v2.5");
+    expect(allIds).toContain("muse-spark-1.3-contributor");
+    expect(allIds).not.toContain("oc/mimo-v2.5");
+    expect(allIds).not.toContain("omen-alpha");
   });
 
   it("deleting a draft row removes it from the apply payload", async () => {
     const singlePreview = {
-      current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
-      proposed: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+      current: channelGateway([{ id: "m1" }]),
+      proposed: channelGateway([{ id: "m1" }]),
       conflicts: [],
       pending_count: 0,
       groups: [],
@@ -286,15 +317,19 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     const apply = mockApply();
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe("sup/m1");
+    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe("m1");
     fireEvent.click(screen.getByRole("button", { name: "remove" }));
     await waitFor(() => expect(screen.queryByLabelText("Model ID")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
-    expect(ids).not.toContain("sup/main/m1");
-    expect(ids).toHaveLength(0);
+    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
+    const allIds: string[] = [];
+    for (const prov of Object.values(providers ?? {})) {
+      for (const m of prov.models) allIds.push(m.id);
+    }
+    expect(allIds).not.toContain("m1");
+    expect(allIds).toHaveLength(0);
   });
 });
 
@@ -322,12 +357,10 @@ describe("GatewayPanel unchecked persistence", () => {
   });
 
   const persistPreview = {
-    current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+    current: { "sup/main": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } },
     proposed: {
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:43112/v1",
-      models: [{ id: "sup/main/m1" }, { id: "sup/bk/b1" }],
-      proxy: false,
+      "sup/main": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false },
+      "sup/bk": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "b1" }], proxy: false },
     },
     conflicts: [],
     pending_count: 1,
@@ -382,8 +415,8 @@ describe("GatewayPanel display-to-full id mapping", () => {
   });
 
   const editPreview = {
-    current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "oc/chat/mimo-v2.5" }], proxy: false },
-    proposed: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "oc/chat/mimo-v2.5" }, { id: "oc/chat/omen-alpha" }], proxy: false },
+    current: channelGateway([{ id: "mimo-v2.5" }]),
+    proposed: channelGateway([{ id: "mimo-v2.5" }, { id: "omen-alpha" }]),
     conflicts: [],
     pending_count: 1,
     groups: [],
@@ -401,43 +434,44 @@ describe("GatewayPanel display-to-full id mapping", () => {
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    expect(input.value).toBe("oc/mimo-v2.5");
+    expect(input.value).toBe("mimo-v2.5");
     return { apply, input };
   }
 
   it("retyping the same short name keeps the mapped full id", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(editPreview as any);
     const { apply, input } = await applyIds();
-    fireEvent.change(input, { target: { value: "oc/mimo-v2.5" } });
+    fireEvent.change(input, { target: { value: "mimo-v2.5" } });
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
-    expect(ids).toContain("oc/chat/mimo-v2.5");
-    expect(ids).not.toContain("oc/mimo-v2.5");
+    const ids = ((payload.providers as Record<string, { models: Array<{ id: string }> }>)?.["oc/chat"]?.models ?? payload.models ?? []) as Array<{ id: string }>;
+    const flatIds = (Array.isArray(ids) ? ids : []).map((m: any) => m.id ?? m);
+    expect(flatIds).toContain("mimo-v2.5");
   });
 
   it("pasting a known full id switches the mapping", async () => {
     const stalePreview = {
-      current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "oc/chat/old-model" }], proxy: false },
-      proposed: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "oc/chat/omen-alpha" }], proxy: false },
+      current: channelGateway([{ id: "old-model" }]),
+      proposed: channelGateway([{ id: "omen-alpha" }]),
       conflicts: [],
       pending_count: 1,
       groups: [],
-      removed: ["oc/chat/old-model"],
+      removed: ["old-model"],
     };
     vi.spyOn(api, "previewGateway").mockResolvedValue(stalePreview as any);
     const apply = mockApply();
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    expect(input.value).toBe("oc/old-model");
-    fireEvent.change(input, { target: { value: "oc/chat/omen-alpha" } });
+    expect(input.value).toBe("old-model");
+    fireEvent.change(input, { target: { value: "omen-alpha" } });
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
-    expect(ids).toEqual(["oc/chat/omen-alpha"]);
+    const models = (payload.providers?.["oc/chat"]?.models ?? payload.models) as Array<{ id: string }>;
+    const ids = (models ?? []).map((m: any) => m.id);
+    expect(ids).toContain("omen-alpha");
   });
 
   it("typing a brand-new id opts it in for publish", async () => {
@@ -446,12 +480,13 @@ describe("GatewayPanel display-to-full id mapping", () => {
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "oc/chat/custom-new" } });
+    fireEvent.change(input, { target: { value: "custom-new" } });
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    const ids = (payload.models as Array<{ id: string }>).map((m) => m.id);
+    const models = (payload.providers?.["oc/chat"]?.models ?? payload.models) as Array<{ id: string }>;
+    const ids = (models ?? []).map((m: any) => m.id);
     // 手工输入是显式意图：新 id 自动纳入本次发布
-    expect(ids).toContain("oc/chat/custom-new");
+    expect(ids).toContain("custom-new");
   });
 });

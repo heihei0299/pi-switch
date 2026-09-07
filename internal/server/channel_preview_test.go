@@ -16,15 +16,12 @@ func TestGatewayPreview_GroupsBySupplierChannel(t *testing.T) {
 	dir := t.TempDir()
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","models":[],"upstreams":[
-			{"name":"main","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}],"exposedModels":["m1"]},
-			{"name":"bk","baseUrl":"http://b","apiKey":"k","models":[{"id":"b1","contextWindow":200,"maxTokens":20}],"exposedModels":["b1"]}]},
-		"leg":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://c","apiKey":"k","models":[{"id":"old","contextWindow":128000,"maxTokens":16384}],"exposedModels":["old"]}},
+			{"name":"main","api":"openai-completions","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}],"exposedModels":["m1"]},
+			{"name":"bk","api":"openai-completions","baseUrl":"http://b","apiKey":"k","models":[{"id":"b1","contextWindow":200,"maxTokens":20}],"exposedModels":["b1"]}]},
+		"leg":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://c","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://c","apiKey":"k","models":[{"id":"old","contextWindow":128000,"maxTokens":16384}],"exposedModels":["old"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	p := writeChannelConfig(t, dir, cfgJSON)
-	modelsJSON := `{"providers":{"pi-switch":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[
-		{"id":"sup/main/m1","contextWindow":100,"maxTokens":10},
-		{"id":"leg/old","contextWindow":128000,"maxTokens":16384},
-		{"id":"ghost/x","contextWindow":10,"maxTokens":10}]}}}`
+	modelsJSON := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"m1","contextWindow":100,"maxTokens":10}]},"leg/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"old","contextWindow":128000,"maxTokens":16384}]},"legacy":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"ghost/x","contextWindow":10,"maxTokens":10}]}}}`
 	mp := filepath.Join(dir, "models.json")
 	if err := os.WriteFile(mp, []byte(modelsJSON), 0644); err != nil {
 		t.Fatalf("write models: %v", err)
@@ -64,9 +61,9 @@ func TestGatewayPreview_GroupsBySupplierChannel(t *testing.T) {
 		}
 	}
 	want := map[string]string{
-		"sup/main/m1": "published",
-		"sup/bk/b1":   "pending",
-		"leg//old":    "published",
+		"sup/main/m1":  "published",
+		"sup/bk/b1":    "pending",
+		"leg/main/old": "published",
 	}
 	for k, ws := range want {
 		if got[k] != ws {
@@ -75,7 +72,7 @@ func TestGatewayPreview_GroupsBySupplierChannel(t *testing.T) {
 	}
 	// removed
 	removed, _ := resp["removed"].([]interface{})
-	if len(removed) != 1 || removed[0].(string) != "ghost/x" {
-		t.Fatalf("removed = %v, want [ghost/x]", removed)
+	if len(removed) != 1 || removed[0].(string) != "legacy/ghost/x" {
+		t.Fatalf("removed = %v, want [legacy/ghost/x]", removed)
 	}
 }

@@ -47,7 +47,7 @@ func TestMultiSupplier_UpstreamAggregationAndModelRoutingAndGatewayPublish(t *te
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-a", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "a"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
+			"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	})
 	defer mockA.Close()
@@ -60,7 +60,7 @@ func TestMultiSupplier_UpstreamAggregationAndModelRoutingAndGatewayPublish(t *te
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-b", "object": "chat.completion", "model": "claude-3",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "b"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 20, "completion_tokens": 10},
+			"usage":   map[string]interface{}{"prompt_tokens": 20, "completion_tokens": 10},
 		})
 	})
 	defer mockB.Close()
@@ -248,7 +248,7 @@ func TestMultiSupplier_FailoverAndHotUpdate(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-b", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "ok"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
+			"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	}))
 	defer mockB.Close()
@@ -323,7 +323,7 @@ func TestMultiSupplier_FailoverAndHotUpdate(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-b2", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "from-b"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 7, "completion_tokens": 3},
+			"usage":   map[string]interface{}{"prompt_tokens": 7, "completion_tokens": 3},
 		})
 	}))
 	defer mockBSuccess.Close()
@@ -382,7 +382,7 @@ func TestMultiSupplier_ConversationSourceModes(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "chatcmpl-x", "object": "chat.completion", "model": "gpt-4o-mini",
 				"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "ok"}}},
-				"usage": map[string]interface{}{"prompt_tokens": 100, "completion_tokens": 50, "prompt_tokens_details": map[string]interface{}{"cached_tokens": 10}},
+				"usage":   map[string]interface{}{"prompt_tokens": 100, "completion_tokens": 50, "prompt_tokens_details": map[string]interface{}{"cached_tokens": 10}},
 			})
 		}))
 	}

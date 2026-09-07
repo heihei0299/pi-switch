@@ -40,7 +40,7 @@ func TestChannelValidation_NameRules(t *testing.T) {
 		{"duplicate name", `,"upstreams":[{"name":"c1","baseUrl":"http://a","apiKey":"k"},{"name":"c1","baseUrl":"http://b","apiKey":"k"}]`, 400},
 		{"space in name", `,"upstreams":[{"name":"bad name","baseUrl":"http://a","apiKey":"k"}]`, 400},
 		{"too long", `,"upstreams":[{"name":"123456789012345678901234567890123","baseUrl":"http://a","apiKey":"k"}]`, 400},
-		{"valid pair", `,"upstreams":[{"name":"main","baseUrl":"http://a","apiKey":"k"},{"name":"bk-2_x","baseUrl":"http://b","apiKey":"k"}]`, 200},
+		{"valid pair", `,"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://a","apiKey":"k"},{"name":"bk-2_x","api":"openai-completions","baseUrl":"http://b","apiKey":"k"}]`, 200},
 		{"no upstreams", ``, 200},
 	}
 	for i, tc := range cases {

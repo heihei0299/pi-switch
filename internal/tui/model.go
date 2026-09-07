@@ -56,7 +56,8 @@ func New(cfg config.PiSwitchConfig) Model {
 		cur = *cfg.Current
 	}
 	for name, prof := range cfg.Profiles {
-		desc := fmt.Sprintf("api=%s models=%d exposed=%d", prof.API, len(prof.Models), len(prof.ExposedModels))
+		models, exposed := channelCounts(prof)
+		desc := fmt.Sprintf("api=%s models=%d exposed=%d", prof.API, models, exposed)
 		items = append(items, profileItem{name: name, current: name == cur, detail: desc})
 	}
 	if len(items) == 0 {
@@ -85,13 +86,10 @@ func (m *Model) refreshGateway() {
 				}
 			}
 		}
-		m.gatewayPreview = fmt.Sprintf("Gateway %s @ %s:%d  models=%d",
-			m.cfg.Settings.ProviderPrefix, m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port, total)
-	} else if models, ok := preview["models"].([]interface{}); ok {
-		m.gatewayPreview = fmt.Sprintf("Gateway %s @ %s:%d  models=%d",
-			m.cfg.Settings.ProviderPrefix, m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port, len(models))
+		m.gatewayPreview = fmt.Sprintf("Gateway @ %s:%d  models=%d",
+			m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port, total)
 	} else {
-		m.gatewayPreview = fmt.Sprintf("Gateway %s @ %s:%d", m.cfg.Settings.ProviderPrefix, m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port)
+		m.gatewayPreview = fmt.Sprintf("Gateway @ %s:%d", m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port)
 	}
 }
 
@@ -188,7 +186,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						newItems := []list.Item{}
 						cur := name
 						for n, prof := range m.cfg.Profiles {
-							desc := fmt.Sprintf("api=%s models=%d exposed=%d", prof.API, len(prof.Models), len(prof.ExposedModels))
+							models, exposed := channelCounts(prof)
+							desc := fmt.Sprintf("api=%s models=%d exposed=%d", prof.API, models, exposed)
 							newItems = append(newItems, profileItem{name: n, current: n == cur, detail: desc})
 						}
 						m.list.SetItems(newItems)
@@ -205,6 +204,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+func channelCounts(prof config.ProviderProfile) (models, exposed int) {
+	for _, channel := range prof.Upstreams {
+		models += len(channel.Models)
+		exposed += len(channel.ExposedModels)
+	}
+	return models, exposed
 }
 
 func (m Model) View() string {

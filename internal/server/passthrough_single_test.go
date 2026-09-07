@@ -32,7 +32,7 @@ func TestPassthrough_429Isolated(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-b", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "b"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 1, "completion_tokens": 1},
+			"usage":   map[string]interface{}{"prompt_tokens": 1, "completion_tokens": 1},
 		})
 	}))
 	defer mockB.Close()
@@ -42,11 +42,11 @@ func TestPassthrough_429Isolated(t *testing.T) {
 		"version":2,
 		"current":%q,
 		"profiles":{
-			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"gpt-4o-mini"}],"exposedModels":["gpt-4o-mini"]},
-			"supplier-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b","models":[{"id":"other-model"}],"exposedModels":["other-model"]}
+			"supplier-a":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-a","upstreams":[{"name":"main","api":"openai-completions","baseUrl":%q,"apiKey":"sk-a","models":[{"id":"gpt-4o-mini"}],"exposedModels":["gpt-4o-mini"]}]},
+			"supplier-b":{"api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-b","upstreams":[{"name":"main","api":"openai-completions","baseUrl":%q,"apiKey":"sk-b","models":[{"id":"other-model"}],"exposedModels":["other-model"]}]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","conversationSource":"off","proxy":{"host":"127.0.0.1","port":43112,"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},"web":{"host":"127.0.0.1","port":43110}}
-	}`, current, mockA.URL+"/v1", mockB.URL+"/v1")
+	}`, current, mockA.URL+"/v1", mockA.URL+"/v1", mockB.URL+"/v1", mockB.URL+"/v1")
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}

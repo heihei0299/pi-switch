@@ -30,29 +30,21 @@ type RequestScopedError struct {
 }
 
 type Upstream struct {
-	BaseURL string            `json:"baseUrl"`
-	APIKey  string            `json:"apiKey"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Weight  *uint32           `json:"weight,omitempty"`
-	Name    *string           `json:"name,omitempty"`
-	API           string `json:"api,omitempty"`
-	ResponsesMode string `json:"responsesMode,omitempty"`
+	BaseURL       string            `json:"baseUrl"`
+	APIKey        string            `json:"apiKey"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	Weight        *uint32           `json:"weight,omitempty"`
+	Name          *string           `json:"name,omitempty"`
+	API           string            `json:"api,omitempty"`
+	ResponsesMode string            `json:"responsesMode,omitempty"`
 	// RequestRetry overrides the profile/global retry budget for attempts
 	// through this channel. Nil or negative inherits; explicit 0 admits round 0 only.
 	RequestRetry *int `json:"requestRetry,omitempty"`
 	// DisableCooling overrides cooling for this channel when non-nil.
 	DisableCooling *bool `json:"disableCooling,omitempty"`
-	// Models / ExposedModels: per-channel partitioned model pool and exposure set.
-	// Nil/empty = unpartitioned (falls back to profile top-level legacy fields).
+	// Models / ExposedModels are owned by this channel.
 	Models        []ModelEntry `json:"models,omitempty"`
 	ExposedModels []string     `json:"exposedModels,omitempty"`
-}
-
-func (u Upstream) EffectiveAPI(fallback string) string {
-	if u.API != "" {
-		return u.API
-	}
-	return fallback
 }
 
 func (u Upstream) EffectiveResponsesMode(fallback string) string {
@@ -63,13 +55,13 @@ func (u Upstream) EffectiveResponsesMode(fallback string) string {
 }
 
 func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
-	effectiveAPI := u.EffectiveAPI(profile.API)
+	if u.API == "" {
+		return fmt.Errorf("api is required for each upstream")
+	}
 	effectiveMode := u.EffectiveResponsesMode(profile.ResponsesMode)
-	if u.API != "" {
-		allowed := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
-		if !allowed[u.API] {
-			return fmt.Errorf("unsupported api %s", u.API)
-		}
+	allowed := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
+	if !allowed[u.API] {
+		return fmt.Errorf("unsupported api %s", u.API)
 	}
 	if effectiveMode == "" {
 		effectiveMode = "auto"
@@ -77,11 +69,11 @@ func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	if effectiveMode == "auto" {
 		return nil
 	}
-	if effectiveMode == "passthrough" && effectiveAPI != "openai-responses" {
-		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", effectiveAPI)
+	if effectiveMode == "passthrough" && u.API != "openai-responses" {
+		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", u.API)
 	}
-	if effectiveMode == "convert" && effectiveAPI != "openai-completions" {
-		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", effectiveAPI)
+	if effectiveMode == "convert" && u.API != "openai-completions" {
+		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", u.API)
 	}
 	if effectiveMode != "passthrough" && effectiveMode != "convert" {
 		return fmt.Errorf("invalid responsesMode %q", effectiveMode)
@@ -99,9 +91,7 @@ type ProviderProfile struct {
 	BaseURL           string                 `json:"baseUrl"`
 	APIKey            string                 `json:"apiKey"`
 	Upstreams         []Upstream             `json:"upstreams,omitempty"`
-	Models            []ModelEntry           `json:"models"`
 	Headers           map[string]string      `json:"headers,omitempty"`
-	ExposedModels     []string               `json:"exposedModels,omitempty"`
 	ModelMap          map[string]interface{} `json:"modelMap,omitempty"`
 	UserAgent         *string                `json:"userAgent,omitempty"`
 	Preset            *string                `json:"preset,omitempty"`
@@ -123,9 +113,7 @@ type CircuitBreakerSettings struct {
 	CooldownSeconds  int  `json:"cooldownSeconds"`
 }
 type Settings struct {
-	ProviderPrefix     string `json:"providerPrefix"`
 	WriteMode          string `json:"writeMode"`
-	GatewayAPI         string `json:"gatewayApi"`
 	ConversationSource string `json:"conversationSource"`
 	Proxy              struct {
 		Host           string                 `json:"host"`
@@ -157,9 +145,7 @@ type Settings struct {
 
 func (s *Settings) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 || string(data) == "null" {
-		s.ProviderPrefix = "pi-switch"
 		s.WriteMode = "gateway"
-		s.GatewayAPI = "openai-completions"
 		s.ConversationSource = "sessionScan"
 		s.Proxy.Host = "127.0.0.1"
 		s.Proxy.Port = 43112
@@ -172,14 +158,8 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if vv, ok := raw["providerPrefix"]; ok {
-		_ = json.Unmarshal(vv, &s.ProviderPrefix)
-	}
 	if vv, ok := raw["writeMode"]; ok {
 		_ = json.Unmarshal(vv, &s.WriteMode)
-	}
-	if vv, ok := raw["gatewayApi"]; ok {
-		_ = json.Unmarshal(vv, &s.GatewayAPI)
 	}
 	if vv, ok := raw["conversationSource"]; ok {
 		var cs string
@@ -208,14 +188,8 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 	if vv, ok := raw["web"]; ok {
 		_ = json.Unmarshal(vv, &s.Web)
 	}
-	if s.ProviderPrefix == "" {
-		s.ProviderPrefix = "pi-switch"
-	}
 	if s.WriteMode == "" {
 		s.WriteMode = "gateway"
-	}
-	if s.GatewayAPI == "" {
-		s.GatewayAPI = "openai-completions"
 	}
 	if s.ConversationSource == "" {
 		s.ConversationSource = "sessionScan"
@@ -263,6 +237,7 @@ type PiSwitchConfig struct {
 
 func DefaultConfig() PiSwitchConfig {
 	pp := "test-provider"
+	channel := "main"
 	return PiSwitchConfig{
 		Version: 2,
 		Current: &pp,
@@ -272,15 +247,18 @@ func DefaultConfig() PiSwitchConfig {
 				ResponsesMode: "auto",
 				BaseURL:       "https://api.openai.com/v1",
 				APIKey:        "sk-prototype-not-real",
-				Models: []ModelEntry{
-					{ID: "gpt-4o-mini", ContextWindow: 128000, MaxTokens: 16384, Cost: &ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075}},
-				},
+				Upstreams: []Upstream{{
+					Name:          &channel,
+					API:           "openai-completions",
+					BaseURL:       "https://api.openai.com/v1",
+					APIKey:        "sk-prototype-not-real",
+					Models:        []ModelEntry{{ID: "gpt-4o-mini", ContextWindow: 128000, MaxTokens: 16384, Cost: &ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075}}},
+					ExposedModels: []string{"gpt-4o-mini"},
+				}},
 			},
 		},
 		Settings: Settings{
-			ProviderPrefix:     "pi-switch",
 			WriteMode:          "gateway",
-			GatewayAPI:         "openai-completions",
 			ConversationSource: "sessionScan",
 			Proxy: struct {
 				Host                          string                 `json:"host"`
@@ -315,22 +293,7 @@ func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
 	default:
 		out.Settings.ConversationSource = "sessionScan"
 	}
-	for name, prof := range out.Profiles {
-		out.Profiles[name] = MigrateTopLevelToFirstChannel(prof)
-	}
 	return out
-}
-
-// HasChannelPartitions reports whether any upstream carries partitioned
-// models/exposedModels. When false, readers fall back to the profile
-// top-level legacy fields.
-func (p ProviderProfile) HasChannelPartitions() bool {
-	for _, u := range p.Upstreams {
-		if len(u.Models) > 0 || len(u.ExposedModels) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // ChannelName returns the stable key of the i-th upstream ("" when unnamed).
@@ -344,46 +307,14 @@ func (p ProviderProfile) ChannelName(i int) string {
 	return *p.Upstreams[i].Name
 }
 
-// ChannelView returns the effective (models, exposed) for a channel:
-// partitioned data wins; legacy top-level is the fallback only while no
-// partitions exist (unpartitioned channels never inherit top-level once
-// partitioned, preserving cross-channel isolation).
+// ChannelView returns the models and exposed ids owned by the named channel.
 func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
-	if !p.HasChannelPartitions() {
-		// Legacy mode: top-level serves the primary (first/unnamed) channel.
-		if name == "" || len(p.Upstreams) == 0 || p.ChannelName(0) == name {
-			return p.Models, p.ExposedModels
-		}
-		return nil, nil
-	}
 	for i := range p.Upstreams {
 		if p.ChannelName(i) == name {
 			return p.Upstreams[i].Models, p.Upstreams[i].ExposedModels
 		}
 	}
 	return nil, nil
-}
-
-// MigrateTopLevelToFirstChannel moves legacy top-level models/exposedModels
-// into the first upstream. No-op when there are no upstreams, the first
-// channel already holds data (never overwrites), or top-level is empty.
-// Safe to call before any channel-scoped write: it only fills an empty
-// first channel, so just-written partitions are never clobbered.
-func MigrateTopLevelToFirstChannel(p ProviderProfile) ProviderProfile {
-	if len(p.Upstreams) == 0 {
-		return p
-	}
-	if len(p.Upstreams[0].Models) > 0 || len(p.Upstreams[0].ExposedModels) > 0 {
-		return p
-	}
-	if len(p.Models) == 0 && len(p.ExposedModels) == 0 {
-		return p
-	}
-	p.Upstreams[0].Models = p.Models
-	p.Upstreams[0].ExposedModels = p.ExposedModels
-	p.Models = nil
-	p.ExposedModels = nil
-	return p
 }
 
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
@@ -412,14 +343,8 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	if v, ok := raw["settings"]; ok {
 		_ = json.Unmarshal(v, &cfg.Settings)
 	}
-	if cfg.Settings.ProviderPrefix == "" {
-		cfg.Settings.ProviderPrefix = "pi-switch"
-	}
 	if cfg.Settings.WriteMode == "" {
 		cfg.Settings.WriteMode = "gateway"
-	}
-	if cfg.Settings.GatewayAPI == "" {
-		cfg.Settings.GatewayAPI = "openai-completions"
 	}
 	if cfg.Settings.ConversationSource == "" {
 		cfg.Settings.ConversationSource = "sessionScan"

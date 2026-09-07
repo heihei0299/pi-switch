@@ -15,10 +15,10 @@ func TestProxyModels_ChannelPrefixedIDs(t *testing.T) {
 	dir := t.TempDir()
 	cfgJSON := `{"version":2,"current":"sup","profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","models":[],"upstreams":[
-			{"name":"main","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}],"exposedModels":["m1"]},
-			{"name":"bk","baseUrl":"http://b","apiKey":"k","models":[{"id":"m1","contextWindow":200,"maxTokens":20}],"exposedModels":[]}]},
-		"leg":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://c","apiKey":"k","models":[{"id":"old","contextWindow":128000,"maxTokens":16384}],"exposedModels":["old"]},
-		"empty":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://d","apiKey":"k","models":[{"id":"hid","contextWindow":100,"maxTokens":10}],"exposedModels":[]}},
+			{"name":"main","api":"openai-completions","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}],"exposedModels":["m1"]},
+			{"name":"bk","api":"openai-completions","baseUrl":"http://b","apiKey":"k","models":[{"id":"m1","contextWindow":200,"maxTokens":20}],"exposedModels":[]}]},
+		"leg":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://c","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://c","apiKey":"k","models":[{"id":"old","contextWindow":128000,"maxTokens":16384}],"exposedModels":["old"]}]},
+		"empty":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://d","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://d","apiKey":"k","models":[{"id":"hid","contextWindow":100,"maxTokens":10}],"exposedModels":[]}]}} ,
 		"settings":{"providerPrefix":"pi-switch"}}`
 	p := writeChannelConfig(t, dir, cfgJSON)
 	_ = p
@@ -43,8 +43,8 @@ func TestProxyModels_ChannelPrefixedIDs(t *testing.T) {
 	if got["m1"] != "sup/main" {
 		t.Fatalf("m1 owned_by = %q want sup/main, got %v", got["m1"], got)
 	}
-	if got["old"] != "leg" {
-		t.Fatalf("old owned_by = %q want leg, got %v", got["old"], got)
+	if got["old"] != "leg/main" {
+		t.Fatalf("old owned_by = %q want leg/main, got %v", got["old"], got)
 	}
 	if _, ok := got["hid"]; ok {
 		t.Fatalf("empty/hid must not be exposed, got %v", got)

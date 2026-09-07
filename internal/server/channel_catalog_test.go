@@ -36,8 +36,9 @@ func TestGatewayPreview_CatalogFillsMissing(t *testing.T) {
 	writeCatalogCache(t, dir)
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
 			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
-			"exposedModels":["test-model"]}},
+			"exposedModels":["test-model"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	r := NewMgmtRouter()
@@ -52,18 +53,8 @@ func TestGatewayPreview_CatalogFillsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	prop := resp["proposed"].(map[string]interface{})
-	var models []interface{}
-	if provs, ok := prop["sup"]; ok {
-		// new per-channel wrapper: proposed is providers map
-		entry := provs.(map[string]interface{})
-		models = entry["models"].([]interface{})
-	} else if provs, ok := prop["providers"]; ok {
-		// wrapper nested
-		pm := provs.(map[string]interface{})["sup"].(map[string]interface{})
-		models = pm["models"].([]interface{})
-	} else {
-		models = prop["models"].([]interface{})
-	}
+	providers := prop["sup/main"].(map[string]interface{})
+	models := providers["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("models = %v", models)
 	}
@@ -95,8 +86,9 @@ func TestGatewayPreview_CatalogUnmatchedSkipped(t *testing.T) {
 	writeCatalogCache(t, dir)
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
 			"models":[{"id":"ghost-model","contextWindow":100,"maxTokens":10}],
-			"exposedModels":["ghost-model"]}},
+			"exposedModels":["ghost-model"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	r := NewMgmtRouter()
@@ -106,16 +98,8 @@ func TestGatewayPreview_CatalogUnmatchedSkipped(t *testing.T) {
 	var resp map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	prop := resp["proposed"].(map[string]interface{})
-	var m map[string]interface{}
-	if provs, ok := prop["sup"]; ok {
-		entry := provs.(map[string]interface{})
-		m = entry["models"].([]interface{})[0].(map[string]interface{})
-	} else if provs, ok := prop["providers"]; ok {
-		pm := provs.(map[string]interface{})["sup"].(map[string]interface{})
-		m = pm["models"].([]interface{})[0].(map[string]interface{})
-	} else {
-		m = prop["models"].([]interface{})[0].(map[string]interface{})
-	}
+	providers := prop["sup/main"].(map[string]interface{})
+	m := providers["models"].([]interface{})[0].(map[string]interface{})
 	if _, ok := m["cost"]; ok {
 		t.Fatalf("unmatched model must not gain cost: %v", m)
 	}
@@ -133,14 +117,15 @@ func TestGatewayPublish_CatalogFillsBeforeWrite(t *testing.T) {
 	writeCatalogCache(t, dir)
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
 			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
-			"exposedModels":["test-model"]}},
+			"exposedModels":["test-model"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	mp := filepath.Join(dir, "models.json")
 	t.Setenv("PI_SWITCH_MODELS", mp)
 	r := NewMgmtRouter()
-	payload := `{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"sup/test-model"}]}`
+	payload := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -156,7 +141,7 @@ func TestGatewayPublish_CatalogFillsBeforeWrite(t *testing.T) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	entry := stored["providers"].(map[string]interface{})["pi-switch"].(map[string]interface{})
+	entry := stored["providers"].(map[string]interface{})["sup/main"].(map[string]interface{})
 	models := entry["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("stored models = %v", models)
@@ -176,8 +161,9 @@ func TestGatewayRoutePublish_CatalogFillsBeforeWrite(t *testing.T) {
 	writeCatalogCache(t, dir)
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
 			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
-			"exposedModels":["test-model"]}},
+			"exposedModels":["test-model"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	mp := filepath.Join(dir, "models.json")
@@ -197,7 +183,7 @@ func TestGatewayRoutePublish_CatalogFillsBeforeWrite(t *testing.T) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	entry := stored["providers"].(map[string]interface{})["sup"].(map[string]interface{})
+	entry := stored["providers"].(map[string]interface{})["sup/main"].(map[string]interface{})
 	m := entry["models"].([]interface{})[0].(map[string]interface{})
 	if m["contextWindow"] != float64(5000) {
 		t.Fatalf("route-published limits not enriched: %v", m)
@@ -215,15 +201,16 @@ func TestGatewayPut_WrapperEnrichedSameAsSingle(t *testing.T) {
 	writeCatalogCache(t, dir)
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
 			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
-			"exposedModels":["test-model"]}},
+			"exposedModels":["test-model"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	mp := filepath.Join(dir, "models.json")
 	t.Setenv("PI_SWITCH_MODELS", mp)
 	r := NewMgmtRouter()
 	// providers wrapper 经 PUT 写入：内层条目须与单条目同一口径被补齐。
-	payload := `{"providers":{"pi-switch":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"sup/test-model"}]}}}`
+	payload := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -245,7 +232,7 @@ func TestGatewayPut_WrapperEnrichedSameAsSingle(t *testing.T) {
 	walk = func(v interface{}) {
 		switch vv := v.(type) {
 		case map[string]interface{}:
-			if vv["id"] == "sup/test-model" {
+			if vv["id"] == "test-model" {
 				if cost, ok := vv["cost"].(map[string]interface{}); ok && cost["input"] == float64(1) {
 					found = true
 				}

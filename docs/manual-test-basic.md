@@ -75,9 +75,9 @@
 操作：
 
 1. 在供应商的模型列表中 expose 刚保存的模型（`PUT /api/profiles/:name/expose`）。
-2. 进 Gateway 页，看 `Current vs Proposed`：`proposed` 应多出 `manual-test-0902/<模型id>`，`pending_count > 0`（`GET /api/models/gateway/preview`）。
+2. 进 Gateway 页，看 `Current vs Proposed`：`proposed` 应多出 `providers[manual-test-0902/<channel>]` 下的裸模型 id，`pending_count > 0`（`GET /api/models/gateway/preview`）。
 3. 点「应用到 Pi」（`PUT /api/models/gateway`）。
-4. 验证落盘：检查 `~/.pi/agent/models.json` 的 `providers[<providerPrefix>]` 中出现该模型 id。
+4. 验证落盘：检查 `~/.pi/agent/models.json` 的 `providers[<supplier>/<channel>]` 中出现该模型的裸 id。
 
 断言：
 

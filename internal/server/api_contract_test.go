@@ -56,7 +56,7 @@ func TestApiContract_08_S1_TypesSync(t *testing.T) {
 		}
 	}
 	cs := string(cfgData)
-	for _, tag := range []string{`json:"responsesMode"`, `json:"api"`, `json:"baseUrl"`, `json:"models"`, `json:"exposedModels`} {
+	for _, tag := range []string{`json:"responsesMode"`, `json:"api"`, `json:"baseUrl"`, `json:"models,omitempty"`, `json:"exposedModels,omitempty`} {
 		if !strings.Contains(cs, tag) {
 			t.Fatalf("config.go missing json tag %s", tag)
 		}
@@ -336,7 +336,7 @@ func TestApiContract_08_S4_ProfileValidate400(t *testing.T) {
 	cfg := `{
 		"version":2,
 		"profiles":{
-			"base":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-test","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}]}
+			"base":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-test","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"https://api.openai.com/v1","apiKey":"sk-test","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}]}]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
 	}`
@@ -346,7 +346,7 @@ func TestApiContract_08_S4_ProfileValidate400(t *testing.T) {
 	r := NewMgmtRouter()
 
 	t.Run("duplicate_model_id", func(t *testing.T) {
-		body := `{"name":"dup-test","profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}]}}`
+		body := `{"name":"dup-test","profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}]}]}}`
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -358,7 +358,7 @@ func TestApiContract_08_S4_ProfileValidate400(t *testing.T) {
 			t.Fatalf("error should mention duplicate, got %s", w.Body.String())
 		}
 		// via PUT
-		body2 := `{"profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"a","contextWindow":128000,"maxTokens":16384},{"id":"a","contextWindow":128000,"maxTokens":16384}]}}`
+		body2 := `{"profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"a","contextWindow":128000,"maxTokens":16384},{"id":"a","contextWindow":128000,"maxTokens":16384}]}]}}`
 		w2 := httptest.NewRecorder()
 		req2, _ := http.NewRequest("PUT", "/api/profiles/base", strings.NewReader(body2))
 		req2.Header.Set("Content-Type", "application/json")
@@ -369,7 +369,7 @@ func TestApiContract_08_S4_ProfileValidate400(t *testing.T) {
 	})
 
 	t.Run("exposedModels_unknown", func(t *testing.T) {
-		body := `{"name":"expose-bad","profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["unknown-model"]}}`
+		body := `{"name":"expose-bad","profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["unknown-model"]}]}}`
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -381,7 +381,7 @@ func TestApiContract_08_S4_ProfileValidate400(t *testing.T) {
 			t.Fatalf("error should mention exposedModels/unknown, got %s", w.Body.String())
 		}
 		// PUT version
-		body2 := `{"profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["ghost-model"]}}`
+		body2 := `{"profile":{"api":"openai-completions","responsesMode":"auto","preset":"openai","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"https://api.openai.com/v1","apiKey":"sk-x","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["ghost-model"]}]}}`
 		w2 := httptest.NewRecorder()
 		req2, _ := http.NewRequest("PUT", "/api/profiles/base", strings.NewReader(body2))
 		req2.Header.Set("Content-Type", "application/json")

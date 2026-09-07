@@ -8,6 +8,94 @@ export function diffGateway(current: Record<string, unknown> | null, proposed: R
   if (!current) {
     return { added: Object.keys(proposed), removed: [], changed: [] };
   }
+  // Detect providers map (per-channel bare): each value has models array
+  const isProvidersMap = (obj: Record<string, unknown>) => {
+    const vals = Object.values(obj);
+    return vals.length > 0 && vals.some((v) => v && typeof v === "object" && !Array.isArray(v) && "models" in (v as Record<string, unknown>));
+  };
+  const curIsProviders = isProvidersMap(current);
+  const propIsProviders = isProvidersMap(proposed);
+  if (curIsProviders || propIsProviders) {
+    const curProvs = current as Record<string, Record<string, unknown>>;
+    const propProvs = proposed as Record<string, Record<string, unknown>>;
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+    const curKeys = new Set(Object.keys(curProvs));
+    const propKeys = new Set(Object.keys(propProvs));
+    for (const k of propKeys) {
+      if (!curKeys.has(k)) {
+        const entry = propProvs[k] as unknown as { models?: unknown[] };
+        const models = entry?.models;
+        if (Array.isArray(models)) {
+          for (const m of models) {
+            const id = (m as Record<string, unknown>)?.["id"] as string | undefined;
+            if (id) added.push(`${k}/${id}`);
+            else added.push(k);
+          }
+          if (models.length === 0) added.push(k);
+        } else {
+          added.push(k);
+        }
+      }
+    }
+    for (const k of curKeys) {
+      if (!propKeys.has(k)) {
+        const entry = curProvs[k] as unknown as { models?: unknown[] };
+        const models = entry?.models;
+        if (Array.isArray(models)) {
+          for (const m of models) {
+            const id = (m as Record<string, unknown>)?.["id"] as string | undefined;
+            if (id) removed.push(`${k}/${id}`);
+            else removed.push(k);
+          }
+          if (models.length === 0) removed.push(k);
+        } else {
+          removed.push(k);
+        }
+      }
+    }
+    for (const k of propKeys) {
+      if (!curKeys.has(k)) continue;
+      const curEntry = curProvs[k] as Record<string, unknown>;
+      const propEntry = propProvs[k] as Record<string, unknown>;
+      const curCopy = { ...curEntry } as Record<string, unknown>;
+      const propCopy = { ...propEntry } as Record<string, unknown>;
+      delete curCopy["models"];
+      delete propCopy["models"];
+      if (JSON.stringify(curCopy) !== JSON.stringify(propCopy)) {
+        changed.push(k);
+      }
+      const curModels = (curEntry["models"] as unknown[] | undefined) || [];
+      const propModels = (propEntry["models"] as unknown[] | undefined) || [];
+      const curById = new Map<string, unknown>();
+      const propById = new Map<string, unknown>();
+      for (const m of curModels) {
+        const id = (m as Record<string, unknown>)?.["id"] as string | undefined;
+        if (id) curById.set(id, m);
+      }
+      for (const m of propModels) {
+        const id = (m as Record<string, unknown>)?.["id"] as string | undefined;
+        if (id) propById.set(id, m);
+      }
+      for (const [id, propM] of propById) {
+        if (!curById.has(id)) {
+          added.push(`${k}/${id}`);
+        } else {
+          const curM = curById.get(id);
+          if (JSON.stringify(curM) !== JSON.stringify(propM)) {
+            changed.push(`${k}/${id}`);
+          }
+        }
+      }
+      for (const [id] of curById) {
+        if (!propById.has(id)) {
+          removed.push(`${k}/${id}`);
+        }
+      }
+    }
+    return { added, removed, changed };
+  }
   const curKeys = new Set(Object.keys(current));
   const propKeys = new Set(Object.keys(proposed));
   const added: string[] = [];
@@ -58,30 +146,47 @@ export function validateGatewayJson(text: string): ValidateResult {
     return { ok: false, error: "gateway must be an object" };
   }
   const obj = value as Record<string, unknown>;
-  const api = obj["api"];
-  if (typeof api !== "string" || !api) {
-    return { ok: false, error: "gateway.api is required" };
-  }
-  if (!SUPPORTED_APIS.includes(api)) {
-    return { ok: false, error: `gateway.api is not supported: ${api}` };
-  }
-  const baseUrl = obj["baseUrl"];
-  if (typeof baseUrl !== "string" || !baseUrl) {
-    return { ok: false, error: "gateway.baseUrl is required" };
-  }
-  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-    return { ok: false, error: "gateway.baseUrl must start with http:// or https://" };
-  }
-  const models = obj["models"];
-  if (!Array.isArray(models)) {
-    return { ok: false, error: "gateway.models must be an array" };
-  }
-  for (let i = 0; i < models.length; i++) {
-    const m = models[i] as Record<string, unknown>;
-    const id = m?.["id"];
-    if (typeof id !== "string" || !id.trim()) {
-      return { ok: false, error: `gateway.models[${i}].id must not be empty` };
+  // Providers wrapper: { providers: { "supplier/channel": { api, baseUrl, models } } }
+  if ("providers" in obj) {
+    const provs = obj["providers"];
+    if (typeof provs !== "object" || provs === null || Array.isArray(provs)) {
+      return { ok: false, error: "gateway.providers must be an object" };
     }
+    for (const [key, entry] of Object.entries(provs as Record<string, unknown>)) {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        return { ok: false, error: `gateway.providers[${key}] must be object` };
+      }
+      const rec = entry as Record<string, unknown>;
+      const api = rec["api"];
+      if (typeof api !== "string" || !api) {
+        return { ok: false, error: `gateway.providers[${key}].api is required` };
+      }
+      if (!SUPPORTED_APIS.includes(api as string)) {
+        return { ok: false, error: `gateway.providers[${key}].api is not supported: ${api}` };
+      }
+      const baseUrl = rec["baseUrl"];
+      if (typeof baseUrl !== "string" || !baseUrl) {
+        return { ok: false, error: `gateway.providers[${key}].baseUrl is required` };
+      }
+      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+        return { ok: false, error: `gateway.providers[${key}].baseUrl must start with http:// or https://` };
+      }
+      const models = rec["models"];
+      if (!Array.isArray(models)) {
+        return { ok: false, error: `gateway.providers[${key}].models must be an array` };
+      }
+      for (let i = 0; i < models.length; i++) {
+        const m = models[i] as Record<string, unknown>;
+        const id = m?.["id"];
+        if (typeof id !== "string" || !id.trim()) {
+          return { ok: false, error: `gateway.providers[${key}].models[${i}].id must not be empty` };
+        }
+        if ((id as string).includes("/")) {
+          return { ok: false, error: `gateway.providers[${key}].models[${i}].id must not contain "/"` };
+        }
+      }
+    }
+    return { ok: true, value: obj };
   }
-  return { ok: true, value: obj };
+  return { ok: false, error: "gateway.providers is required" };
 }

@@ -76,8 +76,8 @@ func newMockUpstream(t *testing.T, capturedBody *string, capturedMaxTokens *int)
 			"model":   "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "hello"}}},
 			"usage": map[string]interface{}{
-				"prompt_tokens": 120,
-				"completion_tokens": 80,
+				"prompt_tokens":         120,
+				"completion_tokens":     80,
 				"prompt_tokens_details": map[string]interface{}{"cached_tokens": 10},
 			},
 		})

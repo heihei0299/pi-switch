@@ -8,9 +8,9 @@ import (
 
 func TestClampBody_NotInjectedWhenAbsent(t *testing.T) {
 	prof := config.ProviderProfile{
-		Models: []config.ModelEntry{{ID: "muse-spark-1.2-contributor", ContextWindow: 1048576, MaxTokens: 943718}},
+		Upstreams: []config.Upstream{{Models: []config.ModelEntry{{ID: "muse-spark-1.2-contributor", ContextWindow: 1048576, MaxTokens: 943718}}}},
 	}
-	entry := prof.Models[0]
+	entry := prof.Upstreams[0].Models[0]
 	body := map[string]interface{}{
 		"model": "muse-spark-1.2-contributor",
 		"input": "hi",
@@ -27,9 +27,9 @@ func TestClampBody_NotInjectedWhenAbsent(t *testing.T) {
 
 func TestClampBody_EncryptedContentConservative(t *testing.T) {
 	prof := config.ProviderProfile{
-		Models: []config.ModelEntry{{ID: "muse-spark-1.2-contributor", ContextWindow: 1048576, MaxTokens: 943718}},
+		Upstreams: []config.Upstream{{Models: []config.ModelEntry{{ID: "muse-spark-1.2-contributor", ContextWindow: 1048576, MaxTokens: 943718}}}},
 	}
-	entry := prof.Models[0]
+	entry := prof.Upstreams[0].Models[0]
 	// Simulate body with encrypted_content of 500k length, total rawLen 855k, requested 908720
 	// effectiveLen = 855k + 0.2*500k = 955k, est=318k, available=722k, clamped ~722k
 	encrypted := string(make([]byte, 500000))

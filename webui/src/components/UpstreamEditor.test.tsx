@@ -67,7 +67,7 @@ describe("ProfilesPanel Upstream list增删 (has_upstreams/resolved_upstreams)",
     const removeBtns = screen.getAllByRole("button", { name: "Remove" });
     fireEvent.click(removeBtns[0]);
     await waitFor(() => expect(screen.queryByDisplayValue("http://a/v1")).not.toBeInTheDocument());
-    expect(screen.getByText("Upstream #1")).toBeInTheDocument();
+    expect(screen.getByText(/Upstream #1/)).toBeInTheDocument();
   });
 
   it("saving with upstreams sends upstreams payload and keeps single field compat", async () => {
@@ -76,7 +76,7 @@ describe("ProfilesPanel Upstream list增删 (has_upstreams/resolved_upstreams)",
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(screen.getByText("Manage upstreams")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Manage upstreams"));
-    await waitFor(() => expect(screen.getByText("Upstream #1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Upstream #1/)).toBeInTheDocument());
     // edit first upstream baseUrl + name（渠道名必填，否则保存被前端拦截）
     const input = screen.getByDisplayValue("http://a/v1") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "http://b/v1" } });
@@ -87,16 +87,17 @@ describe("ProfilesPanel Upstream list增删 (has_upstreams/resolved_upstreams)",
     expect(payload.upstreams).toBeDefined();
     expect(payload.upstreams[0].baseUrl).toBe("http://b/v1");
     expect(payload.upstreams[0].name).toBe("main");
-    expect(payload.baseUrl).toBe("http://b/v1");
+    expect(payload.baseUrl).toBe("http://a/v1");
+    expect(payload.upstreams[0].api).toBe("openai-responses");
   });
 
   it("Use single button falls back to single fields", async () => {
     renderPanel(stateWith({ upstreams: [{ baseUrl: "http://a/v1", apiKey: "k1" } as any] }));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    await waitFor(() => expect(screen.getByText("Upstream #1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Upstream #1/)).toBeInTheDocument());
     fireEvent.click(screen.getByText("Use single"));
     await waitFor(() => expect(screen.getByPlaceholderText("https://api.example.com/v1")).toBeInTheDocument());
-    expect(screen.queryByText("Upstream #1")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Upstream #1/)).not.toBeInTheDocument();
   });
 
   it("display shows upstream count via resolvedUpstreams", async () => {

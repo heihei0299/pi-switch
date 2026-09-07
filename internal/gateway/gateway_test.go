@@ -17,21 +17,16 @@ func boolptr(b bool) *bool    { return &b }
 // 提议侧必须显式带 cacheWrite，写后读才能收敛到 pending=0。
 func TestProposedCostIncludesZeroCacheWrite(t *testing.T) {
 	cfg := config.PiSwitchConfig{
-		Settings: config.Settings{
-			GatewayAPI: "openai-responses",
-		},
 		Profiles: map[string]config.ProviderProfile{
 			"oc": {
-				Models: []config.ModelEntry{
-					{
+				Upstreams: []config.Upstream{{
+					Name: strptr("chat"), API: "openai-responses",
+					Models: []config.ModelEntry{{
 						ID: "mimo-v2.5", ContextWindow: 1048576, MaxTokens: 131072,
-						Name:      strptr("MiMo-V2.5"),
-						Cost:      &config.ModelCost{Input: 0.4, Output: 2, CacheRead: 0.08},
-						Input:     []string{"text", "image"},
-						Reasoning: boolptr(true),
-					},
-				},
-				ExposedModels: []string{"mimo-v2.5"},
+						Name: strptr("MiMo-V2.5"), Cost: &config.ModelCost{Input: 0.4, Output: 2, CacheRead: 0.08},
+						Input: []string{"text", "image"}, Reasoning: boolptr(true),
+					}}, ExposedModels: []string{"mimo-v2.5"},
+				}},
 			},
 		},
 	}
@@ -44,9 +39,9 @@ func TestProposedCostIncludesZeroCacheWrite(t *testing.T) {
 		t.Fatalf("proposed missing providers")
 	}
 	// legacy single -> oc
-	entry, _ := provs["oc"].(map[string]interface{})
+	entry, _ := provs["oc/chat"].(map[string]interface{})
 	if entry == nil {
-		t.Fatalf("providers missing oc: %v", provs)
+		t.Fatalf("providers missing oc/chat: %v", provs)
 	}
 	models, _ := entry["models"].([]interface{})
 	if len(models) != 1 {
@@ -66,21 +61,16 @@ func TestProposedCostIncludesZeroCacheWrite(t *testing.T) {
 // 经 MergeGatewayExtra 归一化后 ComputePendingCount 必须为 0。
 func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	cfg := config.PiSwitchConfig{
-		Settings: config.Settings{
-			GatewayAPI: "openai-responses",
-		},
 		Profiles: map[string]config.ProviderProfile{
 			"oc": {
-				Models: []config.ModelEntry{
-					{
+				Upstreams: []config.Upstream{{
+					Name: strptr("chat"), API: "openai-responses",
+					Models: []config.ModelEntry{{
 						ID: "mimo-v2.5", ContextWindow: 1048576, MaxTokens: 131072,
-						Name:      strptr("MiMo-V2.5"),
-						Cost:      &config.ModelCost{Input: 0.4, Output: 2, CacheRead: 0.08},
-						Input:     []string{"text", "image"},
-						Reasoning: boolptr(true),
-					},
-				},
-				ExposedModels: []string{"mimo-v2.5"},
+						Name: strptr("MiMo-V2.5"), Cost: &config.ModelCost{Input: 0.4, Output: 2, CacheRead: 0.08},
+						Input: []string{"text", "image"}, Reasoning: boolptr(true),
+					}}, ExposedModels: []string{"mimo-v2.5"},
+				}},
 			},
 		},
 	}
@@ -91,7 +81,7 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	// 模拟落盘 current：与 proposed 同构的 providers wrapper，cost 含 cacheWrite:0
 	current := map[string]interface{}{
 		"providers": map[string]interface{}{
-			"oc": map[string]interface{}{
+			"oc/chat": map[string]interface{}{
 				"api":     "openai-responses",
 				"baseUrl": "http://127.0.0.1:43112/v1",
 				"apiKey":  "pi-switch-proxy",
@@ -124,7 +114,6 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 // 跨渠道同裸 id 为独立条目；未分区 legacy 也按 supplier 裸 id 落盘。
 func TestProposedChannelPrefixedIDs(t *testing.T) {
 	cfg := config.PiSwitchConfig{
-		Settings: config.Settings{GatewayAPI: "openai-completions"},
 		Profiles: map[string]config.ProviderProfile{
 			"sup": {
 				API: "openai-completions",
@@ -144,9 +133,8 @@ func TestProposedChannelPrefixedIDs(t *testing.T) {
 				},
 			},
 			"legacy": {
-				API:           "openai-completions",
-				Models:        []config.ModelEntry{{ID: "old", ContextWindow: 128000, MaxTokens: 16384}},
-				ExposedModels: []string{"old"},
+				API:       "openai-completions",
+				Upstreams: []config.Upstream{{Name: strptr("main"), API: "openai-completions", Models: []config.ModelEntry{{ID: "old", ContextWindow: 128000, MaxTokens: 16384}}, ExposedModels: []string{"old"}}},
 			},
 		},
 	}
@@ -158,8 +146,8 @@ func TestProposedChannelPrefixedIDs(t *testing.T) {
 	if provs == nil {
 		t.Fatalf("providers nil")
 	}
-	// expect keys: sup/main, sup/bk, legacy (legacy without channel suffix for backward compat)
-	for _, want := range []string{"sup/main", "sup/bk", "legacy"} {
+	// every channel always has its own provider key
+	for _, want := range []string{"sup/main", "sup/bk", "legacy/main"} {
 		if _, ok := provs[want]; !ok {
 			t.Fatalf("providers missing %q: %v", want, provs)
 		}
@@ -184,7 +172,7 @@ func TestProposedChannelPrefixedIDs(t *testing.T) {
 	}
 	checkBare("sup/main", "m1")
 	checkBare("sup/bk", "m1")
-	checkBare("legacy", "old")
+	checkBare("legacy/main", "old")
 	// check per-channel api
 	if e, _ := provs["sup/main"].(map[string]interface{}); e["api"] != "openai-completions" {
 		t.Fatalf("sup/main api %v want openai-completions", e["api"])

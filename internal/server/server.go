@@ -556,12 +556,7 @@ func handleGetProfile(c *gin.Context) {
 		c.JSON(404, gin.H{"error": fmt.Sprintf("unknown profile '%s'", name)})
 		return
 	}
-	// providerId is providerPrefix? Use settings prefix?
-	pid := cfg.Settings.ProviderPrefix
-	if pid == "" {
-		pid = "pi-switch"
-	}
-	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": pid})
+	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": name})
 }
 
 func validateProfileResponsesMode(api, mode string) error {
@@ -1218,33 +1213,28 @@ func handlePutModels(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// 渠道池写入：先吸收遗留顶层进首渠道（仅空首渠道时），再定向覆盖目标渠道池。
-	if channel := body.Channel; channel != "" {
-		idx := channelIndex(prof, channel)
-		if idx < 0 {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
-			return
-		}
-		seen := map[string]bool{}
-		for _, m := range body.Models {
-			if strings.TrimSpace(m.ID) == "" {
-				c.JSON(400, gin.H{"error": "model id must not be empty"})
-				return
-			}
-			if seen[m.ID] {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("duplicate model id %q", m.ID)})
-				return
-			}
-			seen[m.ID] = true
-		}
-		prof = config.MigrateTopLevelToFirstChannel(prof)
-		prof.Upstreams[idx].Models = body.Models
-		cfg.Profiles[name] = prof
-		_ = saveConfig(cfg)
-		c.JSON(200, gin.H{"ok": true, "backup": nil, "enrich": gin.H{"enriched": 0}})
+	if body.Channel == "" {
+		c.JSON(400, gin.H{"error": "channel is required"})
 		return
 	}
-	prof.Models = body.Models
+	idx := channelIndex(prof, body.Channel)
+	if idx < 0 {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", body.Channel)})
+		return
+	}
+	seen := map[string]bool{}
+	for _, m := range body.Models {
+		if strings.TrimSpace(m.ID) == "" {
+			c.JSON(400, gin.H{"error": "model id must not be empty"})
+			return
+		}
+		if seen[m.ID] {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("duplicate model id %q", m.ID)})
+			return
+		}
+		seen[m.ID] = true
+	}
+	prof.Upstreams[idx].Models = body.Models
 	cfg.Profiles[name] = prof
 	_ = saveConfig(cfg)
 	c.JSON(200, gin.H{"ok": true, "backup": nil, "enrich": gin.H{"enriched": 0}})
@@ -1263,62 +1253,27 @@ func handlePutExpose(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// 渠道定向暴露：?channel=name 校验该渠道池归属并写入该渠道暴露集；
-	// 无参 + 已分区 → 回退首条渠道（兼容）；无参 + 未分区 → 顶层旧语义。
-	if channel := c.Query("channel"); channel != "" {
-		idx := channelIndex(prof, channel)
-		if idx < 0 {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
-			return
-		}
-		// 先吸收遗留顶层进首渠道，再按渠道池校验（modal 按回退视图编辑，数据一致）。
-		prof = config.MigrateTopLevelToFirstChannel(prof)
-		seen := map[string]bool{}
-		for _, m := range prof.Upstreams[idx].Models {
-			seen[m.ID] = true
-		}
-		for _, eid := range body.ModelIds {
-			if !seen[eid] {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q in channel %q", eid, channel)})
-				return
-			}
-		}
-		prof.Upstreams[idx].ExposedModels = body.ModelIds
-		cfg.Profiles[name] = prof
-		_ = saveConfig(cfg)
-		c.JSON(200, gin.H{"ok": true, "backup": nil})
+	channel := c.Query("channel")
+	if channel == "" {
+		c.JSON(400, gin.H{"error": "channel is required"})
 		return
 	}
-	// 分区回退：先吸收遗留顶层（首渠道空时），再写首渠道。
-	prof = config.MigrateTopLevelToFirstChannel(prof)
-	if prof.HasChannelPartitions() && len(prof.Upstreams) > 0 {
-		seen := map[string]bool{}
-		for _, m := range prof.Upstreams[0].Models {
-			seen[m.ID] = true
-		}
-		for _, eid := range body.ModelIds {
-			if !seen[eid] {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q", eid)})
-				return
-			}
-		}
-		prof.Upstreams[0].ExposedModels = body.ModelIds
-		cfg.Profiles[name] = prof
-		_ = saveConfig(cfg)
-		c.JSON(200, gin.H{"ok": true, "backup": nil})
+	idx := channelIndex(prof, channel)
+	if idx < 0 {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
 		return
 	}
 	seen := map[string]bool{}
-	for _, m := range prof.Models {
+	for _, m := range prof.Upstreams[idx].Models {
 		seen[m.ID] = true
 	}
 	for _, eid := range body.ModelIds {
 		if !seen[eid] {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q", eid)})
+			c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q in channel %q", eid, channel)})
 			return
 		}
 	}
-	prof.ExposedModels = body.ModelIds
+	prof.Upstreams[idx].ExposedModels = body.ModelIds
 	cfg.Profiles[name] = prof
 	_ = saveConfig(cfg)
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
@@ -1369,8 +1324,6 @@ func handleGetCredits(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// 主上游（首 channel）+ 全渠道模型池：渠道分区后顶层 Models 为空，
-	// 只看顶层会导致所有分区供应商恒返回全零。
 	baseURL := prof.BaseURL
 	apiKey := prof.APIKey
 	if len(prof.Upstreams) > 0 {
@@ -1381,13 +1334,11 @@ func handleGetCredits(c *gin.Context) {
 			apiKey = prof.Upstreams[0].APIKey
 		}
 	}
-	hasModels := len(prof.Models) > 0
-	if !hasModels {
-		for i := range prof.Upstreams {
-			if len(prof.Upstreams[i].Models) > 0 {
-				hasModels = true
-				break
-			}
+	hasModels := false
+	for i := range prof.Upstreams {
+		if len(prof.Upstreams[i].Models) > 0 {
+			hasModels = true
+			break
 		}
 	}
 	if baseURL == "" || !hasModels {
@@ -1512,23 +1463,6 @@ func validateProviderProfile(p config.ProviderProfile) error {
 			}
 		}
 	}
-	seen := map[string]bool{}
-	for _, m := range p.Models {
-		if strings.TrimSpace(m.ID) == "" {
-			return fmt.Errorf("model id must not be empty")
-		}
-		if seen[m.ID] {
-			return fmt.Errorf("duplicate model id %q", m.ID)
-		}
-		seen[m.ID] = true
-	}
-	if len(p.ExposedModels) > 0 {
-		for _, eid := range p.ExposedModels {
-			if !seen[eid] {
-				return fmt.Errorf("exposedModels references unknown model %q", eid)
-			}
-		}
-	}
 	return nil
 }
 
@@ -1545,8 +1479,15 @@ func handleValidate(c *gin.Context) {
 		if prof.BaseURL == "" && len(prof.Upstreams) == 0 {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.baseUrl", name), "message": "baseUrl required"})
 		}
-		if len(prof.Models) == 0 {
-			issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.models", name), "message": "no models"})
+		hasModels := false
+		for _, u := range prof.Upstreams {
+			if len(u.Models) > 0 {
+				hasModels = true
+				break
+			}
+		}
+		if !hasModels {
+			issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.upstreams", name), "message": "no models"})
 		}
 		if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
 			known := map[string]bool{"openai": true, "anthropic": true, "google": true, "deepseek": true, "xai": true, "moonshot": true, "qwen": true, "cohere": true, "mistral": true, "azure": true, "custom": true}
@@ -1593,8 +1534,6 @@ func handleWebUIInfo(c *gin.Context) {
 	c.JSON(200, gin.H{"authRequired": needAuth})
 }
 func handleGetGateway(c *gin.Context) {
-	// read models.json providers[prefix]
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	path := gateway.ModelsPath()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -1603,9 +1542,7 @@ func handleGetGateway(c *gin.Context) {
 	}
 	var m map[string]interface{}
 	_ = json.Unmarshal(b, &m)
-	provs, _ := m["providers"].(map[string]interface{})
-	gw := provs[cfg.Settings.ProviderPrefix]
-	c.JSON(200, gin.H{"gateway": gw})
+	c.JSON(200, gin.H{"gateway": m})
 }
 func handleGatewayPreview(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -1711,57 +1648,25 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 		}
 		return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 	}
-	models, _ := proposed["models"].([]interface{})
-	for _, m := range models {
-		mm, ok := m.(map[string]interface{})
-		if !ok {
-			skipped++
-			continue
-		}
-		id, _ := mm["id"].(string)
-		if id == "" {
-			skipped++
-			continue
-		}
-		supplier := ""
-		if idx := strings.Index(id, "/"); idx > 0 {
-			supplier = id[:idx]
-		}
-		var meta catalog.Meta
-		var found bool
-		if supplier != "" {
-			if prof, ok := cfg.Profiles[supplier]; ok {
-				pk := resolveModelsDevProvider(prof)
-				if pk != "" {
-					meta, found = snap.LookupWithProvider(id, pk)
-				}
-			}
-			if !found {
-				meta, found = snap.LookupWithProvider(id, supplier)
-			}
-		}
-		if !found {
-			meta, found = snap.Lookup(id)
-		}
-		if !found {
-			skipped++
-			continue
-		}
-		if catalog.FillOverwrite(mm, meta) {
-			enriched++
-		} else {
-			skipped++
-		}
-	}
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
-// validateGatewayModels checks the models array shape of one gateway entry.
-// Empty string means valid (models key itself is optional).
-func validateGatewayModels(gw map[string]interface{}) string {
+func validateGatewayProvider(gw map[string]interface{}) string {
+	allowedAPI := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
+	api, _ := gw["api"].(string)
+	if !allowedAPI[api] {
+		return "api is required or unsupported"
+	}
+	baseURL, _ := gw["baseUrl"].(string)
+	if baseURL == "" {
+		return "baseUrl required"
+	}
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		return "baseUrl must start with http:// or https://"
+	}
 	models, ok := gw["models"]
 	if !ok {
-		return ""
+		return "models must be array"
 	}
 	arr, ok := models.([]interface{})
 	if !ok {
@@ -1772,24 +1677,17 @@ func validateGatewayModels(gw map[string]interface{}) string {
 		if !ok {
 			return fmt.Sprintf("models[%d] must be object", i)
 		}
-		if id, _ := mm["id"].(string); strings.TrimSpace(id) == "" {
+		id, _ := mm["id"].(string)
+		if strings.TrimSpace(id) == "" {
 			return fmt.Sprintf("models[%d].id required", i)
+		}
+		if strings.Contains(id, "/") {
+			return fmt.Sprintf("models[%d].id must not contain \"/\"", i)
 		}
 	}
 	return ""
 }
 
-// writeGatewayFile atomically writes the whole models.json gateway file.
-func writeGatewayFile(m map[string]interface{}) error {
-	path := gateway.ModelsPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	b, _ := json.MarshalIndent(m, "", "  ")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	var gw map[string]interface{}
@@ -1797,68 +1695,35 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
-	// providers wrapper 与发布路由同一口径：逐条目校验 + 补齐后整文件原子写。
-	if provs, ok := gw["providers"].(map[string]interface{}); ok {
-		for name, v := range provs {
-			em, ok := v.(map[string]interface{})
-			if !ok {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
-				return
-			}
-			if msg := validateGatewayModels(em); msg != "" {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
-				return
-			}
-		}
-		for _, v := range provs {
-			if em, ok := v.(map[string]interface{}); ok {
-				enrichProposedModels(em)
-			}
-		}
-		if err := writeGatewayFile(gw); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+	provs, ok := gw["providers"].(map[string]interface{})
+	if !ok {
+		c.JSON(400, gin.H{"error": "providers is required"})
+		return
+	}
+	for name, v := range provs {
+		em, ok := v.(map[string]interface{})
+		if !ok {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
 			return
 		}
-		c.JSON(200, gin.H{"ok": true})
-		return
+		if msg := validateGatewayProvider(em); msg != "" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
+			return
+		}
 	}
-	if api, _ := gw["api"].(string); api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" && api != "google-generative-ai" {
-		c.JSON(400, gin.H{"error": "invalid api"})
-		return
-	}
-	if bu, _ := gw["baseUrl"].(string); bu == "" {
-		c.JSON(400, gin.H{"error": "baseUrl required"})
-		return
-	}
-	if bu, _ := gw["baseUrl"].(string); !strings.HasPrefix(bu, "http://") && !strings.HasPrefix(bu, "https://") {
-		c.JSON(400, gin.H{"error": "baseUrl must start with http:// or https://"})
-		return
-	}
-	if msg := validateGatewayModels(gw); msg != "" {
-		c.JSON(400, gin.H{"error": msg})
-		return
-	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	// 模型目录补齐：与预览同一口径，写入前补齐缺失模型元数据。
 	enrichProposedModels(gw)
-	// atomic backup (gateway.Publish does backup) but ensure dir exists
-	if err := gateway.Publish(cfg, gw); err != nil {
+	if err := gateway.Publish(config.PiSwitchConfig{}, gw); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
-	}
-	// sync settings
-	if gateway.SyncSettingsFromGateway(&cfg, gw) {
-		_ = saveConfig(cfg)
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
 func handleGatewayHealth(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": cfg.Settings.ProviderPrefix, "has_models_file": true, "last_notify": nil, "upstreams_total": len(cfg.Profiles), "message": "ok"})
+	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch", "has_models_file": true, "last_notify": nil, "upstreams_total": len(cfg.Profiles), "message": "ok"})
 }
 func handleGatewayStart(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": cfg.Settings.ProviderPrefix})
+	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch"})
 }
 func piSwitchDBPath() string {
 	if p := os.Getenv("PI_SWITCH_DB"); p != "" {
@@ -3249,51 +3114,33 @@ func handleGatewayPublish(c *gin.Context) {
 	if body != nil && len(body) > 0 {
 		if _, ok := body["providers"]; ok {
 			toPublish = body
-		} else if _, ok := body["api"]; ok {
-			toPublish = body
 		} else {
-			toPublish = gateway.BuildProposedGatewayEntry(cfg)
+			c.JSON(400, gin.H{"error": "providers is required"})
+			return
 		}
 	} else {
 		toPublish = gateway.BuildProposedGatewayEntry(cfg)
 	}
-	// 模型目录补齐：wrapper 内各 provider 条目与单条目同一口径。
-	if provs, ok := toPublish["providers"].(map[string]interface{}); ok {
-		for _, v := range provs {
-			if em, ok := v.(map[string]interface{}); ok {
-				enrichProposedModels(em)
-			}
-		}
-	} else {
-		enrichProposedModels(toPublish)
-	}
-	if _, ok := toPublish["providers"]; ok {
-		if err := writeGatewayFile(toPublish); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, gin.H{"ok": true})
+	provs, ok := toPublish["providers"].(map[string]interface{})
+	if !ok {
+		c.JSON(400, gin.H{"error": "providers is required"})
 		return
 	}
-	// validate toPublish similarly to handlePutGateway
-	if api, _ := toPublish["api"].(string); api != "" {
-		if api != "openai-completions" && api != "openai-responses" && api != "anthropic-messages" && api != "google-generative-ai" {
-			c.JSON(400, gin.H{"error": "invalid api"})
+	for name, value := range provs {
+		entry, ok := value.(map[string]interface{})
+		if !ok {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
+			return
+		}
+		if msg := validateGatewayProvider(entry); msg != "" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
 			return
 		}
 	}
-	if bu, _ := toPublish["baseUrl"].(string); bu != "" {
-		if !strings.HasPrefix(bu, "http://") && !strings.HasPrefix(bu, "https://") {
-			c.JSON(400, gin.H{"error": "baseUrl must start with http:// or https://"})
-			return
-		}
-	}
+	enrichProposedModels(toPublish)
 	if err := gateway.Publish(cfg, toPublish); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
-	}
-	if gateway.SyncSettingsFromGateway(&cfg, toPublish) {
-		_ = saveConfig(cfg)
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
@@ -3303,128 +3150,39 @@ func handleModels(c *gin.Context) {
 	data := []interface{}{}
 	seen := map[string]bool{}
 	for name, prof := range cfg.Profiles {
-		if prof.HasChannelPartitions() {
-			for i := range prof.Upstreams {
-				ch := prof.ChannelName(i)
-				_, exposed := prof.ChannelView(ch)
-				for _, mid := range exposed {
-					providerKey := name + "/" + ch
-					key := providerKey + "/" + mid
-					if seen[key] {
-						continue
-					}
-					seen[key] = true
-					data = append(data, map[string]interface{}{"id": mid, "object": "model", "owned_by": providerKey})
+		for i := range prof.Upstreams {
+			channel := prof.Upstreams[i]
+			providerKey := name + "/" + prof.ChannelName(i)
+			for _, mid := range channel.ExposedModels {
+				key := providerKey + "/" + mid
+				if seen[key] {
+					continue
 				}
+				seen[key] = true
+				data = append(data, map[string]interface{}{"id": mid, "object": "model", "owned_by": providerKey})
 			}
-			continue
-		}
-		exposed := prof.ExposedModels
-		for _, mid := range exposed {
-			providerKey := name
-			key := providerKey + "/" + mid
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			data = append(data, map[string]interface{}{"id": mid, "object": "model", "owned_by": providerKey})
 		}
 	}
 	c.JSON(200, gin.H{"object": "list", "data": data})
 }
 
 // --- proxy helpers ---
-func isNonProxy(cfg config.PiSwitchConfig, name string) bool {
-	_, ok := cfg.Profiles[name]
-	return ok
-}
-func exposes(cfg config.PiSwitchConfig, name, model string) bool {
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		return false
-	}
-	if len(prof.ExposedModels) > 0 {
-		for _, m := range prof.ExposedModels {
-			if m == model {
-				return true
-			}
-		}
-	}
-	// 分区并集：任一渠道暴露即视为提供（裸 id 与二段 id 兼容）。
-	for i := range prof.Upstreams {
-		_, exposed := prof.ChannelView(prof.ChannelName(i))
-		for _, e := range exposed {
-			if e == model {
-				return true
-			}
-		}
-	}
-	// 空 exposed = 不暴露：新模型默认不经代理提供，需显式 expose。
-	return false
-}
-
-// exposesChannel reports whether model is exposed in the named channel.
-func exposesChannel(cfg config.PiSwitchConfig, supplier, channel, model string) bool {
-	prof, ok := cfg.Profiles[supplier]
-	if !ok {
-		return false
-	}
-	_, exposed := prof.ChannelView(channel)
-	for _, eid := range exposed {
-		if eid == model {
-			return true
-		}
-	}
-	return false
-}
 func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string, string) {
-	// 三段 id supplier/channel/model：精确 pin 到渠道（单候选，不跨供应商 failover）。
-	if strings.Count(requested, "/") >= 2 {
-		parts := strings.SplitN(requested, "/", 3)
-		if len(parts) == 3 && isNonProxy(cfg, parts[0]) && exposesChannel(cfg, parts[0], parts[1], parts[2]) {
-			return []string{parts[0]}, parts[2], parts[1]
-		}
-	}
-	if strings.Contains(requested, "/") {
-		parts := strings.SplitN(requested, "/", 2)
-		prefix, rest := parts[0], parts[1]
-		if isNonProxy(cfg, prefix) && exposes(cfg, prefix, rest) {
-			return []string{prefix}, rest, ""
-		}
-	}
-	// 裸模型：全局扫描所有渠道的 exposedModels，按裸 id 唯一命中
+	// Bare model ids are resolved across all exposed channels. The caller
+	// rejects slash-containing ids before this function is reached.
 	matches := []struct {
 		supplier string
 		channel  string
 	}{}
 	for name, prof := range cfg.Profiles {
-		if prof.HasChannelPartitions() {
-			for i := range prof.Upstreams {
-				ch := prof.ChannelName(i)
-				_, exposed := prof.ChannelView(ch)
-				for _, eid := range exposed {
-					if eid == requested {
-						matches = append(matches, struct {
-							supplier string
-							channel  string
-						}{name, ch})
-						break
-					}
-				}
-			}
-		} else {
-			for _, eid := range prof.ExposedModels {
+		for i := range prof.Upstreams {
+			channel := prof.Upstreams[i]
+			for _, eid := range channel.ExposedModels {
 				if eid == requested {
-					chName := ""
-					if len(prof.Upstreams) > 0 {
-						if cn := prof.ChannelName(0); cn != "" {
-							chName = cn
-						}
-					}
 					matches = append(matches, struct {
 						supplier string
 						channel  string
-					}{name, chName})
+					}{name, prof.ChannelName(i)})
 					break
 				}
 			}
@@ -3524,9 +3282,6 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 	nowMs := time.Now().UnixMilli()
 	entryTs := nowStr
 	entryModel := model
-	if idx := strings.LastIndex(entryModel, "/"); idx >= 0 {
-		entryModel = entryModel[idx+1:]
-	}
 	bestID := ""
 	bestTitle := ""
 	bestDiff := int64(999999999)
@@ -3539,9 +3294,6 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 		sessModel := ""
 		if sess.Model != nil {
 			sessModel = *sess.Model
-			if idx := strings.LastIndex(sessModel, "/"); idx >= 0 {
-				sessModel = sessModel[idx+1:]
-			}
 		}
 		if entryModel != "" && sessModel != "" && entryModel != sessModel {
 			continue
@@ -3594,19 +3346,11 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 }
 
 func findModelEntry(prof config.ProviderProfile, realModel string) *config.ModelEntry {
-	// narrowed attempt profiles carry a single (named) channel: prefer its pool,
-	// so clamp/cost use the channel's own params. Legacy synthetic channels
-	// have no pool and fall through to top-level.
-	if len(prof.Upstreams) == 1 && prof.Upstreams[0].Name != nil {
-		for i := range prof.Upstreams[0].Models {
-			if prof.Upstreams[0].Models[i].ID == realModel {
-				return &prof.Upstreams[0].Models[i]
+	for i := range prof.Upstreams {
+		for j := range prof.Upstreams[i].Models {
+			if prof.Upstreams[i].Models[j].ID == realModel {
+				return &prof.Upstreams[i].Models[j]
 			}
-		}
-	}
-	for i := range prof.Models {
-		if prof.Models[i].ID == realModel {
-			return &prof.Models[i]
 		}
 	}
 	return nil
@@ -3734,6 +3478,10 @@ func handleChatCompletions(c *gin.Context) {
 	if requestedModel == "" {
 		requestedModel = "gpt-4o-mini"
 	}
+	if strings.Contains(requestedModel, "/") {
+		c.JSON(400, gin.H{"error": gin.H{"message": "model must not contain \"/\"", "type": "invalid_request_error"}})
+		return
+	}
 	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
 	if pinnedChannel == "ambiguous" {
 		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "type": "ambiguous"}})
@@ -3783,12 +3531,7 @@ func handleChatCompletions(c *gin.Context) {
 		matched := -1
 		matchCount := 0
 		for i, ups := range prof.ResolvedUpstreams() {
-			chName := ""
-			if ups.Name != nil {
-				chName = *ups.Name
-			}
-			_, exposed := prof.ChannelView(chName)
-			for _, eid := range exposed {
+			for _, eid := range ups.ExposedModels {
 				if eid == realModel {
 					if matched == -1 {
 						matched = i
@@ -4040,12 +3783,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		matched := -1
 		matchCount := 0
 		for i, ups := range prof.ResolvedUpstreams() {
-			chName := ""
-			if ups.Name != nil {
-				chName = *ups.Name
-			}
-			_, exposed := prof.ChannelView(chName)
-			for _, eid := range exposed {
+			for _, eid := range ups.ExposedModels {
 				if eid == realModel {
 					if matched == -1 {
 						matched = i
@@ -4468,18 +4206,12 @@ func effectiveConversationID(convID, convName sql.NullString, provider, model, t
 	modelStr := ""
 	if model.Valid {
 		modelStr = model.String
-		if idx := strings.LastIndex(modelStr, "/"); idx >= 0 {
-			modelStr = modelStr[idx+1:]
-		}
 	}
 	bestID, bestTitle, bestScore := "", "", int64(1<<62)
 	for _, sess := range sessions {
 		sessModel := ""
 		if sess.Model != nil {
 			sessModel = *sess.Model
-			if idx := strings.LastIndex(sessModel, "/"); idx >= 0 {
-				sessModel = sessModel[idx+1:]
-			}
 		}
 		if modelStr != "" && sessModel != "" && modelStr != sessModel {
 			continue

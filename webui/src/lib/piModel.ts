@@ -247,6 +247,7 @@ export function validateProfileJson(text: string): ValidateProfileResult {
 // ─── Model draft (UI string-backed) ────────────────────────────────
 export interface ModelDraft {
   key: string;
+  providerKey?: string;
   id: string;
   name: string;
   hasName: boolean;

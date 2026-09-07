@@ -138,10 +138,10 @@ pi-switch stats                                     # View request statistics
 | Category | Highlights |
 |----------|------------|
 | 🌐 **WebUI (primary)** | Browser control plane at `http://127.0.0.1:43110` — Profiles CRUD, Gateway `Current vs Proposed` diff & `Apply to Pi`, Proxy control, Stats dashboard with time windows, Packages, Settings, Doctor. Daemon-managed (own pid/log/port), loopback-open / non-loopback Basic auth. |
-| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with baseUrl/apiKey/headers/weight/name, each channel carrying its own `models`/`exposedModels` partition), per-channel fetch/expose, gateway publish with secondary model selection, configure Responses API passthrough/conversion mode |
+| 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with api/baseUrl/apiKey/headers/weight/name, each channel carrying its own `models`/`exposedModels` partition), per-channel fetch/expose, gateway publish with secondary model selection, configure Responses API passthrough/conversion mode |
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
-| 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless routing by `profile/model`, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, failover, circuit breaker |
+| 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes per-channel providers to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless bare-model routing, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, circuit breaker |
 | 🗂️ **Model Catalog** | Fill missing model metadata (cost/limit/reasoning/input/name) from https://models.dev snapshot cached at `~/.pi-switch/cache/models-dev.json` (24h TTL, stale fallback with warning): fetch-time enrich via per-profile `modelsDevProvider` mapping, plus gateway preview/publish fill-missing (existing values win, pools untouched, ambiguous names skipped) |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
 | 🖥️ **TUI (secondary)** | charmbracelet/bubbletea + lipgloss + bubbles — profile list/switch, gateway publish, stats (totalCost ` - ` / `$0.00` / `$1.2K`), full parity with WebUI/CLI |
@@ -195,8 +195,8 @@ graph LR
     end
 
     subgraph Runtime["🚀 Runtime"]
-        E["Request<br/>model: provider-a/gpt-5.4"] --> F{Resolve Route}
-        F --> G[Try provider-a]
+        E["Request<br/>model: gpt-5.4"] --> F{Resolve Route}
+        F --> G[Try supplier-a/main]
         G --> H{Success?}
         H -->|✓| I[Response]
         H -->|✗| L[Error Passthrough]
@@ -231,7 +231,7 @@ _TUI: `Profiles → a → fill form → Ctrl+S` still works as a terminal altern
 pi-switch provider expose provider-a gpt-5.4
 ```
 
-**2.5 Publish to Pi** — Gateway explicitly writes the aggregated provider
+**2.5 Publish to Pi** — Gateway explicitly writes one provider per supplier/channel
 
 ```bash
 # WebUI: Gateway → Current vs Proposed → Apply to Pi
@@ -240,7 +240,7 @@ pi-switch provider expose provider-a gpt-5.4
 
 In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback). The supplier vs gateway isolation guarantees Profiles mutations never auto-write `~/.pi/agent/models.json` — you publish explicitly.
 
-**3. Start the proxy** — it reads the published `pi-switch` gateway provider
+**3. Start the proxy** — it reads the published supplier/channel providers
 
 ```bash
 pi-switch proxy start --daemon
@@ -248,15 +248,15 @@ pi-switch proxy start --daemon
 
 _WebUI: `Proxy → Start` (same daemon, WebUI shows status)._
 
-**4. Use in pi** — select the `pi-switch` provider, then pick a `profile/model` like `provider-a/gpt-5.4`
+**4. Use in pi** — select a published `<supplier>/<channel>` provider, then pick a bare model ID like `gpt-5.4`
 
 ### How Gateway Routing Works
 
 Requests are routed by the model name in the request body — no out-of-band state, no "current target":
 
-- **Model-name routing** — `"model": "provider-a/gpt-5.4"` resolves to profile `provider-a`, real model `gpt-5.4`; the proxy rewrites the body before forwarding upstream
-- **Channel-pinned routing** — partitioned suppliers advertise `provider-a/main/gpt-5.4` (`supplier/channel/model`), routed to exactly that channel's credentials with no cross-supplier failover
-- **Single gateway provider** — pi sees one `pi-switch` provider advertising every exposed model (`profile/realModelId`, or `profile/channel/realModelId` when partitioned); switching model in pi = sending a different model string = instant routing change
+- **Bare model routing** — `"model": "gpt-5.4"` resolves to the unique exposed supplier/channel; duplicate bare IDs return an ambiguity error so the caller can choose a provider
+- **Channel-pinned routing** — each `<supplier>/<channel>` provider contains only that channel's bare model IDs and uses that channel's credentials
+- **Per-channel gateway providers** — pi sees one provider for each supplier/channel, while the provider's model list stays independent from other channels
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token, as do Responses↔Chat cross-format routes (converted both directions); upstream response headers (Content-Type, etc.) are preserved
 - **OpenAI ↔ Anthropic** — transparently converts between chat completions and messages APIs
@@ -275,7 +275,7 @@ pi-switch/
 ├── cmd/pi-switch/main.go    # Go entry (gin + proxy/mgmt routers, daemon, tui)
 ├── internal/
 │   ├── config/              # Config load/save, types, per-request hot reload, v1→v2 migration
-│   ├── gateway/             # Gateway publish (models.json:providers[pi-switch])
+│   ├── gateway/             # Gateway publish (models.json:providers[supplier/channel])
 │   ├── proxy/               # Proxy helpers (cost, limit clamp)
 │   ├── limit/               # contextWindow/maxTokens clamp (est=ceil(jsonLen/4), reserve 4096)
 │   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses conversion (native/convert via responsesMode)
@@ -293,10 +293,10 @@ pi-switch/
 ```
 
 **Config files:**
-- `~/.pi-switch/config.json` — profiles, proxy settings, failover chain
+- `~/.pi-switch/config.json` — profiles and proxy settings
 - `~/.pi-switch/requests.db` — SQLite (modernc) per-request log (status, latency, token usage, cost, conversation) — zero-migration from old requests.log + .db
 - `~/.pi-switch/backups/` — timestamped auto-backups on every mutation
-- `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes a single gateway provider)
+- `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes one provider per supplier/channel)
 
 For the WebUI's thin-adapter architecture, the 4-step recipe for adding operations, and the REST ↔ core map, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — that guide is the thick reference; this README stays thin.
 
@@ -308,7 +308,7 @@ For the WebUI's thin-adapter architecture, the 4-step recipe for adding operatio
 <summary><b>How do I switch models in pi?</b></summary>
 <br>
 
-In pi, open `/model` and pick any advertised `profile/model` (e.g. `provider-a/gpt-5.4`). The proxy routes by the model name in each request — no extra step needed.
+In pi, open `/model`, select a published `<supplier>/<channel>` provider, and pick one of its bare model IDs (for example `gpt-5.4`). The proxy routes by the model name in each request — no extra step needed.
 
 To add more models, expose them in WebUI (`Profiles → select provider → Models`) or via CLI:
 ```bash
@@ -324,7 +324,7 @@ pi-switch provider expose <name> <model-id>...
 
 The `[proxy]` badge indicates this profile is a meta-profile (with `"proxy": true`). Proxy profiles are used to register a pi provider that points to the local gateway. They are excluded from upstream routing.
 
-In the current gateway mode, proxy profiles are typically not needed — the proxy reads the published `pi-switch` gateway provider from `~/.pi/agent/models.json` (publish explicitly via **Gateway → Apply to Pi**, not automatically on startup).
+In the current gateway mode, proxy profiles are typically not needed — the proxy reads the published supplier/channel providers from `~/.pi/agent/models.json` (publish explicitly via **Gateway → Apply to Pi**, not automatically on startup).
 
 </details>
 
@@ -332,24 +332,22 @@ In the current gateway mode, proxy profiles are typically not needed — the pro
 <summary><b>How does gateway routing work?</b></summary>
 <br>
 
-The proxy advertises every exposed model as `profile/realModelId` under a single `pi-switch` provider. When pi sends a request with `"model": "provider-a/gpt-5.4"`, the proxy:
+The proxy publishes each supplier/channel as its own provider with bare model IDs. When pi sends a request with `"model": "gpt-5.4"`, the proxy:
 
-1. Splits on the first `/` — profile `provider-a`, real model `gpt-5.4`
-2. Routes to the `provider-a` profile's upstream, rewriting `body.model` to `gpt-5.4`
-3. On failure (429/5xx), the error is returned directly without failover (single-candidate passthrough)
+1. Finds the unique exposed supplier/channel that owns `gpt-5.4`
+2. Routes to that channel's credentials without changing the bare model ID
+3. Returns an ambiguity error when multiple channels expose the same bare ID
 
 ```bash
-# 1. Expose models (per profile)
+# 1. Expose models (per channel)
 pi-switch provider expose provider-a gpt-5.4
 pi-switch provider expose provider-b gpt-5.4
 
-# 2. (failover removed)
-
-# 3. Start proxy daemon
+# 2. Start proxy daemon
 pi-switch proxy start --daemon
 ```
 
-In pi, select the `pi-switch` provider, then `provider-a/gpt-5.4`. The model name in each request determines the route — no "target" to manage.
+In pi, select the relevant `<supplier>/<channel>` provider, then `gpt-5.4`. The model name in each request determines the route — no "target" to manage.
 
 </details>
 
@@ -363,23 +361,23 @@ In pi, select the `pi-switch` provider, then `provider-a/gpt-5.4`. The model nam
 400: messages[0].role: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`
 ```
 
-**Fix — edit pi's config `~/.pi/agent/models.json`**: on each offending model of the `pi-switch` provider, add `"compat": { "supportsDeveloperRole": false }` — pi then sends the `system` role while keeping thinking features:
+**Fix — edit pi's config `~/.pi/agent/models.json`**: on each offending model in the relevant supplier/channel provider, add `"compat": { "supportsDeveloperRole": false }` — pi then sends the `system` role while keeping thinking features:
 
 ```json
 {
-  "id": "opencode-go/deepseek-v4-flash",
+  "id": "deepseek-v4-flash",
   "reasoning": true,
   "compat": { "supportsDeveloperRole": false }
 }
 ```
 
-**Note** — the next web/CLI sync rebuilds the `pi-switch` provider entry and wipes manual edits to `models.json`. To survive syncs, put the same `compat` on the model entry inside `~/.pi-switch/config.json` (profile → `models`, id without the `profile/` prefix) instead — sync passes it through verbatim.
+**Note** — the next Gateway publish rebuilds the relevant supplier/channel provider entry and wipes manual edits to `models.json`. To survive syncs, put the same `compat` on that channel's model entry inside `~/.pi-switch/config.json` — publish passes it through verbatim.
 
-Reference — `pi-switch` provider entry with an opencode upstream (sanitized example):
+Reference — supplier/channel provider entry with an opencode upstream (sanitized example):
 
 ```json
 {
-  "pi-switch": {
+  "opencode-go/main": {
     "api": "openai-completions",
     "apiKey": "pi-switch-proxy",
     "baseUrl": "http://127.0.0.1:43112/v1",
@@ -388,7 +386,7 @@ Reference — `pi-switch` provider entry with an opencode upstream (sanitized ex
         "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.0028, "cacheWrite": 0.0, "input": 0.14, "output": 0.28 },
-        "id": "opencode-go/deepseek-v4-flash",
+        "id": "deepseek-v4-flash",
         "input": ["text"],
         "maxTokens": 384000,
         "name": "DeepSeek V4 Flash",
@@ -399,7 +397,7 @@ Reference — `pi-switch` provider entry with an opencode upstream (sanitized ex
         "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.0145, "cacheWrite": 0.0, "input": 1.74, "output": 3.48 },
-        "id": "opencode-go/deepseek-v4-pro",
+        "id": "deepseek-v4-pro",
         "input": ["text"],
         "maxTokens": 384000,
         "name": "DeepSeek V4 Pro",
@@ -409,7 +407,7 @@ Reference — `pi-switch` provider entry with an opencode upstream (sanitized ex
       {
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.08, "cacheWrite": 0.0, "input": 0.4, "output": 2.0 },
-        "id": "opencode-go/mimo-v2.5",
+        "id": "mimo-v2.5",
         "input": ["text", "image"],
         "maxTokens": 1000000,
         "name": "MiMo V2.5",
@@ -459,7 +457,7 @@ npm run build:webui              # vite build → webui/dist
 npm run build:go                 # go build with version injected from package.json via ldflags (embeds webui/dist)
 npm run build:all                # cross-compile linux/darwin/windows × amd64/arm64 → bin/pi-switch-*
 go test ./...                    # Go integration tests (48+)
-NODE_ENV=test npx --prefix webui vitest run  # WebUI tests (199)
+NODE_ENV=test npm --prefix webui run test   # WebUI tests (238)
 go vet ./...                     # Lint
 ```
 

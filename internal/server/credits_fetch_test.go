@@ -63,7 +63,7 @@ func TestCredits_Upstream403SurfacesError(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	cfgContent := fmt.Sprintf(`{"version":2,"profiles":{"op":{"api":"openai-completions","baseUrl":%q,"apiKey":"k","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}]}},"settings":{"providerPrefix":"pi-switch"}}`, mock.URL)
+	cfgContent := fmt.Sprintf(`{"version":2,"profiles":{"op":{"api":"openai-completions","baseUrl":%q,"apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":%q,"apiKey":"k","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}]}]}},"settings":{"providerPrefix":"pi-switch"}}`, mock.URL, mock.URL)
 	_ = os.WriteFile(cfgPath, []byte(cfgContent), 0644)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 

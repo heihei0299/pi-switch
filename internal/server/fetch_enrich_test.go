@@ -41,7 +41,7 @@ func TestFetchEnrich_DeepseekEnriched3(t *testing.T) {
 	_ = json.Unmarshal(b, &cfgMap)
 	prof := cfgMap["profiles"].(map[string]interface{})["deepseek"].(map[string]interface{})
 	upstreams, ok := prof["upstreams"].([]interface{})
-	if !ok || len(upstreams)==0 {
+	if !ok || len(upstreams) == 0 {
 		t.Fatalf("upstreams missing %v", prof)
 	}
 	first := upstreams[0].(map[string]interface{})

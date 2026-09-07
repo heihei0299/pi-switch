@@ -8,14 +8,8 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Settings.ProviderPrefix != "pi-switch" {
-		t.Fatalf("providerPrefix = %q, want pi-switch", cfg.Settings.ProviderPrefix)
-	}
 	if cfg.Settings.WriteMode != "gateway" {
 		t.Fatalf("writeMode = %q, want gateway", cfg.Settings.WriteMode)
-	}
-	if cfg.Settings.GatewayAPI != "openai-completions" {
-		t.Fatalf("gatewayApi = %q, want openai-completions", cfg.Settings.GatewayAPI)
 	}
 	if cfg.Settings.Proxy.Host != "127.0.0.1" || cfg.Settings.Proxy.Port != 43112 {
 		t.Fatalf("proxy = %v, want 127.0.0.1:43112", cfg.Settings.Proxy)
@@ -41,8 +35,8 @@ func TestLoadPerRequest_MissingFileReturnsDefault(t *testing.T) {
 	if src != "default (no file)" {
 		t.Fatalf("src = %q, want default (no file)", src)
 	}
-	if cfg.Settings.ProviderPrefix != "pi-switch" {
-		t.Fatalf("want default, got %q", cfg.Settings.ProviderPrefix)
+	if len(cfg.Profiles["test-provider"].Upstreams) != 1 {
+		t.Fatalf("default profile must contain one channel")
 	}
 }
 
@@ -70,22 +64,5 @@ func TestLoadPerRequest_MigratesLegacyField(t *testing.T) {
 	cfg2, _, _ := LoadConfigAtPath(path)
 	if cfg2.Settings.ConversationSource != "off" {
 		t.Fatalf("conversationSource = %q, want off", cfg2.Settings.ConversationSource)
-	}
-}
-
-func TestLoadPerRequest_HotReload(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	// first write
-	_ = os.WriteFile(path, []byte(`{"version":2,"profiles":{},"settings":{"providerPrefix":"first"}}`), 0644)
-	cfg1, _, _ := LoadConfigAtPath(path)
-	if cfg1.Settings.ProviderPrefix != "first" {
-		t.Fatalf("first = %q", cfg1.Settings.ProviderPrefix)
-	}
-	// overwrite
-	_ = os.WriteFile(path, []byte(`{"version":2,"profiles":{},"settings":{"providerPrefix":"second"}}`), 0644)
-	cfg2, _, _ := LoadConfigAtPath(path)
-	if cfg2.Settings.ProviderPrefix != "second" {
-		t.Fatalf("second = %q, want hot reload", cfg2.Settings.ProviderPrefix)
 	}
 }

@@ -18,7 +18,7 @@ export function HomePanel({
   const [proxy, setProxy] = useState<DaemonResult | null>(null);
   const profiles = Object.entries(state.profiles);
   const exposedCount = profiles.filter(
-    ([, p]) => (p.exposedModels?.length ?? 0) > 0,
+    ([, p]) => (p.upstreams ?? []).some((u) => (u.exposedModels?.length ?? 0) > 0),
   ).length;
 
   const currentProfile = state.current ? state.profiles[state.current] : null;
@@ -121,10 +121,10 @@ export function HomePanel({
                   </div>
                   <div className="mt-1 flex items-baseline gap-2">
                     <span className="font-mono text-lg font-semibold text-zinc-100">
-                      {currentProfile.models?.length ?? 0}
+                      {(currentProfile.upstreams ?? []).reduce((n, u) => n + (u.models?.length ?? 0), 0)}
                     </span>
                     <span className="text-xs text-zinc-400">
-                      ({currentProfile.exposedModels?.length ?? 0} {t("exposed")})
+                      ({(currentProfile.upstreams ?? []).reduce((n, u) => n + (u.exposedModels?.length ?? 0), 0)} {t("exposed")})
                     </span>
                   </div>
                 </div>
@@ -160,7 +160,7 @@ export function HomePanel({
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-medium text-zinc-200">Client Agent</div>
                   <div className="truncate font-mono text-[11px] text-zinc-400">
-                    prefix: {state.settings?.providerPrefix || "pi"}
+                    model IDs: bare per channel
                   </div>
                 </div>
                 <Badge tone="green" dot>
@@ -295,4 +295,3 @@ function StatCard({
     </Card>
   );
 }
-

@@ -61,7 +61,7 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 		}
 	}
 	_ = profMap
-	newProf := `{"name":"new-provider","profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o"],"proxy":false,"headers":{"X-Custom":"1"},"userAgent":"test-agent"}}`
+	newProf := `{"name":"new-provider","profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o"]}],"proxy":false,"headers":{"X-Custom":"1"},"userAgent":"test-agent"}}`
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("POST", "/api/profiles", strings.NewReader(newProf))
 	req2.Header.Set("Content-Type", "application/json")
@@ -86,7 +86,8 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 	if profObj["api"] != "openai-completions" {
 		t.Fatalf("api = %v want openai-completions", profObj["api"])
 	}
-	if em, ok := profObj["exposedModels"].([]interface{}); ok {
+	if ups, ok := profObj["upstreams"].([]interface{}); ok {
+		em := ups[0].(map[string]interface{})["exposedModels"].([]interface{})
 		found := false
 		for _, v := range em {
 			if v == "gpt-4o" {
@@ -97,9 +98,9 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 			t.Fatalf("exposedModels missing gpt-4o: %v", em)
 		}
 	} else {
-		t.Fatalf("exposedModels not array: %v", profObj["exposedModels"])
+		t.Fatalf("channel exposedModels not array: %v", profObj["upstreams"])
 	}
-	updateBody := `{"profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"],"modelMap":{"gpt-4o-mini":"mapped"},"proxy":false}}`
+	updateBody := `{"profile":{"api":"openai-completions","preset":"openai","baseUrl":"http://b/v1","apiKey":"k2","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://b/v1","apiKey":"k2","models":[{"id":"gpt-4o","contextWindow":128000,"maxTokens":16384},{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384}],"exposedModels":["gpt-4o-mini"]}],"modelMap":{"gpt-4o-mini":"mapped"},"proxy":false}}`
 	w4 := httptest.NewRecorder()
 	req4, _ := http.NewRequest("PUT", "/api/profiles/new-provider", strings.NewReader(updateBody))
 	req4.Header.Set("Content-Type", "application/json")
@@ -118,12 +119,13 @@ func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 	} else {
 		prof2 = detail2
 	}
-	if em, ok := prof2["exposedModels"].([]interface{}); ok {
+	if ups, ok := prof2["upstreams"].([]interface{}); ok {
+		em := ups[0].(map[string]interface{})["exposedModels"].([]interface{})
 		if len(em) != 1 || em[0] != "gpt-4o-mini" {
 			t.Fatalf("after PUT exposedModels = %v want [gpt-4o-mini]", em)
 		}
 	} else {
-		t.Fatalf("exposedModels after PUT missing")
+		t.Fatalf("channel exposedModels after PUT missing")
 	}
 	w6 := httptest.NewRecorder()
 	req6, _ := http.NewRequest("DELETE", "/api/profiles/new-provider", nil)
@@ -144,7 +146,7 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.json")
 	modelsPath := filepath.Join(dir, "models.json")
 	dbPath := filepath.Join(dir, "requests.db")
-	cfgContent := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","preset":"openai","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384,"cost":{"input":0.15,"output":0.6,"cacheRead":0.075}}],"exposedModels":["gpt-4o-mini"],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
+	cfgContent := `{"version":2,"current":"test-provider","profiles":{"test-provider":{"api":"openai-completions","preset":"openai","baseUrl":"http://a/v1","apiKey":"k1","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://a/v1","apiKey":"k1","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384,"cost":{"input":0.15,"output":0.6,"cacheRead":0.075}}],"exposedModels":["gpt-4o-mini"]}],"proxy":false}},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}}`
 	_ = os.WriteFile(cfgPath, []byte(cfgContent), 0644)
 	_ = os.WriteFile(modelsPath, []byte(`{"providers":{}}`), 0644)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
@@ -179,7 +181,7 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("providers missing: %v", mj)
 	}
-	gw, ok := provs["test-provider"].(map[string]interface{})
+	gw, ok := provs["test-provider/main"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("test-provider provider missing: %v", provs)
 	}
@@ -197,7 +199,7 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 		t.Fatalf("gateway models should contain gpt-4o-mini bare, got %v", models)
 	}
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(`{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[{"id":"test-provider/gpt-4o-mini"}],"proxy":false}`))
+	req2, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(`{"providers":{"test-provider/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[{"id":"gpt-4o-mini"}],"proxy":false}}}`))
 	req2.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w2, req2)
 	if w2.Code != 200 {

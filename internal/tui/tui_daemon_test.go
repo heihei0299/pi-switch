@@ -23,8 +23,8 @@ func TestTuiDaemon_S1_ModelList(t *testing.T) {
 	if m.gatewayPreview == "" {
 		t.Fatalf("gatewayPreview empty after New; want Gateway ...")
 	}
-	if !strings.Contains(m.gatewayPreview, "Gateway") || !strings.Contains(m.gatewayPreview, cfg.Settings.ProviderPrefix) {
-		t.Fatalf("gatewayPreview = %q want contains Gateway and prefix %s", m.gatewayPreview, cfg.Settings.ProviderPrefix)
+	if !strings.Contains(m.gatewayPreview, "Gateway") || !strings.Contains(m.gatewayPreview, "@") {
+		t.Fatalf("gatewayPreview = %q want gateway address", m.gatewayPreview)
 	}
 	if m.statsBrief == "" {
 		t.Fatalf("statsBrief empty")

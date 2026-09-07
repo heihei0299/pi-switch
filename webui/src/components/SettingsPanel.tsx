@@ -17,7 +17,7 @@ export function SettingsPanel({
   const [s, setS] = useState<Settings>(() => {
     const init = JSON.parse(JSON.stringify(state.settings));
     if (!init.conversationSource) init.conversationSource = "sessionScan";
-    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, target: null, circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
+    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
     if (!init.proxy.circuitBreaker) init.proxy.circuitBreaker = { enabled: true, failureThreshold: 3, cooldownSeconds: 60 };
     if (init.proxy.circuitBreaker.failureThreshold == null) init.proxy.circuitBreaker.failureThreshold = 3;
     if (init.proxy.circuitBreaker.cooldownSeconds == null) init.proxy.circuitBreaker.cooldownSeconds = 60;
@@ -49,26 +49,11 @@ export function SettingsPanel({
       <Card className="mb-4">
         <div className="mb-3 text-sm font-semibold text-zinc-200">{t("General")}</div>
         <div className="grid gap-x-4 sm:grid-cols-2">
-          <Field label={t("Provider prefix (pi gateway id)")}>
-            <Input
-              value={s.providerPrefix}
-              onChange={(e) => set({ providerPrefix: e.target.value })}
-            />
-          </Field>
           <Field label={t("Write mode")}>
             <Select value={s.writeMode} onChange={(e) => set({ writeMode: e.target.value })}>
               <option value="merge">merge</option>
               <option value="exclusive">exclusive</option>
             </Select>
-          </Field>
-          <Field label={t("Gateway API (injected config)")}>
-            <Select value={s.gatewayApi ?? "openai-completions"} onChange={(e) => set({ gatewayApi: e.target.value })}>
-              <option value="openai-completions">OpenAI Chat Completions</option>
-              <option value="openai-responses">OpenAI Responses</option>
-              <option value="anthropic-messages">Anthropic Messages</option>
-              <option value="google-generative-ai">Google Gemini</option>
-            </Select>
-            <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the injected gateway config.")}</p>
           </Field>
           <Field label={t("Language")}>
             <Select

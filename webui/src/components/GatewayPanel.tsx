@@ -1,24 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { Button, Card, Field, Input, Select, SectionTitle } from "./ui";
+import { Button, Card, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useAction, useToast } from "./ui";
 import { ModelCard } from "./ModelCard";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
-import { resolveGatewayId, shortGatewayId } from "../lib/gatewayId";
 import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
-
-const API_OPTIONS = [
-  { value: "openai-completions", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-  { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "google-generative-ai", label: "Google Gemini" },
-  { value: "bedrock-converse-stream", label: "Amazon Bedrock" },
-];
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -37,9 +28,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<ModelDraft[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
-  const [apiType, setApiType] = useState("openai-completions");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [lastPublishAt, setLastPublishAt] = useState<string | null>(() => {
     try { return typeof window !== "undefined" ? window.localStorage?.getItem(LAST_PUBLISH_KEY) ?? null : null; } catch { return null; }
   });
@@ -62,28 +50,33 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setConflicts(conf);
       if (typeof pending === "number") setBackendPending(pending);
       else setBackendPending(null);
-      const src = cur ?? prop ?? {};
+      const src = (cur && Object.keys(cur).length > 0 ? cur : prop ?? {}) as Record<string, unknown>;
       setDraft(src);
-      const rec = asRecord(src);
-      setApiType((rec.api as string) || "openai-completions");
-      setBaseUrl((rec.baseUrl as string) || "");
-      setApiKey((rec.apiKey as string) || "");
-      const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
-      setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
-      // 草稿 id 保持网关全限定形态（supplier/channel/model）：仅渲染层做短显示。
-      // 曾在此剥掉 channel 段，导致三段式 id 与历史短 id 撞车、发布又把短 id 写回网关。
-      // 分组与二次勾选：groups/removed 透出（旧后端缺省为空）。
-      // 勾选规则：默认只勾选已发布（已注入网关）的 id，没发布的统一不勾选；
-      // 显式动作（打勾/改 ID/改 raw JSON）才加入，checked 全程使用全限定 id。
-      const propList = asRecord(prop ?? {}).models;
-      const propArr = Array.isArray(propList) ? propList : [];
-      const propIds = propArr.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
-      const draftIds = models.map((m) => String((m as any)?.id ?? "")).filter(Boolean);
-      const curList = asRecord(cur ?? {}).models;
-      const curArr = Array.isArray(curList) ? curList : [];
-      const publishedIds = new Set(
-        curArr.map((m) => String((m as any)?.id ?? "")).filter(Boolean),
-      );
+      let draftModels: unknown[] = [];
+      let propIds: string[] = [];
+      let publishedIds: Set<string>;
+      const allModels: unknown[] = [];
+      for (const [providerKey, entry] of Object.entries(src)) {
+        const models = asRecord(entry).models;
+        if (Array.isArray(models)) {
+          for (const model of models) allModels.push({ providerKey, entry: model });
+        }
+      }
+      draftModels = allModels;
+      setDrafts(allModels.map((m) => {
+        const model = m as Record<string, unknown>;
+        return { ...draftFromEntry(model.entry as ModelEntry), providerKey: String(model.providerKey ?? "") };
+      }));
+      const providerModelIds = (value: Record<string, unknown> | null) => Object.entries(value ?? {}).flatMap(([pk, entry]) => {
+        const models = asRecord(entry).models;
+        return Array.isArray(models) ? models.map((m) => `${pk}/${String((m as Record<string, unknown>).id ?? "")}`).filter((id) => !id.endsWith("/")) : [];
+      });
+      propIds = providerModelIds(prop);
+      publishedIds = new Set(providerModelIds(cur));
+      const draftIds = draftModels.map((m) => {
+        const model = m as Record<string, unknown>;
+        return `${String(model.providerKey ?? "")}/${String(asRecord(model.entry).id ?? "")}`;
+      }).filter((id) => !id.endsWith("/"));
       const removedList = (preview as any).removed;
       const removedArr = Array.isArray(removedList) ? removedList.map((id) => String(id)) : [];
       const removedSet = new Set(removedArr);
@@ -120,17 +113,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
 
   const liveJson = useMemo(() => {
     if (!draft) return "{}";
-    const modelsPreview = drafts.map((d) => modelPreview(d));
-    const next: Record<string, unknown> = {
-      ...draft,
-      api: apiType,
-      baseUrl: baseUrl.trim(),
-      ...(apiKey ? { apiKey } : {}),
-      models: modelsPreview,
-    };
-    if (!apiKey) delete (next as any).apiKey;
-    return JSON.stringify(next, null, 2);
-  }, [draft, drafts, apiType, baseUrl, apiKey]);
+    return JSON.stringify({ providers: draft }, null, 2);
+  }, [draft]);
 
   const validation = useMemo(() => validateGatewayJson(liveJson), [liveJson]);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
@@ -156,12 +140,16 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }, [liveJson]);
   function switchToStructuredFromRaw() {
     if (rawValidation.ok && rawValidation.value) {
-      const rec = asRecord(rawValidation.value);
-      setApiType((rec.api as string) || "openai-completions");
-      setBaseUrl((rec.baseUrl as string) || "");
-      setApiKey((rec.apiKey as string) || "");
-      const models = Array.isArray(rec.models) ? (rec.models as unknown[]) : [];
-      setDrafts(models.map((m) => draftFromEntry(m as ModelEntry)));
+      const providers = asRecord(asRecord(rawValidation.value).providers);
+      setDraft(providers);
+      const models = Object.entries(providers).flatMap(([providerKey, entry]) => {
+        const providerModels = asRecord(entry).models;
+        return Array.isArray(providerModels) ? providerModels.map((m) => ({ providerKey, entry: m })) : [];
+      });
+      setDrafts(models.map((m) => {
+        const model = m as Record<string, unknown>;
+        return { ...draftFromEntry(model.entry as ModelEntry), providerKey: String(model.providerKey ?? "") };
+      }));
     }
     setMode("structured");
   }
@@ -193,7 +181,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       }, 50);
       return;
     }
-    const d = newModelDraft();
+    const providerKey = Object.keys((proposed ?? current ?? {}) as Record<string, unknown>)[0] ?? "";
+    const d = { ...newModelDraft(), providerKey };
     setDrafts((prev) => [...prev, d]);
     setExpandedKeys((s) => {
       const ns = new Set(s);
@@ -206,46 +195,16 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     }, 50);
   }
 
-  // 显式 raw JSON 编辑的 id 视为用户意图，纳入发布选择（跳过集除外）。
   // 提议/草稿 id 永不自动补勾：没发布的默认不勾选，只认打勾与改 ID。
   const skipAutoCheck = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const rawModels = rawValidation.value?.models;
-    if (!Array.isArray(rawModels)) return;
-    const ids = new Set<string>();
-    for (const m of rawModels as Array<unknown>) ids.add(String((m as any)?.id ?? ""));
-    ids.delete("");
-    setChecked((prev) => {
-      let changed = false;
-      const next = new Set(prev);
-      for (const id of ids) if (!next.has(id) && !skipAutoCheck.current.has(id)) { next.add(id); changed = true; }
-      return changed ? next : prev;
-    });
-  }, [rawValidation.value]);
 
 
-  // 输入框短显示 ↔ 全限定数据的映射基准：提议与已注入的全部全量 id。
-  const knownGatewayIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const src of [proposed, current]) {
-      const models = asRecord(src ?? {}).models;
-      if (Array.isArray(models)) {
-        for (const m of models) {
-          const id = String((m as any)?.id ?? "");
-          if (id) ids.add(id);
-        }
-      }
-    }
-    return ids;
-  }, [proposed, current]);
-
-  // 草稿行 id 写回：输入框给的是短显示文本，映射回全限定 id 再落草稿。
-  // 手工改 ID 是显式意图，直接纳入勾选（没发布的默认不勾选只针对自动行为）。
   function handleDraftChange(prev: ModelDraft, next: ModelDraft) {
     if (next.id !== prev.id) {
-      next = { ...next, id: resolveGatewayId(next.id, prev.id, knownGatewayIds) };
+      // 裸 id 场景：直接使用输入的裸 id，无需短显映射
       if (next.id.trim()) {
-        const checkedId = next.id;
+        const providerKey = next.providerKey ?? prev.providerKey ?? Object.keys((proposed ?? current ?? {}) as Record<string, unknown>)[0] ?? "";
+        const checkedId = `${providerKey}/${next.id}`;
         skipAutoCheck.current.delete(checkedId);
         removeUncheckedId(checkedId);
         setChecked((prevChecked) => new Set(prevChecked).add(checkedId));
@@ -254,65 +213,110 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     const mapped = next;
     setDrafts((drafts) => drafts.map((x) => (x.key === prev.key ? mapped : x)));
   }
-  function gatewayIdOf(g: PreviewGroup, itemId: string): string {
+  function providerModelKey(g: PreviewGroup, itemId: string): string {
     return g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
   }
-  function displayGatewayId(g: PreviewGroup, itemId: string): string {
-    // 前端展示隐藏 channel 段，仅显示 supplier/model
-    return `${g.supplier}/${itemId}`;
+  function displayGatewayId(_g: PreviewGroup, itemId: string): string {
+    return itemId;
   }
 
-  // 二次勾选子集：按勾选过滤发布模型；有草稿行优先用用户编辑，无行用候选/已注入原文。
-  function buildSelectedModels(): Array<Record<string, unknown>> {
-    const draftById = new Map(drafts.map((d) => [d.id, modelPreview(d) as unknown as Record<string, unknown>]));
+  // 二次勾选子集：按勾选过滤发布模型，构建 providers map
+  function buildSelectedProviders(): Record<string, Record<string, unknown>> {
+    const result: Record<string, Record<string, unknown>> = {};
+    const draftById = new Map(drafts.filter((d) => d.providerKey && d.id).map((d) => [`${d.providerKey}/${d.id}`, modelPreview(d) as unknown as Record<string, unknown>]));
     const propById = new Map<string, Record<string, unknown>>();
-    const propModels = asRecord(proposed ?? {}).models;
-    if (Array.isArray(propModels)) {
-      for (const m of propModels as Array<Record<string, unknown>>) {
-        const id = String((m as any)?.id ?? "");
-        if (id) propById.set(id, m);
+    const curById = new Map<string, Record<string, unknown>>();
+    for (const src of [proposed, current]) {
+      if (!src) continue;
+      for (const [providerKey, entry] of Object.entries(src as Record<string, unknown>)) {
+        const models = asRecord(entry).models;
+        if (Array.isArray(models)) {
+          for (const m of models as Array<Record<string, unknown>>) {
+            const id = String(m.id ?? "");
+            if (!id) continue;
+            const gid = `${providerKey}/${id}`;
+            if (src === proposed) propById.set(gid, m);
+            else curById.set(gid, m);
+          }
+        }
       }
     }
-    const curById = new Map<string, Record<string, unknown>>();
-    const curModels = asRecord(current ?? {}).models;
-    if (Array.isArray(curModels)) {
-      for (const m of curModels as Array<Record<string, unknown>>) {
-        const id = String((m as any)?.id ?? "");
-        if (id) curById.set(id, m);
+    for (const [id, m] of draftById) {
+      if (!propById.has(id) && !curById.has(id)) {
+        propById.set(id, m);
       }
     }
     const order: string[] = [];
     for (const id of propById.keys()) order.push(id);
     for (const id of draftById.keys()) if (!order.includes(id)) order.push(id);
     for (const id of curById.keys()) if (!order.includes(id)) order.push(id);
-    const out: Array<Record<string, unknown>> = [];
-    for (const id of order) {
-      if (!checked.has(id)) continue;
-      out.push(draftById.get(id) ?? propById.get(id) ?? curById.get(id) ?? { id });
+    for (const gid of order) {
+      if (!checked.has(gid)) continue;
+      const lastSlash = gid.lastIndexOf("/");
+      const providerKey = gid.slice(0, lastSlash);
+      const bareId = gid.slice(lastSlash + 1);
+      const modelEntry = draftById.get(gid) ?? propById.get(gid) ?? curById.get(gid) ?? { id: bareId };
+      const entryWithBare = { ...(modelEntry as Record<string, unknown>), id: bareId };
+      if (!result[providerKey]) {
+        const srcEntry = (proposed as Record<string, unknown>)?.[providerKey] as Record<string, unknown> | undefined;
+        const curEntry = (current as Record<string, unknown>)?.[providerKey] as Record<string, unknown> | undefined;
+        const base = (srcEntry as Record<string, unknown>) || (curEntry as Record<string, unknown>) || {};
+        result[providerKey] = {
+          api: (base["api"] as string) || "openai-completions",
+          baseUrl: (base["baseUrl"] as string) || "",
+          apiKey: (base["apiKey"] as string) || "pi-switch-proxy",
+          models: [],
+          proxy: false,
+        };
+        if ((base as Record<string, unknown>)["apiKey"]) {
+          (result[providerKey] as Record<string, unknown>)["apiKey"] = (base as Record<string, unknown>)["apiKey"];
+        }
+      }
+      const prov = result[providerKey] as Record<string, unknown>;
+      const models = prov["models"] as Array<Record<string, unknown>>;
+      models.push(entryWithBare as Record<string, unknown>);
     }
-    return out;
+    return result;
   }
 
   // 勾选子集待发布数：当前已注入 vs 勾选子集的按模型差异计数（本地计算，不调后端）。
   const subsetPending = useMemo(() => {
-    const selected = buildSelectedModels();
-    const curModels = asRecord(current ?? {}).models;
-    const curById = new Map<string, string>();
-    if (Array.isArray(curModels)) {
-      for (const m of curModels as Array<Record<string, unknown>>) {
-        const id = String((m as any)?.id ?? "");
-        if (id) curById.set(id, JSON.stringify(m));
+    const isProvidersMap = (obj: Record<string, unknown> | null) => {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+      const vals = Object.values(obj);
+      return vals.length > 0 && vals.some((v) => v && typeof v === "object" && !Array.isArray(v) && "models" in (v as Record<string, unknown>));
+    };
+    if (isProvidersMap(current as Record<string, unknown>)) {
+      const curById = new Map<string, string>();
+      for (const [pk, entry] of Object.entries(current as Record<string, unknown>)) {
+        const rec = entry as Record<string, unknown>;
+        const models = rec?.["models"] as unknown[] | undefined;
+        if (Array.isArray(models)) {
+          for (const m of models as Array<Record<string, unknown>>) {
+            const id = String((m as Record<string, unknown>)?.["id"] ?? "");
+            if (id) curById.set(`${pk}/${id}`, JSON.stringify({ ...m, id }));
+          }
+        }
       }
+      const selectedProviders = buildSelectedProviders();
+      let n = 0;
+      const seen = new Set<string>();
+      for (const [pk, prov] of Object.entries(selectedProviders)) {
+        const models = (prov as Record<string, unknown>)["models"] as Array<Record<string, unknown>> | undefined;
+        if (!Array.isArray(models)) continue;
+        for (const m of models) {
+          const id = String((m as Record<string, unknown>)?.["id"] ?? "");
+          const gid = `${pk}/${id}`;
+          seen.add(gid);
+          const curJson = curById.get(gid);
+          const selJson = JSON.stringify({ ...m, id });
+          if (curJson !== selJson) n++;
+        }
+      }
+      for (const gid of curById.keys()) if (!seen.has(gid)) n++;
+      return n;
     }
-    let n = 0;
-    const seen = new Set<string>();
-    for (const m of selected) {
-      const id = String((m as any)?.id ?? "");
-      seen.add(id);
-      if (curById.get(id) !== JSON.stringify(m)) n++;
-    }
-    for (const id of curById.keys()) if (!seen.has(id)) n++;
-    return n;
+    return 0;
   }, [current, drafts, proposed, checked]);
 
   function toggleChecked(id: string) {
@@ -330,23 +334,30 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       toast("err", activeValidation.error ?? "Invalid JSON");
       return;
     }
-    const payload = activeValidation.value as Record<string, unknown>;
-    const newApi = typeof payload.api === "string" ? payload.api : "";
-    const newBaseUrl = typeof payload.baseUrl === "string" ? payload.baseUrl : "";
+    const activeVal = activeValidation.value as Record<string, unknown>;
+    const isProvidersMapDraft = (() => {
+      const obj = proposed as Record<string, unknown> | null;
+      if (!obj) return false;
+      const vals = Object.values(obj);
+      return vals.length > 0 && vals.some((v) => v && typeof v === "object" && !Array.isArray(v) && "models" in (v as Record<string, unknown>));
+    })();
+    if (!("providers" in activeVal) && !isProvidersMapDraft) {
+      toast("err", "Gateway JSON must contain a providers object");
+      return;
+    }
+    const selectedProviders = buildSelectedProviders();
+    const payloadToSend: Record<string, unknown> = { providers: selectedProviders };
+    const providerValues = Object.values(asRecord(activeVal.providers));
+    const newBaseUrl = typeof asRecord(providerValues[0]).baseUrl === "string" ? String(asRecord(providerValues[0]).baseUrl) : "";
     try {
-      await api.applyGateway({ ...activeValidation.value, models: buildSelectedModels() });
-      // 同步网关的 api / baseUrl 回 Settings（最小实现：api 直写 gatewayApi，baseUrl 解析 host:port）
+      await api.applyGateway(payloadToSend);
+      // 仅同步本地 proxy host:port；每个 gateway provider 的 API 来自 channel.api。
       try {
         const state = await api.getState();
-        const curApi = state.settings.gatewayApi;
         const curHost = state.settings.proxy.host;
         const curPort = state.settings.proxy.port;
         let needUpdate = false;
         const nextSettings = JSON.parse(JSON.stringify(state.settings)) as typeof state.settings;
-        if (newApi && newApi !== curApi) {
-          (nextSettings as any).gatewayApi = newApi;
-          needUpdate = true;
-        }
         if (newBaseUrl) {
           try {
             const u = new URL(newBaseUrl);
@@ -446,7 +457,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                     <div className="mt-1 text-xs text-zinc-500">该渠道未暴露模型，去供应商页勾选后发布</div>
                   )}
                   {g.models.map((m) => {
-                    const gid = gatewayIdOf(g, m.id);
+                    const gid = providerModelKey(g, m.id);
                     return (
                       <label key={gid} className="mt-1 flex items-center gap-2 text-xs text-zinc-300">
                         <input
@@ -478,7 +489,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                       onChange={() => toggleChecked(id)}
                       className="h-3.5 w-3.5 accent-amber-400"
                     />
-                    <span className="font-mono">{(() => { const p = id.split("/"); return p.length === 3 ? `${p[0]}/${p[2]}` : id; })()}</span>
+                    <span className="font-mono">{id}</span>
                   </label>
                 ))}
               </div>
@@ -487,31 +498,6 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         </div>
       )}
       <Card className="mb-4">
-        <div className="grid gap-x-4 sm:grid-cols-2">
-          <Field label={t("接口格式")}>
-            <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-              {API_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-              {!API_OPTIONS.some((o) => o.value === apiType) && apiType && (
-                <option value={apiType}>{apiType}</option>
-              )}
-            </Select>
-            <p className="mt-1 text-xs text-zinc-500">{t("修改后应用到 Pi 时将同步到 Settings → Gateway API") || "修改后应用到 Pi 时将同步到 Settings → Gateway API"}</p>
-          </Field>
-          <Field label={t("Base URL")}>
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-            <p className="mt-1 text-xs text-zinc-500">{t("修改后应用到 Pi 时将同步到 Settings → Proxy host:port，0.0.0.0 已归一化为 127.0.0.1") || "修改后应用到 Pi 时将同步到 Settings → Proxy host:port（0.0.0.0 已归一化为 127.0.0.1）"}</p>
-          </Field>
-          <div className="sm:col-span-2">
-            <Field label={t("API key")}>
-              <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-            </Field>
-          </div>
-        </div>
-
 
         {/* Models section — cc-switch style */}
         <div className="mt-6 border-l border-white/10 pl-3">
@@ -547,17 +533,18 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 hideExposed
                 onToggleExposed={() => {}}
                 onChange={(next) => handleDraftChange(d, next)}
-                displayId={shortGatewayId(d.id)}
+                displayId={d.id}
                 fullId={d.id}
                 onRemove={() => {
-                  // 删行等价于取消勾选：否则 buildSelectedModels 会从
+                  // 删行等价于取消勾选：否则 buildSelectedProviders 会从
                   // proposed/current 按 id 取回该行，删了也发回去（删不掉）。
+                  const gid = d.providerKey ? `${d.providerKey}/${d.id}` : d.id;
                   setChecked((prev) => {
                     const ns = new Set(prev);
-                    ns.delete(d.id);
+                    ns.delete(gid);
                     return ns;
                   });
-                  skipAutoCheck.current.add(d.id);
+                  skipAutoCheck.current.add(gid);
                   setDrafts((prev) => prev.filter((x) => x.key !== d.key));
                 }}
                 expanded={expandedKeys.has(d.key)}

@@ -35,7 +35,7 @@ func TestRetryOn400ToMin(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-ok", "object": "chat.completion", "model": "muse-spark-1.2-contributor",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "ok"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
+			"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	}))
 	defer mock.Close()
@@ -44,16 +44,16 @@ func TestRetryOn400ToMin(t *testing.T) {
 		"version":2,
 		"current":"oc",
 		"profiles":{
-			"oc":{"api":"openai-responses","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-oc","models":[{"id":"muse-spark-1.2-contributor","contextWindow":1048576,"maxTokens":943718}],"exposedModels":["muse-spark-1.2-contributor"]}
+			"oc":{"api":"openai-responses","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-oc","upstreams":[{"name":"main","api":"openai-responses","baseUrl":%q,"apiKey":"sk-oc","models":[{"id":"muse-spark-1.2-contributor","contextWindow":1048576,"maxTokens":943718}],"exposedModels":["muse-spark-1.2-contributor"]}]}
 		},
 		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","conversationSource":"off","proxy":{"host":"127.0.0.1","port":43112,"circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},"web":{"host":"127.0.0.1","port":43110}}
-	}`, mock.URL+"/v1")
+	}`, mock.URL+"/v1", mock.URL+"/v1")
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	router := NewProxyRouter()
-	body := `{"model":"oc/muse-spark-1.2-contributor","input":"hi","max_output_tokens":908720}`
+	body := `{"model":"muse-spark-1.2-contributor","input":"hi","max_output_tokens":908720}`
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

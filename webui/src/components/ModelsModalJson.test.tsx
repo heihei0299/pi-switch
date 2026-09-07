@@ -14,11 +14,10 @@ function stateWithProfile(overrides: Record<string, unknown> = {}) {
         api: "openai-completions",
         baseUrl: "https://example.test/v1",
         apiKey: "key",
-        models: [
+        upstreams: [{ name: "main", api: "openai-completions", baseUrl: "https://example.test/v1", apiKey: "key", models: [
           { id: "m1", name: "M1", input: ["text"], contextWindow: 1000, maxTokens: 100, customField: "keep", cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
-        ],
+        ], exposedModels: ["m1"] }],
         proxy: false,
-        exposedModels: ["m1"],
         ...overrides,
       },
     },

@@ -394,7 +394,7 @@ func handleGatewayCLI(args []string) {
 		}
 		fmt.Println("gateway published")
 	case "status":
-		fmt.Printf("Gateway %s @ %s:%d\n", cfg.Settings.ProviderPrefix, cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
+		fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
 	case "preview":
 		preview := gateway.BuildProposedGatewayEntry(cfg)
 		b, _ := json.MarshalIndent(preview, "", "  ")

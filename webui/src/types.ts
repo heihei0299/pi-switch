@@ -33,6 +33,8 @@ export type ResponsesMode = "auto" | "passthrough" | "convert";
 export interface Upstream {
   baseUrl: string;
   apiKey: string;
+  api?: string;
+  responsesMode?: ResponsesMode;
   headers?: Record<string, string>;
   weight?: number;
   name?: string;
@@ -50,7 +52,6 @@ export interface ProviderProfile {
   apiKey: string;
   /** 多上游配置（进程隔离后独立调度）。空时回退到单 baseUrl/apiKey/headers，兼容旧字段 */
   upstreams?: Upstream[];
-  models: ModelEntry[];
   oauth?: "radius";
   preset?: string;
   /** 模型目录 provider 映射（对应模型目录的 provider key，如 "openai"）；显式值优先，未填时按 preset 推断，推断失败跳过模型元数据 enrich */
@@ -62,7 +63,6 @@ export interface ProviderProfile {
   proxy: boolean;
   updatedAt?: string;
   modelMap?: Record<string, unknown>;
-  exposedModels?: string[];
   userAgent?: string;
   [key: string]: unknown;
 }
@@ -99,10 +99,8 @@ export interface WebSettings {
 }
 
 export interface Settings {
-  providerPrefix: string;
   writeMode: string;
   injectOpenCodeAttribution?: boolean;
-  gatewayApi: string;
   language?: string | null;
   proxy: ProxySettings;
   web: WebSettings;

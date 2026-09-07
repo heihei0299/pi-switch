@@ -18,7 +18,7 @@ func TestGatewayEnrich_OverwriteDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PI_SWITCH_CATALOG", p)
-	cfgJSON := `{"version":2,"profiles":{"deepseek":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","models":[{"id":"deepseek-v4-flash","contextWindow":128000,"maxTokens":16384,"cost":{"input":0,"output":0,"cacheRead":0}}],"exposedModels":["deepseek-v4-flash"]}},"settings":{"providerPrefix":"pi-switch"}}`
+	cfgJSON := `{"version":2,"profiles":{"deepseek":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k","models":[{"id":"deepseek-v4-flash","contextWindow":128000,"maxTokens":16384,"cost":{"input":0,"output":0,"cacheRead":0}}],"exposedModels":["deepseek-v4-flash"]}]}},"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	t.Setenv("PI_SWITCH_MODELS", filepath.Join(dir, "models.json"))
 	r := NewMgmtRouter()
@@ -37,7 +37,7 @@ func TestGatewayEnrich_OverwriteDefault(t *testing.T) {
 		t.Fatalf("proposed missing")
 	}
 	var models []interface{}
-	if prov, ok := prop["deepseek"]; ok {
+	if prov, ok := prop["deepseek/main"]; ok {
 		entry := prov.(map[string]interface{})
 		models, _ = entry["models"].([]interface{})
 	} else if provs, ok := prop["providers"]; ok {

@@ -11,9 +11,7 @@ function stateWithSettings(overrides: Record<string, unknown> = {}) {
     current: "native",
     profiles: {},
     settings: {
-      providerPrefix: "pi-switch",
       writeMode: "merge",
-      gatewayApi: "openai-completions",
       language: null,
       injectOpenCodeAttribution: true,
       proxy: {
@@ -66,25 +64,23 @@ describe("SettingsPanel save decoupled from gateway (gateway-sep)", () => {
     expect(screen.queryByText(/Current vs Proposed/i)).not.toBeInTheDocument();
   });
 
-  it("changing gatewayApi/providerPrefix/host/port still only triggers local save", async () => {
+  it("changing proxy host/port still only triggers local save", async () => {
     const update = vi.spyOn(api, "updateSettings").mockResolvedValue({ ok: true } as any);
     const preview = vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: {}, conflicts: [] } as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
-    const state = stateWithSettings({ gatewayApi: "openai-completions", providerPrefix: "pi-switch" });
+    const state = stateWithSettings();
     renderPanel(state, vi.fn(async () => {}));
 
-    // change gatewayApi
-    const gatewaySelect = screen.getByDisplayValue("OpenAI Chat Completions") as HTMLSelectElement;
-    fireEvent.change(gatewaySelect, { target: { value: "openai-responses" } });
-    // change providerPrefix
-    const prefixInput = screen.getByDisplayValue("pi-switch") as HTMLInputElement;
-    fireEvent.change(prefixInput, { target: { value: "my-prefix" } });
+    const hostInput = screen.getAllByDisplayValue("127.0.0.1")[0] as HTMLInputElement;
+    fireEvent.change(hostInput, { target: { value: "0.0.0.0" } });
+    const portInput = screen.getByDisplayValue("43112") as HTMLInputElement;
+    fireEvent.change(portInput, { target: { value: "43113" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
     const calledWith = update.mock.calls[0][0] as any;
-    expect(calledWith.gatewayApi).toBe("openai-responses");
-    expect(calledWith.providerPrefix).toBe("my-prefix");
+    expect(calledWith.proxy.host).toBe("0.0.0.0");
+    expect(calledWith.proxy.port).toBe(43113);
     expect(preview).not.toHaveBeenCalled();
     expect(apply).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText("已保存到本地，需到网关发布")).toBeInTheDocument());

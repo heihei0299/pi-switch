@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestShortAlias_TwoSegmentRouting(t *testing.T) {
+func TestSlashModelIDsAreRejected(t *testing.T) {
 	chatOK := `{"id":"c1","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"}}],"model":"mimo-v2.5","usage":{"prompt_tokens":1,"completion_tokens":1}}`
 	respOK := `{"id":"resp1","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"model":"muse-spark-1.2-contributor","usage":{"input_tokens":1,"output_tokens":1}}`
 	chatMock := channelAPIMock(t, "/v1/chat/completions", chatOK)
@@ -18,22 +18,22 @@ func TestShortAlias_TwoSegmentRouting(t *testing.T) {
 	dir := t.TempDir()
 	writeChannelConfig(t, dir, newOCConfig(chatMock.URL, respMock.URL))
 
-	// 2-segment oc/mimo via responses -> should hit chat channel
+	// Provider/channel prefixes are no longer accepted at the proxy boundary.
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"oc/mimo-v2.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("short alias oc/mimo via responses code=%d body=%s want 200", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("slash model id code=%d body=%s want 400", w.Code, w.Body.String())
 	}
 
-	// 2-segment oc/muse via chat -> should hit responses channel
+	// The same strict rule applies to every endpoint.
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"oc/muse-spark-1.2-contributor","messages":[{"role":"user","content":"hi"}]}`))
 	req2.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w2, req2)
-	if w2.Code != 200 {
-		t.Fatalf("short alias oc/muse via chat code=%d body=%s want 200", w2.Code, w2.Body.String())
+	if w2.Code != 400 {
+		t.Fatalf("slash model id code=%d body=%s want 400", w2.Code, w2.Body.String())
 	}
 }
 
@@ -82,15 +82,26 @@ func TestShortAlias_Ambiguous(t *testing.T) {
 	dir := t.TempDir()
 	writeChannelConfig(t, dir, dupConfig)
 
+	// After bare migration, oc/dup (with slash) should be 400, bare dup should be 502 ambiguous
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"oc/dup","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	NewProxyRouter().ServeHTTP(w, req)
-	if w.Code != 502 {
-		t.Fatalf("ambiguous oc/dup code=%d body=%s want 502", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("oc/dup with slash should be 400, got %d body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "ambiguous") {
-		t.Fatalf("ambiguous error should contain 'ambiguous', got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "invalid_request_error") {
+		t.Fatalf("slash error should contain invalid_request_error, got %s", w.Body.String())
+	}
+	w3 := httptest.NewRecorder()
+	req3, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"dup","messages":[{"role":"user","content":"hi"}]}`))
+	req3.Header.Set("Content-Type", "application/json")
+	NewProxyRouter().ServeHTTP(w3, req3)
+	if w3.Code != 502 {
+		t.Fatalf("ambiguous bare dup code=%d body=%s want 502", w3.Code, w3.Body.String())
+	}
+	if !strings.Contains(w3.Body.String(), "ambiguous") {
+		t.Fatalf("ambiguous error should contain 'ambiguous', got %s", w3.Body.String())
 	}
 
 	// models list should have bare dup with two providers, no short alias

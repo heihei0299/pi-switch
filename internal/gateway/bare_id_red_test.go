@@ -12,15 +12,15 @@ func TestBareID_BuildProposedReturnsProvidersMapWithBareIDs(t *testing.T) {
 	cfg := config.PiSwitchConfig{
 		Settings: config.Settings{
 			Proxy: struct {
-				Host                          string                       `json:"host"`
-				Port                          int                          `json:"port"`
-				UserAgent                     *string                      `json:"userAgent,omitempty"`
+				Host                          string                        `json:"host"`
+				Port                          int                           `json:"port"`
+				UserAgent                     *string                       `json:"userAgent,omitempty"`
 				CircuitBreaker                config.CircuitBreakerSettings `json:"circuitBreaker"`
-				RequestRetry                  *int                         `json:"requestRetry,omitempty"`
-				MaxRetryCredentials           int                          `json:"maxRetryCredentials,omitempty"`
-				MaxRetryInterval              *int                         `json:"maxRetryInterval,omitempty"`
-				DisableCooling                *bool                        `json:"disableCooling,omitempty"`
-				TransientErrorCooldownSeconds *int                         `json:"transientErrorCooldownSeconds,omitempty"`
+				RequestRetry                  *int                          `json:"requestRetry,omitempty"`
+				MaxRetryCredentials           int                           `json:"maxRetryCredentials,omitempty"`
+				MaxRetryInterval              *int                          `json:"maxRetryInterval,omitempty"`
+				DisableCooling                *bool                         `json:"disableCooling,omitempty"`
+				TransientErrorCooldownSeconds *int                          `json:"transientErrorCooldownSeconds,omitempty"`
 				RequestScopedErrors           []config.RequestScopedError   `json:"requestScopedErrors,omitempty"`
 			}{Host: "127.0.0.1", Port: 43112},
 		},

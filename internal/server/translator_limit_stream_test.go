@@ -28,8 +28,8 @@ func writeTranslatorConfig(t *testing.T, dir, upstreamURL string, api, mode stri
 				"responsesMode":%q,
 				"baseUrl":%q,
 				"apiKey":"sk-test",
-				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384%s},{"id":"claude-3-5-sonnet-20241022","contextWindow":200000,"maxTokens":8192%s}],
-				"exposedModels":["gpt-4o-mini","claude-3-5-sonnet-20241022"]
+				"upstreams":[{"name":"main","api":%q,"baseUrl":%q,"apiKey":"sk-test","models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384%s},{"id":"claude-3-5-sonnet-20241022","contextWindow":200000,"maxTokens":8192%s}],
+				"exposedModels":["gpt-4o-mini","claude-3-5-sonnet-20241022"]}]
 			}
 		},
 		"settings":{
@@ -40,7 +40,7 @@ func writeTranslatorConfig(t *testing.T, dir, upstreamURL string, api, mode stri
 			"web":{"host":"127.0.0.1","port":43110},
 			"conversationSource":"sessionScan"
 		}
-	}`, api, mode, upstreamURL, costJSON, costJSON)
+	}`, api, mode, upstreamURL, api, upstreamURL, costJSON, costJSON)
 	path := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(path, []byte(cfg), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -115,7 +115,7 @@ func TestTranslator_ResponsesPassthroughAndConvert(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "resp_123", "object": "response", "model": "gpt-4o-mini",
 				"output": []interface{}{map[string]interface{}{"type": "message", "role": "assistant", "content": []interface{}{map[string]interface{}{"type": "output_text", "text": "hello"}}}},
-				"usage": map[string]interface{}{"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+				"usage":  map[string]interface{}{"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
 			})
 		}))
 		defer mock.Close()
@@ -154,7 +154,7 @@ func TestTranslator_ResponsesPassthroughAndConvert(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "chatcmpl-123", "object": "chat.completion", "model": "gpt-4o-mini",
 				"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "hello"}}},
-				"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5, "prompt_tokens_details": map[string]interface{}{"cached_tokens": 2}, "completion_tokens_details": map[string]interface{}{"reasoning_tokens": 3}},
+				"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5, "prompt_tokens_details": map[string]interface{}{"cached_tokens": 2}, "completion_tokens_details": map[string]interface{}{"reasoning_tokens": 3}},
 			})
 		}))
 		defer mock.Close()
@@ -216,7 +216,7 @@ func TestTranslator_AnthropicMessages(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "msg_123", "type": "message", "role": "assistant",
 			"content": []interface{}{map[string]interface{}{"type": "text", "text": "hello"}},
-			"model": "claude-3-5-sonnet-20241022", "stop_reason": "end_turn",
+			"model":   "claude-3-5-sonnet-20241022", "stop_reason": "end_turn",
 			"usage": map[string]interface{}{"input_tokens": 12, "output_tokens": 6},
 		})
 	}))
@@ -256,7 +256,7 @@ func TestTranslator_AnthropicMessages(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "chatcmpl-456", "object": "chat.completion", "model": "gpt-4o-mini",
 				"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "hello2"}}},
-				"usage": map[string]interface{}{"prompt_tokens": 8, "completion_tokens": 4},
+				"usage":   map[string]interface{}{"prompt_tokens": 8, "completion_tokens": 4},
 			})
 		}))
 		defer mock2.Close()
@@ -304,7 +304,7 @@ func TestLimit_ClampAllKeys(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "hi"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
+			"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	}))
 	defer mock.Close()
@@ -482,7 +482,7 @@ func TestConversationName_Decode(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-4o-mini",
 			"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "hi"}}},
-			"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
+			"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	}))
 	defer mock.Close()
