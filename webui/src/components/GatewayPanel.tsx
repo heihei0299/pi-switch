@@ -275,6 +275,9 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           models: [],
           proxy: false,
         };
+        if (base["compat"] && typeof base["compat"] === "object" && !Array.isArray(base["compat"])) {
+          (result[providerKey] as Record<string, unknown>)["compat"] = base["compat"];
+        }
         if ((base as Record<string, unknown>)["apiKey"]) {
           (result[providerKey] as Record<string, unknown>)["apiKey"] = (base as Record<string, unknown>)["apiKey"];
         }

@@ -57,6 +57,30 @@ func TestProposedCostIncludesZeroCacheWrite(t *testing.T) {
 	}
 }
 
+func TestProposedOpenCodeProviderEnablesSessionAffinity(t *testing.T) {
+	cfg := config.PiSwitchConfig{
+		Profiles: map[string]config.ProviderProfile{
+			"oc": {
+				Upstreams: []config.Upstream{{
+					Name:          strptr("chat"),
+					API:           "openai-completions",
+					BaseURL:       "https://opencode.ai/zen/go/v1",
+					Models:        []config.ModelEntry{{ID: "new-model", ContextWindow: 128000, MaxTokens: 16384}},
+					ExposedModels: []string{"new-model"},
+				}},
+			},
+		},
+	}
+
+	proposed := BuildProposedGatewayEntry(cfg)
+	providers := proposed["providers"].(map[string]interface{})
+	provider := providers["oc/chat"].(map[string]interface{})
+	compat, ok := provider["compat"].(map[string]interface{})
+	if !ok || compat["sendSessionAffinityHeaders"] != true {
+		t.Fatalf("opencode provider compat = %#v, want sendSessionAffinityHeaders=true", provider["compat"])
+	}
+}
+
 // 端到端收敛：current 为“已发布一次后的落盘形态”（cost 含 cacheWrite:0），
 // 经 MergeGatewayExtra 归一化后 ComputePendingCount 必须为 0。
 func TestPreviewPendingConvergesAfterPublish(t *testing.T) {

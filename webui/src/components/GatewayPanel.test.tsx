@@ -81,6 +81,27 @@ describe("GatewayPanel gateway-sep", () => {
     expect(screen.queryByText(/检测到本地与 Pi 网关不一致/)).not.toBeInTheDocument();
   });
 
+
+  it("preserves provider compat when applying a gateway", async () => {
+    const gateway = {
+      "oc/chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        compat: { sendSessionAffinityHeaders: true },
+        models: [{ id: "new-model" }],
+        proxy: false,
+      },
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: gateway, proposed: gateway, conflicts: [] } as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByRole("button", { name: "应用到 Pi" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    expect(payload.providers["oc/chat"].compat).toEqual({ sendSessionAffinityHeaders: true });
+  });
+
   it("failed apply retains config and does not refresh or clear pending", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
     vi.spyOn(api, "applyGateway").mockRejectedValue(new Error("apply failed"));

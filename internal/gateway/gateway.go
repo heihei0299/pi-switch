@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/config"
 )
@@ -40,13 +41,17 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 			for _, exposedID := range channel.ExposedModels {
 				models = append(models, gatewayModelEntry(exposedID, channel.Models, exposedID))
 			}
-			providers[name+"/"+channelName] = map[string]interface{}{
+			provider := map[string]interface{}{
 				"api":     channel.API,
 				"baseUrl": baseUrl,
 				"apiKey":  "pi-switch-proxy",
 				"models":  models,
 				"proxy":   false,
 			}
+			if strings.Contains(strings.ToLower(channel.BaseURL), "opencode.ai") {
+				provider["compat"] = map[string]interface{}{"sendSessionAffinityHeaders": true}
+			}
+			providers[name+"/"+channelName] = provider
 		}
 	}
 	return map[string]interface{}{"providers": providers}
