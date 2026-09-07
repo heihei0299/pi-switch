@@ -121,9 +121,15 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
   useEffect(() => {
     const { from, to } = computeStatsWindow("today", null, null);
     void load("today", from, to, 0, 50);
+  }, [load]);
+
+  useEffect(() => {
+    if (!conversationsOpen || convData != null) {
+      return;
+    }
     const conv = computeConversationWindow("today", null, null);
     void loadConversations("today", conv.from, conv.to, 0, 50);
-  }, [load, loadConversations]);
+  }, [conversationsOpen, convData, loadConversations]);
 
   // Current window bounds for the active range; custom falls back to today.
   const windowBounds = useCallback(
@@ -154,8 +160,10 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
     const id = setInterval(() => {
       const { from, to } = windowBounds();
       void load(range, from, to, page, pageSize, true);
-      const conv = convWindowBounds();
-      void loadConversations(convRange, conv.from, conv.to, convPage, convPageSize, true);
+      if (conversationsOpen) {
+        const conv = convWindowBounds();
+        void loadConversations(convRange, conv.from, conv.to, convPage, convPageSize, true);
+      }
     }, refreshMs);
     return () => clearInterval(id);
   }, [
@@ -167,6 +175,7 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
     pageSize,
     load,
     windowBounds,
+    conversationsOpen,
     convRange,
     convFrom,
     convTo,

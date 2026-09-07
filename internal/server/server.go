@@ -3335,7 +3335,7 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 	if source == "proxy" {
 		return "unlabeled", ""
 	}
-	sessions := scan.Scan()
+	sessions := scan.ScanCached()
 	model, _ := body["model"].(string)
 	nowStr := time.Now().Format(time.RFC3339)
 	nowMs := time.Now().UnixMilli()
@@ -4242,7 +4242,7 @@ func sessionScanCandidates(source string) map[string]scan.PiSession {
 	if source != "sessionScan" {
 		return nil
 	}
-	return scan.Scan()
+	return scan.ScanCached()
 }
 
 func effectiveConversationID(convID, convName sql.NullString, provider, model, ts sql.NullString, source string, sessions map[string]scan.PiSession) (string, string) {

@@ -143,14 +143,16 @@ describe("StatsPanel", () => {
     expect(screen.queryByText(/By conversation/)).not.toBeInTheDocument();
   });
 
-  it("mounts and fetches both windows in parallel", async () => {
+  it("loads conversation stats only after expanding the conversation section", async () => {
     statsMock.mockResolvedValue(fullStats());
     render(<StatsPanel state={{} as never} refresh={async () => {}} />);
     await screen.findByText("363.5K");
-
     expect(statsMock).toHaveBeenCalledTimes(1);
     expect(statsMock).toHaveBeenLastCalledWith("today", expect.any(Number), expect.any(Number), 0, 50);
-    expect(convMock).toHaveBeenCalledTimes(1);
+    expect(convMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
+    await waitFor(() => expect(convMock).toHaveBeenCalledTimes(1));
     expect(convMock).toHaveBeenLastCalledWith("today", expect.any(Number), expect.any(Number), 0, 50);
   });
 
@@ -957,6 +959,9 @@ describe("StatsPanel", () => {
     statsMock.mockResolvedValue(fullStats());
     render(<StatsPanel state={{} as never} refresh={async () => {}} />);
     await screen.findByText("363.5K");
+
+    fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
+    await waitFor(() => expect(convMock).toHaveBeenCalledTimes(1));
 
     vi.useFakeTimers();
     fireEvent.change(screen.getByLabelText(/Auto-refresh/), { target: { value: "5000" } });

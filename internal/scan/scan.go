@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 type PiSession struct {
@@ -30,8 +32,65 @@ func SessionsDir() string {
 	return filepath.Join(home, ".pi", "agent", "sessions")
 }
 
+const sessionScanCacheTTL = 3 * time.Second
+
+var sessionScanCache struct {
+	sync.Mutex
+	dir        string
+	scanned    time.Time
+	sessions   map[string]PiSession
+	generation uint64
+	refreshing bool
+}
+
+// Scan returns a fresh snapshot of the Pi session directory.
 func Scan() map[string]PiSession {
+	return scanDir(SessionsDir())
+}
+
+// ScanCached shares a short-lived session snapshot between request handlers.
+// An expired snapshot is returned immediately while one background refresh
+// updates it, so stats requests never block on a repeat full-directory scan.
+func ScanCached() map[string]PiSession {
 	dir := SessionsDir()
+	sessionScanCache.Lock()
+
+	if sessionScanCache.sessions != nil && sessionScanCache.dir == dir {
+		if time.Since(sessionScanCache.scanned) >= sessionScanCacheTTL && !sessionScanCache.refreshing {
+			sessionScanCache.refreshing = true
+			generation := sessionScanCache.generation
+			go refreshSessionScan(dir, generation)
+		}
+		cached := cloneSessions(sessionScanCache.sessions)
+		sessionScanCache.Unlock()
+		return cached
+	}
+
+	// The first request, or a changed session directory, must establish a
+	// snapshot synchronously. Holding the lock prevents concurrent callers from
+	// starting duplicate cold scans.
+	sessionScanCache.generation++
+	sessionScanCache.dir = dir
+	sessionScanCache.refreshing = false
+	sessionScanCache.sessions = scanDir(dir)
+	sessionScanCache.scanned = time.Now()
+	cached := cloneSessions(sessionScanCache.sessions)
+	sessionScanCache.Unlock()
+	return cached
+}
+
+func refreshSessionScan(dir string, generation uint64) {
+	sessions := scanDir(dir)
+	sessionScanCache.Lock()
+	defer sessionScanCache.Unlock()
+	if sessionScanCache.dir == dir && sessionScanCache.generation == generation {
+		sessionScanCache.sessions = sessions
+		sessionScanCache.scanned = time.Now()
+		sessionScanCache.refreshing = false
+	}
+}
+
+func scanDir(dir string) map[string]PiSession {
 	m := map[string]PiSession{}
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || filepath.Ext(path) != ".jsonl" {
@@ -47,6 +106,14 @@ func Scan() map[string]PiSession {
 		return nil
 	})
 	return m
+}
+
+func cloneSessions(src map[string]PiSession) map[string]PiSession {
+	dst := make(map[string]PiSession, len(src))
+	for id, sess := range src {
+		dst[id] = sess
+	}
+	return dst
 }
 
 func parseFile(path string) *PiSession {
