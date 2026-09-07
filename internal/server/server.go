@@ -807,7 +807,6 @@ func handleDuplicateProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
-
 func handleTestProfile(c *gin.Context) {
 	name := c.Param("name")
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
@@ -917,6 +916,47 @@ func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name
 		enrich["warning"] = warning
 	}
 	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
+}
+
+// fetchUpstreamUsage GETs {baseURL}/usage with bearer key and returns the
+// upstream "usage" object (rolling/weekly/monthly windows). Any non-200
+// status or unparsable body is an error: callers surface it instead of
+// inventing numbers. User-Agent is required, Cloudflare 403s UA-less
+// requests from opencode.ai frontends.
+func fetchUpstreamUsage(baseURL, apiKey, userAgent string) (map[string]interface{}, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("baseUrl is empty")
+	}
+	u := strings.TrimRight(baseURL, "/") + "/usage"
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("usage endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, fmt.Errorf("usage endpoint returned invalid JSON: %v", err)
+	}
+	usage, ok := decoded["usage"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("usage endpoint response has no usage object")
+	}
+	return usage, nil
 }
 
 // fetchUpstreamIDs tries baseURL/models then baseURL/v1/models with optional
@@ -1329,16 +1369,46 @@ func handleGetCredits(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	// For now return a realistic stub with percent so UI doesn't crash; real OpencodeGoFetcher would proxy to baseURL/v1/usage
+	// 主上游（首 channel）+ 全渠道模型池：渠道分区后顶层 Models 为空，
+	// 只看顶层会导致所有分区供应商恒返回全零。
 	baseURL := prof.BaseURL
-	if len(prof.Upstreams) > 0 && prof.Upstreams[0].BaseURL != "" {
-		baseURL = prof.Upstreams[0].BaseURL
+	apiKey := prof.APIKey
+	if len(prof.Upstreams) > 0 {
+		if prof.Upstreams[0].BaseURL != "" {
+			baseURL = prof.Upstreams[0].BaseURL
+		}
+		if prof.Upstreams[0].APIKey != "" {
+			apiKey = prof.Upstreams[0].APIKey
+		}
 	}
-	if baseURL != "" && len(prof.Models) > 0 {
-		c.JSON(200, gin.H{"balance": 100, "used": 20, "total": 100, "remaining": 80, "percent": 20, "usage": gin.H{"rolling": gin.H{"percent": 20, "status": "ok"}, "weekly": gin.H{"percent": 45, "status": "ok"}, "monthly": gin.H{"percent": 70, "status": "ok"}}, "raw": gin.H{}})
+	hasModels := len(prof.Models) > 0
+	if !hasModels {
+		for i := range prof.Upstreams {
+			if len(prof.Upstreams[i].Models) > 0 {
+				hasModels = true
+				break
+			}
+		}
+	}
+	if baseURL == "" || !hasModels {
+		c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": 0, "raw": gin.H{}})
 		return
 	}
-	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": 0, "raw": gin.H{}})
+	// 真实回源：opencode 兼容网关的 {baseURL}/usage（zen/go 实测返回
+	// rolling/weekly/monthly 用量百分比；Zen-only key 可能 403）。
+	// 非 200/解析失败一律如实报错，前端显示错误+重试，不再编造数字。
+	usage, err := fetchUpstreamUsage(baseURL, apiKey, resolveUserAgent(prof, cfg))
+	if err != nil {
+		c.JSON(502, gin.H{"error": err.Error(), "type": "upstream_error"})
+		return
+	}
+	percent := 0.0
+	if rolling, ok := usage["rolling"].(map[string]interface{}); ok {
+		if p, ok := rolling["percent"].(float64); ok {
+			percent = p
+		}
+	}
+	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": percent, "usage": usage, "raw": gin.H{}})
 }
 
 func handlePresets(c *gin.Context) {

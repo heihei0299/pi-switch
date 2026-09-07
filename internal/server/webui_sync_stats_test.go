@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "modernc.org/sqlite"
 	"github.com/heihei0299/pi-switch/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 func setupWebUISyncDB(t *testing.T) func() {
@@ -59,7 +59,7 @@ func insertRequestRow(t *testing.T, ts string, provider, model string, success i
 	}
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+func int64Ptr(v int64) *int64       { return &v }
 func float64Ptr(v float64) *float64 { return &v }
 
 // S5 part: parseWindowQuery four档校验
@@ -104,71 +104,6 @@ func TestWebUISync_Stats_05_WindowParseFourGrades(t *testing.T) {
 	r.ServeHTTP(w2, req2)
 	if w2.Code != 400 {
 		t.Fatalf("conversations invalid range want 400 got %d", w2.Code)
-	}
-}
-
-// S5 part: handleGetCredits 3 windows 20/45/70 and percent guard
-func TestWebUISync_Stats_05_CreditsThreeWindows(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.json")
-	dbPath := filepath.Join(dir, "requests.db")
-	// profile with opencode baseUrl to trigger credits
-	cfgContent := `{"version":2,"profiles":{"op":{"api":"openai-completions","preset":"openai","baseUrl":"https://api.opencode.ai/v1","apiKey":"k","models":[{"id":"m1","contextWindow":128000,"maxTokens":16384}],"proxy":false}},"settings":{"providerPrefix":"pi-switch","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110}}}`
-	_ = os.WriteFile(cfgPath, []byte(cfgContent), 0644)
-	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
-	t.Setenv("PI_SWITCH_DB", dbPath)
-	_, _ = store.ResetForTest(dbPath)
-	r := NewMgmtRouter()
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/profiles/op/credits", nil)
-	r.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("credits code %d body %s", w.Code, w.Body.String())
-	}
-	var resp map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	// check top percent exists and is number not undefined
-	if p, ok := resp["percent"]; !ok {
-		t.Fatalf("credits missing percent: %v", resp)
-	} else if _, ok := p.(float64); !ok {
-		t.Fatalf("percent not number: %T %v", p, p)
-	}
-	usage, ok := resp["usage"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("usage missing: %v", resp)
-	}
-	rolling, _ := usage["rolling"].(map[string]interface{})
-	weekly, _ := usage["weekly"].(map[string]interface{})
-	monthly, _ := usage["monthly"].(map[string]interface{})
-	if rolling == nil || weekly == nil || monthly == nil {
-		t.Fatalf("usage windows missing: %v", usage)
-	}
-	if rp, _ := rolling["percent"].(float64); rp != 20 {
-		t.Fatalf("rolling percent = %v want 20", rp)
-	}
-	if wp, _ := weekly["percent"].(float64); wp != 45 {
-		t.Fatalf("weekly percent = %v want 45", wp)
-	}
-	if mp, _ := monthly["percent"].(float64); mp != 70 {
-		t.Fatalf("monthly percent = %v want 70", mp)
-	}
-	// percent guard: missing profile returns percent 0 not undefined/null
-	t.Setenv("PI_SWITCH_CONFIG", filepath.Join(dir, "empty.json"))
-	_ = os.WriteFile(filepath.Join(dir, "empty.json"), []byte(`{"version":2,"profiles":{"empty":{"api":"openai-completions","baseUrl":"https://api.example.com/v1","apiKey":"k","models":[],"proxy":false}},"settings":{"providerPrefix":"pi-switch","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110}}}`), 0644)
-	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("GET", "/api/profiles/empty/credits", nil)
-	r.ServeHTTP(w2, req2)
-	if w2.Code != 200 {
-		t.Fatalf("empty credits code %d", w2.Code)
-	}
-	var resp2 map[string]interface{}
-	_ = json.Unmarshal(w2.Body.Bytes(), &resp2)
-	if p, _ := resp2["percent"].(float64); p != 0 {
-		// allow 0, but must not be nil
-	}
-	if resp2["percent"] == nil {
-		t.Fatalf("empty profile percent should be 0 guard, got nil: %v", resp2)
 	}
 }
 
