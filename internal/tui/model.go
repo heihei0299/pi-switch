@@ -76,7 +76,18 @@ func (m Model) Init() tea.Cmd { return nil }
 
 func (m *Model) refreshGateway() {
 	preview := gateway.BuildProposedGatewayEntry(m.cfg)
-	if models, ok := preview["models"].([]interface{}); ok {
+	total := 0
+	if provs, ok := preview["providers"].(map[string]interface{}); ok {
+		for _, pv := range provs {
+			if entry, ok := pv.(map[string]interface{}); ok {
+				if models, ok := entry["models"].([]interface{}); ok {
+					total += len(models)
+				}
+			}
+		}
+		m.gatewayPreview = fmt.Sprintf("Gateway %s @ %s:%d  models=%d",
+			m.cfg.Settings.ProviderPrefix, m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port, total)
+	} else if models, ok := preview["models"].([]interface{}); ok {
 		m.gatewayPreview = fmt.Sprintf("Gateway %s @ %s:%d  models=%d",
 			m.cfg.Settings.ProviderPrefix, m.cfg.Settings.Proxy.Host, m.cfg.Settings.Proxy.Port, len(models))
 	} else {

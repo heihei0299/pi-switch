@@ -274,28 +274,32 @@ func TestGatewaySupplier_09_S3_WriteBeforeAfter2Models(t *testing.T) {
 	var afterMJ map[string]interface{}
 	_ = json.Unmarshal(bAfter, &afterMJ)
 	provs := afterMJ["providers"].(map[string]interface{})
-	gw, ok := provs["pi-switch"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("after missing pi-switch: %v", afterMJ)
-	}
-	models, ok := gw["models"].([]interface{})
-	if !ok || len(models) != 2 {
-		t.Fatalf("after models len=%v want 2, gw=%v", len(models), gw)
-	}
-	ids := map[string]bool{}
-	for _, m := range models {
-		mm := m.(map[string]interface{})
-		id, _ := mm["id"].(string)
-		ids[id] = true
-		if id == "supplier-a/m1" {
-			compat, _ := mm["compat"].(map[string]interface{})
-			if compat == nil || compat["supportsDeveloperRole"] != false {
-				t.Fatalf("reasoning model compat not false, m=%v", mm)
-			}
+	// New per-channel: each supplier gets its own provider with bare id
+	for _, wantKey := range []string{"supplier-a", "supplier-b"} {
+		if _, ok := provs[wantKey]; !ok {
+			t.Fatalf("after missing %s: %v", wantKey, afterMJ)
 		}
 	}
-	if !ids["supplier-a/m1"] || !ids["supplier-b/m2"] {
-		t.Fatalf("ids missing, got %v", ids)
+	gwA, _ := provs["supplier-a"].(map[string]interface{})
+	modelsA, _ := gwA["models"].([]interface{})
+	if len(modelsA) != 1 {
+		t.Fatalf("supplier-a models len=%v want 1, gw=%v", len(modelsA), gwA)
+	}
+	mA := modelsA[0].(map[string]interface{})
+	if mA["id"] != "m1" {
+		t.Fatalf("supplier-a id = %v want m1", mA["id"])
+	}
+	if compat, _ := mA["compat"].(map[string]interface{}); compat == nil || compat["supportsDeveloperRole"] != false {
+		t.Fatalf("reasoning model compat not false, m=%v", mA)
+	}
+	gwB, _ := provs["supplier-b"].(map[string]interface{})
+	modelsB, _ := gwB["models"].([]interface{})
+	if len(modelsB) != 1 {
+		t.Fatalf("supplier-b models len=%v want 1", len(modelsB))
+	}
+	mB := modelsB[0].(map[string]interface{})
+	if mB["id"] != "m2" {
+		t.Fatalf("supplier-b id = %v want m2", mB["id"])
 	}
 	// also test missing file case
 	_ = os.Remove(mp)
@@ -309,8 +313,12 @@ func TestGatewaySupplier_09_S3_WriteBeforeAfter2Models(t *testing.T) {
 	b2, _ := os.ReadFile(mp)
 	var mj2 map[string]interface{}
 	_ = json.Unmarshal(b2, &mj2)
-	if _, ok := mj2["providers"].(map[string]interface{})["pi-switch"]; !ok {
-		t.Fatalf("after missing file publish should create pi-switch")
+	provs2 := mj2["providers"].(map[string]interface{})
+	if _, ok := provs2["supplier-a"]; !ok {
+		t.Fatalf("after missing file publish should create supplier-a")
+	}
+	if _, ok := provs2["supplier-b"]; !ok {
+		t.Fatalf("after missing file publish should create supplier-b")
 	}
 }
 
@@ -369,12 +377,22 @@ func TestGatewaySupplier_09_S4_ExposedModelMap(t *testing.T) {
 	var preview map[string]interface{}
 	_ = json.Unmarshal(w3.Body.Bytes(), &preview)
 	prop := preview["proposed"].(map[string]interface{})
-	models := prop["models"].([]interface{})
+	// New per-channel: proposed is providers map, check supplier-a's bare id
+	var models []interface{}
+	if prov, ok := prop["supplier-a"]; ok {
+		entry := prov.(map[string]interface{})
+		models = entry["models"].([]interface{})
+	} else if provs, ok := prop["providers"]; ok {
+		entry := provs.(map[string]interface{})["supplier-a"].(map[string]interface{})
+		models = entry["models"].([]interface{})
+	} else {
+		models = prop["models"].([]interface{})
+	}
 	if len(models) != 1 {
 		t.Fatalf("proposed models should be 1 after expose m2, got %v", models)
 	}
-	if mm := models[0].(map[string]interface{}); mm["id"] != "supplier-a/m2" {
-		t.Fatalf("proposed id wrong, got %v", mm["id"])
+	if mm := models[0].(map[string]interface{}); mm["id"] != "m2" {
+		t.Fatalf("proposed id wrong, want bare m2 got %v", mm["id"])
 	}
 }
 

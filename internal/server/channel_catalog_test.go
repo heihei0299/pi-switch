@@ -52,7 +52,18 @@ func TestGatewayPreview_CatalogFillsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	prop := resp["proposed"].(map[string]interface{})
-	models := prop["models"].([]interface{})
+	var models []interface{}
+	if provs, ok := prop["sup"]; ok {
+		// new per-channel wrapper: proposed is providers map
+		entry := provs.(map[string]interface{})
+		models = entry["models"].([]interface{})
+	} else if provs, ok := prop["providers"]; ok {
+		// wrapper nested
+		pm := provs.(map[string]interface{})["sup"].(map[string]interface{})
+		models = pm["models"].([]interface{})
+	} else {
+		models = prop["models"].([]interface{})
+	}
 	if len(models) != 1 {
 		t.Fatalf("models = %v", models)
 	}
@@ -95,7 +106,16 @@ func TestGatewayPreview_CatalogUnmatchedSkipped(t *testing.T) {
 	var resp map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	prop := resp["proposed"].(map[string]interface{})
-	m := prop["models"].([]interface{})[0].(map[string]interface{})
+	var m map[string]interface{}
+	if provs, ok := prop["sup"]; ok {
+		entry := provs.(map[string]interface{})
+		m = entry["models"].([]interface{})[0].(map[string]interface{})
+	} else if provs, ok := prop["providers"]; ok {
+		pm := provs.(map[string]interface{})["sup"].(map[string]interface{})
+		m = pm["models"].([]interface{})[0].(map[string]interface{})
+	} else {
+		m = prop["models"].([]interface{})[0].(map[string]interface{})
+	}
 	if _, ok := m["cost"]; ok {
 		t.Fatalf("unmatched model must not gain cost: %v", m)
 	}
@@ -177,10 +197,13 @@ func TestGatewayRoutePublish_CatalogFillsBeforeWrite(t *testing.T) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	entry := stored["providers"].(map[string]interface{})["pi-switch"].(map[string]interface{})
+	entry := stored["providers"].(map[string]interface{})["sup"].(map[string]interface{})
 	m := entry["models"].([]interface{})[0].(map[string]interface{})
 	if m["contextWindow"] != float64(5000) {
 		t.Fatalf("route-published limits not enriched: %v", m)
+	}
+	if m["id"] != "test-model" {
+		t.Fatalf("route-published id should be bare, got %v", m["id"])
 	}
 	if _, ok := m["cost"].(map[string]interface{}); !ok {
 		t.Fatalf("route-published cost not enriched: %v", m)

@@ -42,35 +42,66 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 		host = "127.0.0.1"
 	}
 	port := cfg.Settings.Proxy.Port
-	models := []interface{}{}
+	baseUrl := "http://" + host + ":" + itoa(port) + "/v1"
+	providers := map[string]interface{}{}
 	for name, prof := range cfg.Profiles {
-		// 已分区：按渠道逐条聚合，id = supplier/channel/modelId，跨渠道同 id 独立。
 		if prof.HasChannelPartitions() {
 			for i := range prof.Upstreams {
 				chName := prof.ChannelName(i)
+				if chName == "" {
+					continue
+				}
 				pool, exposed := prof.ChannelView(chName)
+				if len(exposed) == 0 {
+					continue
+				}
+				models := []interface{}{}
 				for _, exposedID := range exposed {
-					models = append(models, gatewayModelEntry(name+"/"+chName+"/"+exposedID, pool, exposedID))
+					models = append(models, gatewayModelEntry(exposedID, pool, exposedID))
+				}
+				api := prof.Upstreams[i].API
+				if api == "" {
+					api = prof.API
+				}
+				if api == "" {
+					api = cfg.Settings.GatewayAPI
+				}
+				providerKey := name + "/" + chName
+				providers[providerKey] = map[string]interface{}{
+					"api":     api,
+					"baseUrl": baseUrl,
+					"apiKey":  "pi-switch-proxy",
+					"models":  models,
+					"proxy":   false,
 				}
 			}
 			continue
 		}
-		// 空 exposed = 不暴露：新拉取的模型默认不进网关，需显式 expose。
-		// 不要在这里回退到全部 Models，否则供应商界面“未暴露”与网关实际提供不一致。
 		if len(prof.ExposedModels) == 0 {
 			continue
 		}
-		for _, exposedID := range prof.ExposedModels {
-			models = append(models, gatewayModelEntry(name+"/"+exposedID, prof.Models, exposedID))
+		// Legacy fallback: single provider per supplier (no channel suffix) for backward compat
+		// Will be removed in 04 when top-level fields are deleted.
+		pool := prof.Models
+		exposed := prof.ExposedModels
+		models := []interface{}{}
+		for _, exposedID := range exposed {
+			models = append(models, gatewayModelEntry(exposedID, pool, exposedID))
+		}
+		api := prof.API
+		if api == "" {
+			api = cfg.Settings.GatewayAPI
+		}
+		providerKey := name
+		providers[providerKey] = map[string]interface{}{
+			"api":     api,
+			"baseUrl": baseUrl,
+			"apiKey":  "pi-switch-proxy",
+			"models":  models,
+			"proxy":   false,
 		}
 	}
-	return map[string]interface{}{
-		"api":     cfg.Settings.GatewayAPI,
-		"baseUrl": "http://" + host + ":" + itoa(port) + "/v1",
-		"apiKey":  "pi-switch-proxy",
-		"models":  models,
-		"proxy":   false,
-	}
+	return map[string]interface{}{"providers": providers}
 }
 
 // gatewayModelEntry builds one gateway model entry for a precomputed gateway id,
@@ -119,8 +150,83 @@ func jsonNumber(n int) string {
 	return string(b)
 }
 
+// isProvidersWrapper reports whether m is a providers wrapper (has "providers" key).
+func isProvidersWrapper(m map[string]interface{}) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m["providers"]
+	return ok
+}
+
+func getProviders(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	if provs, ok := m["providers"].(map[string]interface{}); ok {
+		return provs
+	}
+	return nil
+}
+
 // DiffGateway mirrors webui/src/lib/gatewayDiff.ts diffGateway
+// It handles both single gateway entry (old) and providers wrapper (new).
 func DiffGateway(current, proposed map[string]interface{}) (added, removed, changed []string) {
+	if isProvidersWrapper(current) || isProvidersWrapper(proposed) {
+		curProvs := getProviders(current)
+		propProvs := getProviders(proposed)
+		if curProvs == nil {
+			curProvs = map[string]interface{}{}
+		}
+		if propProvs == nil {
+			propProvs = map[string]interface{}{}
+		}
+		if current == nil {
+			for k := range propProvs {
+				added = append(added, k)
+			}
+			return
+		}
+		// provider-level added/removed
+		curSet := map[string]bool{}
+		propSet := map[string]bool{}
+		for k := range curProvs {
+			curSet[k] = true
+		}
+		for k := range propProvs {
+			propSet[k] = true
+		}
+		for k := range propSet {
+			if !curSet[k] {
+				added = append(added, k)
+			}
+		}
+		for k := range curSet {
+			if !propSet[k] {
+				removed = append(removed, k)
+			}
+		}
+		// per-provider model-level + provider fields diff -> mark provider as changed
+		// For pending per providerKey+modelId, we count model-level diffs as changed entries with key = providerKey + "/" + modelId
+		// However to keep DiffGateway simple, we report providerKey as changed if its models or api differ.
+		// Model-level diffs are accounted in ComputePendingCount via per-model counts.
+		for k := range propSet {
+			if !curSet[k] {
+				continue
+			}
+			curEntry, _ := curProvs[k].(map[string]interface{})
+			propEntry, _ := propProvs[k].(map[string]interface{})
+			if curEntry == nil || propEntry == nil {
+				continue
+			}
+			a, _ := json.Marshal(curEntry)
+			b, _ := json.Marshal(propEntry)
+			if string(a) != string(b) {
+				changed = append(changed, k)
+			}
+		}
+		return
+	}
 	if current == nil {
 		for k := range proposed {
 			added = append(added, k)
@@ -155,6 +261,126 @@ func DiffGateway(current, proposed map[string]interface{}) (added, removed, chan
 }
 
 func ComputePendingCount(current, proposed map[string]interface{}) int {
+	if isProvidersWrapper(current) || isProvidersWrapper(proposed) {
+		curProvs := getProviders(current)
+		propProvs := getProviders(proposed)
+		if curProvs == nil {
+			curProvs = map[string]interface{}{}
+		}
+		if propProvs == nil {
+			propProvs = map[string]interface{}{}
+		}
+		// If either is nil wrapper (current nil), pending is sum of prop providers/models?
+		// For simplicity, use DiffGateway provider-level for added/removed/changed providers,
+		// plus per-provider model-level diffs where provider exists in both.
+		// Model-level counting: for each provider in both, count added/removed/changed models by bare id.
+		pending := 0
+		curSet := map[string]bool{}
+		propSet := map[string]bool{}
+		for k := range curProvs {
+			curSet[k] = true
+		}
+		for k := range propProvs {
+			propSet[k] = true
+		}
+		for k := range propSet {
+			if !curSet[k] {
+				// provider added: count its models as pending
+				if entry, ok := propProvs[k].(map[string]interface{}); ok {
+					if models, ok := entry["models"].([]interface{}); ok {
+						pending += len(models)
+						if len(models) == 0 {
+							pending++
+						}
+					} else {
+						pending++
+					}
+				} else {
+					pending++
+				}
+			}
+		}
+		for k := range curSet {
+			if !propSet[k] {
+				if entry, ok := curProvs[k].(map[string]interface{}); ok {
+					if models, ok := entry["models"].([]interface{}); ok {
+						pending += len(models)
+						if len(models) == 0 {
+							pending++
+						}
+					} else {
+						pending++
+					}
+				} else {
+					pending++
+				}
+			}
+		}
+		for k := range propSet {
+			if !curSet[k] {
+				continue
+			}
+			curEntry, _ := curProvs[k].(map[string]interface{})
+			propEntry, _ := propProvs[k].(map[string]interface{})
+			if curEntry == nil || propEntry == nil {
+				continue
+			}
+			// provider fields diff (api/baseUrl/proxy) counts as 1 if differs outside models
+			curCopy := map[string]interface{}{}
+			propCopy := map[string]interface{}{}
+			for kk, vv := range curEntry {
+				if kk != "models" {
+					curCopy[kk] = vv
+				}
+			}
+			for kk, vv := range propEntry {
+				if kk != "models" {
+					propCopy[kk] = vv
+				}
+			}
+			ca, _ := json.Marshal(curCopy)
+			ba, _ := json.Marshal(propCopy)
+			if string(ca) != string(ba) {
+				pending++
+			}
+			// model-level diff per provider
+			curModels, _ := curEntry["models"].([]interface{})
+			propModels, _ := propEntry["models"].([]interface{})
+			curByID := map[string]map[string]interface{}{}
+			propByID := map[string]map[string]interface{}{}
+			for _, m := range curModels {
+				if mm, ok := m.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); id != "" {
+						curByID[id] = mm
+					}
+				}
+			}
+			for _, m := range propModels {
+				if mm, ok := m.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); id != "" {
+						propByID[id] = mm
+					}
+				}
+			}
+			for id := range propByID {
+				if _, ok := curByID[id]; !ok {
+					pending++
+				} else {
+					a, _ := json.Marshal(curByID[id])
+					b, _ := json.Marshal(propByID[id])
+					if string(a) != string(b) {
+						pending++
+					}
+				}
+			}
+			for id := range curByID {
+				if _, ok := propByID[id]; !ok {
+					pending++
+				}
+			}
+		}
+		return pending
+	}
 	a, r, c := DiffGateway(current, proposed)
 	return len(a) + len(r) + len(c)
 }
@@ -167,11 +393,120 @@ var generatedKeys = map[string]bool{
 	"proxy":   true,
 }
 
+var wrapperGeneratedKeys = map[string]bool{"providers": true}
+
 // MergeGatewayExtra merges non-generated top-level keys and per-model extra fields from current into proposed.
-// It preserves current's extraTop-level keys and merges headers/compat/extra per model id.
+// It preserves current's extra top-level keys and merges headers/compat/extra per model id.
+// Supports both single provider entry (old) and providers wrapper (new).
 func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]interface{} {
 	if current == nil {
 		return proposed
+	}
+	if isProvidersWrapper(current) || isProvidersWrapper(proposed) {
+		merged := map[string]interface{}{}
+		for k, v := range proposed {
+			merged[k] = v
+		}
+		// top-level non-generated for wrapper (only providers is generated)
+		for k, v := range current {
+			if !wrapperGeneratedKeys[k] {
+				if _, exists := merged[k]; !exists {
+					merged[k] = v
+				} else {
+					merged[k] = v
+				}
+			}
+		}
+		curProvs, _ := current["providers"].(map[string]interface{})
+		propProvs, _ := merged["providers"].(map[string]interface{})
+		if curProvs == nil {
+			curProvs = map[string]interface{}{}
+		}
+		if propProvs == nil {
+			propProvs = map[string]interface{}{}
+		}
+		// per-provider merge
+		for key, propVal := range propProvs {
+			propMap, ok := propVal.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			curVal, hasCur := curProvs[key]
+			if !hasCur {
+				continue
+			}
+			curMap, ok := curVal.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			// top-level non-generated per provider entry
+			for ck, cv := range curMap {
+				if !generatedKeys[ck] {
+					if _, exists := propMap[ck]; !exists {
+						propMap[ck] = cv
+					}
+				}
+			}
+			// per-model extra within this provider
+			curModels, _ := curMap["models"].([]interface{})
+			propModels, _ := propMap["models"].([]interface{})
+			curByID := map[string]map[string]interface{}{}
+			for _, m := range curModels {
+				if mm, ok := m.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); id != "" {
+						curByID[id] = mm
+					}
+				}
+			}
+			for i, m := range propModels {
+				mm, ok := m.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				id, _ := mm["id"].(string)
+				if cur, exists := curByID[id]; exists {
+					for _, extraKey := range []string{"headers", "compat", "extra"} {
+						if curVal, has := cur[extraKey]; has {
+							if _, exists := mm[extraKey]; !exists {
+								mm[extraKey] = curVal
+								propModels[i] = mm
+							} else {
+								if curMap, ok := curVal.(map[string]interface{}); ok {
+									if propMapInner, ok := mm[extraKey].(map[string]interface{}); ok {
+										for ek, ev := range curMap {
+											if _, exists := propMapInner[ek]; !exists {
+												propMapInner[ek] = ev
+											}
+										}
+										mm[extraKey] = propMapInner
+										propModels[i] = mm
+									}
+								}
+							}
+						}
+					}
+					standard := map[string]bool{"id": true, "contextWindow": true, "maxTokens": true, "cost": true, "input": true, "reasoning": true, "name": true, "headers": true, "compat": true, "extra": true}
+					for ck, cv := range cur {
+						if !standard[ck] {
+							if _, exists := mm[ck]; !exists {
+								mm[ck] = cv
+								propModels[i] = mm
+							}
+						}
+					}
+				}
+			}
+			propMap["models"] = propModels
+			propProvs[key] = propMap
+		}
+		merged["providers"] = propProvs
+		// Ensure no spurious top-level models/api etc for wrapper
+		delete(merged, "models")
+		delete(merged, "api")
+		delete(merged, "baseUrl")
+		delete(merged, "apiKey")
+		delete(merged, "proxy")
+		return merged
 	}
 	merged := map[string]interface{}{}
 	for k, v := range proposed {
@@ -183,8 +518,6 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 			if _, exists := merged[k]; !exists {
 				merged[k] = v
 			} else {
-				// keep current's value if proposed doesn't already have? Actually spec says merge, we keep current's extra if proposed missing. If both have, keep proposed? But test expects keep current's extraTop. So if not in generated, and current has, we preserve it.
-				// If merged already has from proposed (shouldn't happen for non-generated), we keep current's? Let's prefer current for non-generated.
 				merged[k] = v
 			}
 		}
@@ -192,7 +525,6 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 	// per-model extra: headers/compat/extra
 	curModels, _ := current["models"].([]interface{})
 	propModels, _ := merged["models"].([]interface{})
-	// index current models by id
 	curByID := map[string]map[string]interface{}{}
 	for _, m := range curModels {
 		if mm, ok := m.(map[string]interface{}); ok {
@@ -214,7 +546,6 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 						mm[extraKey] = curVal
 						propModels[i] = mm
 					} else {
-						// merge inner map if both are maps
 						if curMap, ok := curVal.(map[string]interface{}); ok {
 							if propMap, ok := mm[extraKey].(map[string]interface{}); ok {
 								for ek, ev := range curMap {
@@ -229,8 +560,6 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 					}
 				}
 			}
-			// also preserve any non-standard fields from current that are not in generated model keys (id,contextWindow,maxTokens,cost,input,reasoning,name)
-			// For simplicity, copy any key not in standard set if not present
 			standard := map[string]bool{"id": true, "contextWindow": true, "maxTokens": true, "cost": true, "input": true, "reasoning": true, "name": true, "headers": true, "compat": true, "extra": true}
 			for ck, cv := range cur {
 				if !standard[ck] {
@@ -356,22 +685,55 @@ type PreviewGroupItem struct {
 // status is published when current holds a JSON-equal entry, else pending.
 // Current-only ids return as sorted removed (stale entries awaiting cleanup).
 func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]interface{}) ([]PreviewGroup, []string) {
-	curByID := map[string]map[string]interface{}{}
-	if ms, _ := current["models"].([]interface{}); ms != nil {
-		for _, m := range ms {
-			if mm, ok := m.(map[string]interface{}); ok {
-				if id, _ := mm["id"].(string); id != "" {
-					curByID[id] = mm
+	var curByID, propByID map[string]map[string]interface{}
+	if isProvidersWrapper(current) || isProvidersWrapper(proposed) {
+		buildByID := func(m map[string]interface{}) map[string]map[string]interface{} {
+			out := map[string]map[string]interface{}{}
+			provs := getProviders(m)
+			for providerKey, pv := range provs {
+				entry, _ := pv.(map[string]interface{})
+				if entry == nil {
+					continue
+				}
+				models, _ := entry["models"].([]interface{})
+				for _, mod := range models {
+					if mm, ok := mod.(map[string]interface{}); ok {
+						if id, _ := mm["id"].(string); id != "" {
+							gid := id
+							if providerKey == cfg.Settings.ProviderPrefix || providerKey == "pi-switch" {
+								gid = id
+							} else if !strings.Contains(id, "/") {
+								gid = providerKey + "/" + id
+							} else {
+								gid = id
+							}
+							out[gid] = mm
+						}
+					}
+				}
+			}
+			return out
+		}
+		curByID = buildByID(current)
+		propByID = buildByID(proposed)
+	} else {
+		curByID = map[string]map[string]interface{}{}
+		if ms, _ := current["models"].([]interface{}); ms != nil {
+			for _, m := range ms {
+				if mm, ok := m.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); id != "" {
+						curByID[id] = mm
+					}
 				}
 			}
 		}
-	}
-	propByID := map[string]map[string]interface{}{}
-	if ms, _ := proposed["models"].([]interface{}); ms != nil {
-		for _, m := range ms {
-			if mm, ok := m.(map[string]interface{}); ok {
-				if id, _ := mm["id"].(string); id != "" {
-					propByID[id] = mm
+		propByID = map[string]map[string]interface{}{}
+		if ms, _ := proposed["models"].([]interface{}); ms != nil {
+			for _, m := range ms {
+				if mm, ok := m.(map[string]interface{}); ok {
+					if id, _ := mm["id"].(string); id != "" {
+						propByID[id] = mm
+					}
 				}
 			}
 		}
@@ -385,8 +747,21 @@ func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]
 		if !ok {
 			return "pending"
 		}
-		a, _ := json.Marshal(cur)
-		b, _ := json.Marshal(prop)
+		// Normalize id to bare for comparison: current may have prefixed id, proposed has bare
+		normalize := func(m map[string]interface{}) map[string]interface{} {
+			out := map[string]interface{}{}
+			for k, v := range m {
+				out[k] = v
+			}
+			if idVal, ok := out["id"].(string); ok {
+				if idx := strings.LastIndex(idVal, "/"); idx >= 0 {
+					out["id"] = idVal[idx+1:]
+				}
+			}
+			return out
+		}
+		a, _ := json.Marshal(normalize(cur))
+		b, _ := json.Marshal(normalize(prop))
 		if string(a) == string(b) {
 			return "published"
 		}

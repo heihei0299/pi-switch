@@ -179,9 +179,9 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("providers missing: %v", mj)
 	}
-	gw, ok := provs["pi-switch"].(map[string]interface{})
+	gw, ok := provs["test-provider"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("pi-switch provider missing: %v", provs)
+		t.Fatalf("test-provider provider missing: %v", provs)
 	}
 	models, ok := gw["models"].([]interface{})
 	if !ok || len(models) == 0 {
@@ -189,12 +189,12 @@ func TestGatewayPublish_WritesModelsJSON(t *testing.T) {
 	}
 	found := false
 	for _, m := range models {
-		if mm, ok := m.(map[string]interface{}); ok && mm["id"] == "test-provider/gpt-4o-mini" {
+		if mm, ok := m.(map[string]interface{}); ok && mm["id"] == "gpt-4o-mini" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("gateway models should contain test-provider/gpt-4o-mini, got %v", models)
+		t.Fatalf("gateway models should contain gpt-4o-mini bare, got %v", models)
 	}
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(`{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[{"id":"test-provider/gpt-4o-mini"}],"proxy":false}`))

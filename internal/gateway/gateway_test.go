@@ -39,13 +39,26 @@ func TestProposedCostIncludesZeroCacheWrite(t *testing.T) {
 	cfg.Settings.Proxy.Port = 43112
 
 	proposed := BuildProposedGatewayEntry(cfg)
-	models, _ := proposed["models"].([]interface{})
+	provs, _ := proposed["providers"].(map[string]interface{})
+	if provs == nil {
+		t.Fatalf("proposed missing providers")
+	}
+	// legacy single -> oc
+	entry, _ := provs["oc"].(map[string]interface{})
+	if entry == nil {
+		t.Fatalf("providers missing oc: %v", provs)
+	}
+	models, _ := entry["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("proposed models len = %d, want 1", len(models))
 	}
 	costJSON, _ := json.Marshal(models[0].(map[string]interface{})["cost"])
 	if !strings.Contains(string(costJSON), `"cacheWrite"`) {
 		t.Fatalf("proposed cost omits cacheWrite: %s (want explicit cacheWrite:0)", string(costJSON))
+	}
+	// id must be bare
+	if id, _ := models[0].(map[string]interface{})["id"].(string); id != "mimo-v2.5" {
+		t.Fatalf("model id = %q, want bare mimo-v2.5", id)
 	}
 }
 
@@ -75,24 +88,28 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	cfg.Settings.Proxy.Port = 43112
 
 	proposed := BuildProposedGatewayEntry(cfg)
-	// 模拟落盘 current：与 proposed 同构，但 cost 系 webui draft 形态（含 cacheWrite:0）
+	// 模拟落盘 current：与 proposed 同构的 providers wrapper，cost 含 cacheWrite:0
 	current := map[string]interface{}{
-		"api":     "openai-responses",
-		"baseUrl": "http://127.0.0.1:43112/v1",
-		"apiKey":  "pi-switch-proxy",
-		"proxy":   false,
-		"models": []interface{}{
-			map[string]interface{}{
-				"id":            "oc/mimo-v2.5",
-				"contextWindow": float64(1048576),
-				"maxTokens":     float64(131072),
-				"name":          "MiMo-V2.5",
-				"cost": map[string]interface{}{
-					"input": 0.4, "output": float64(2),
-					"cacheRead": 0.08, "cacheWrite": float64(0),
+		"providers": map[string]interface{}{
+			"oc": map[string]interface{}{
+				"api":     "openai-responses",
+				"baseUrl": "http://127.0.0.1:43112/v1",
+				"apiKey":  "pi-switch-proxy",
+				"proxy":   false,
+				"models": []interface{}{
+					map[string]interface{}{
+						"id":            "mimo-v2.5",
+						"contextWindow": float64(1048576),
+						"maxTokens":     float64(131072),
+						"name":          "MiMo-V2.5",
+						"cost": map[string]interface{}{
+							"input": 0.4, "output": float64(2),
+							"cacheRead": 0.08, "cacheWrite": float64(0),
+						},
+						"input":  []interface{}{"text", "image"},
+						"compat": map[string]interface{}{"supportsDeveloperRole": false},
+					},
 				},
-				"input":  []interface{}{"text", "image"},
-				"compat": map[string]interface{}{"supportsDeveloperRole": false},
 			},
 		},
 	}
@@ -103,27 +120,31 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	}
 }
 
-// S5：分区聚合前缀 id。已分区 profile 按渠道逐条聚合，id = supplier/channel/modelId；
-// 跨渠道同模型 id 为独立条目；未分区保持 supplier/modelId 旧形态。
+// S5：分区聚合按渠道分 provider，裸 id。已分区 profile 按渠道逐条聚合，key = supplier/channel 裸 modelId；
+// 跨渠道同裸 id 为独立条目；未分区 legacy 也按 supplier 裸 id 落盘。
 func TestProposedChannelPrefixedIDs(t *testing.T) {
 	cfg := config.PiSwitchConfig{
 		Settings: config.Settings{GatewayAPI: "openai-completions"},
 		Profiles: map[string]config.ProviderProfile{
 			"sup": {
+				API: "openai-completions",
 				Upstreams: []config.Upstream{
 					{
 						Name:          strptr("main"),
+						API:           "openai-completions",
 						Models:        []config.ModelEntry{{ID: "m1", ContextWindow: 100, MaxTokens: 10}},
 						ExposedModels: []string{"m1"},
 					},
 					{
 						Name:          strptr("bk"),
+						API:           "openai-responses",
 						Models:        []config.ModelEntry{{ID: "m1", ContextWindow: 200, MaxTokens: 20}},
 						ExposedModels: []string{"m1"},
 					},
 				},
 			},
 			"legacy": {
+				API:           "openai-completions",
 				Models:        []config.ModelEntry{{ID: "old", ContextWindow: 128000, MaxTokens: 16384}},
 				ExposedModels: []string{"old"},
 			},
@@ -133,17 +154,45 @@ func TestProposedChannelPrefixedIDs(t *testing.T) {
 	cfg.Settings.Proxy.Port = 43112
 
 	proposed := BuildProposedGatewayEntry(cfg)
-	models, _ := proposed["models"].([]interface{})
-	ids := map[string]bool{}
-	for _, m := range models {
-		ids[m.(map[string]interface{})["id"].(string)] = true
+	provs, _ := proposed["providers"].(map[string]interface{})
+	if provs == nil {
+		t.Fatalf("providers nil")
 	}
-	for _, want := range []string{"sup/main/m1", "sup/bk/m1", "legacy/old"} {
-		if !ids[want] {
-			t.Fatalf("proposed ids = %v, want %q", ids, want)
+	// expect keys: sup/main, sup/bk, legacy (legacy without channel suffix for backward compat)
+	for _, want := range []string{"sup/main", "sup/bk", "legacy"} {
+		if _, ok := provs[want]; !ok {
+			t.Fatalf("providers missing %q: %v", want, provs)
 		}
 	}
-	if len(ids) != 3 {
-		t.Fatalf("proposed ids = %v, want exactly 3", ids)
+	if _, ok := provs["sup"]; ok {
+		t.Fatalf("should not have short sup key")
+	}
+	// check bare ids
+	checkBare := func(key, wantID string) {
+		entry, _ := provs[key].(map[string]interface{})
+		models, _ := entry["models"].([]interface{})
+		if len(models) != 1 {
+			t.Fatalf("%s models len %d want 1", key, len(models))
+		}
+		id, _ := models[0].(map[string]interface{})["id"].(string)
+		if id != wantID {
+			t.Fatalf("%s id = %q want bare %q", key, id, wantID)
+		}
+		if strings.Contains(id, "/") {
+			t.Fatalf("%s id %q should be bare", key, id)
+		}
+	}
+	checkBare("sup/main", "m1")
+	checkBare("sup/bk", "m1")
+	checkBare("legacy", "old")
+	// check per-channel api
+	if e, _ := provs["sup/main"].(map[string]interface{}); e["api"] != "openai-completions" {
+		t.Fatalf("sup/main api %v want openai-completions", e["api"])
+	}
+	if e, _ := provs["sup/bk"].(map[string]interface{}); e["api"] != "openai-responses" {
+		t.Fatalf("sup/bk api %v want openai-responses", e["api"])
+	}
+	if len(provs) != 3 {
+		t.Fatalf("providers len %d want 3", len(provs))
 	}
 }

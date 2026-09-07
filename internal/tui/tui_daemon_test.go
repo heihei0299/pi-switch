@@ -80,19 +80,16 @@ func TestTuiDaemon_S1_ModelList(t *testing.T) {
 
 func TestTuiDaemon_S1_RefreshGatewayBuild(t *testing.T) {
 	cfg := config.DefaultConfig()
-	// BuildProposedGatewayEntry should be used
+	// BuildProposedGatewayEntry should be used - now returns providers wrapper (may be empty if no exposed)
 	proposed := gateway.BuildProposedGatewayEntry(cfg)
-	if proposed["api"] != cfg.Settings.GatewayAPI {
-		t.Fatalf("proposed api mismatch")
+	if _, ok := proposed["providers"]; !ok {
+		t.Fatalf("proposed missing providers: %v", proposed)
 	}
 	m := New(cfg)
-	// gatewayPreview should contain models=N
-	models, _ := proposed["models"].([]interface{})
-	_ = models
+	// gatewayPreview should contain models=N (N may be 0 for DefaultConfig with no exposed)
 	if !strings.Contains(m.gatewayPreview, "models=") {
 		t.Fatalf("gatewayPreview missing models count: %q", m.gatewayPreview)
 	}
-	_ = models
 }
 
 // S2: Update/View — WindowSize→SetSize / q,ctrl+c,esc→Quit / 1,2,3→tab / g→gateway.Publish / s,r→refreshStats / enter→cfg.Current=&name→saveConfig tmp+rename→SetItems高亮，Init=nil 不开Tick，FilterState 过滤时 enter 交 list，View 分 0:list/1:Gateway/2:Stats+statusMsg

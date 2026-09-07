@@ -1609,29 +1609,44 @@ func handleGetGateway(c *gin.Context) {
 }
 func handleGatewayPreview(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	proposed := gateway.BuildProposedGatewayEntry(cfg)
+	proposedWrapper := gateway.BuildProposedGatewayEntry(cfg)
 	path := gateway.ModelsPath()
-	var current interface{}
-	var curMap map[string]interface{}
+	var curWrapper map[string]interface{}
 	if b, err := os.ReadFile(path); err == nil {
 		var m map[string]interface{}
 		_ = json.Unmarshal(b, &m)
 		if provs, ok := m["providers"].(map[string]interface{}); ok {
-			current = provs[cfg.Settings.ProviderPrefix]
-			if cm, ok := current.(map[string]interface{}); ok {
-				curMap = cm
-			}
+			curWrapper = map[string]interface{}{"providers": provs}
+		} else {
+			curWrapper = map[string]interface{}{"providers": map[string]interface{}{}}
+		}
+	} else {
+		curWrapper = map[string]interface{}{"providers": map[string]interface{}{}}
+	}
+	// Normalize proposed with current's extra keys (compat/headers etc)
+	mergedWrapper := gateway.MergeGatewayExtra(curWrapper, proposedWrapper)
+	summary := enrichProposedModels(mergedWrapper)
+	pending := gateway.ComputePendingCount(curWrapper, mergedWrapper)
+	groups, removed := gateway.BuildPreviewGroups(cfg, curWrapper, mergedWrapper)
+	// Response uses inner providers maps for current/proposed (nil if empty)
+	var currentForResp interface{}
+	var proposedForResp interface{}
+	if provs, ok := curWrapper["providers"].(map[string]interface{}); ok && len(provs) > 0 {
+		currentForResp = provs
+	} else {
+		// if file not exists or empty, keep nil to match previous behavior where current == nil
+		if len(provs) == 0 {
+			currentForResp = nil
+		} else {
+			currentForResp = provs
 		}
 	}
-	// 与落盘口径对齐：Publish 会经 MergeGatewayExtra 把 current 的 extra 键
-	//（compat/headers 等）并入 proposed，直接比会恒差。先归一化再 diff，
-	// 否则发布后 pending 永远回不到 0（manual-test-bugs/02）。
-	proposed = gateway.MergeGatewayExtra(curMap, proposed)
-	// 模型目录补齐：用 models.dev 快照补提议条目的缺失模型元数据（只补缺失，不写回池）。
-	summary := enrichProposedModels(proposed)
-	pending := gateway.ComputePendingCount(curMap, proposed)
-	groups, removed := gateway.BuildPreviewGroups(cfg, curMap, proposed)
-	c.JSON(200, gin.H{"current": current, "proposed": proposed, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed,
+	if provs, ok := mergedWrapper["providers"].(map[string]interface{}); ok {
+		proposedForResp = provs
+	} else {
+		proposedForResp = nil
+	}
+	c.JSON(200, gin.H{"current": currentForResp, "proposed": proposedForResp, "conflicts": []string{}, "pending_count": pending, "groups": groups, "removed": removed,
 		"enrich": gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning}})
 }
 
@@ -1641,10 +1656,62 @@ func handleGatewayPreview(c *gin.Context) {
 // stale defaults (e.g. 128000→1048576) when the catalog provides non-zero values.
 func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary {
 	snap, stale, warning := catalog.Ensure()
-	models, _ := proposed["models"].([]interface{})
-	// Load config for supplier→provider mapping (best-effort; empty config is fine).
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	enriched, skipped := 0, 0
+	// Wrapper case: providers[supplier/channel] with bare ids
+	if provs, ok := proposed["providers"].(map[string]interface{}); ok {
+		for providerKey, pv := range provs {
+			entry, ok := pv.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			models, _ := entry["models"].([]interface{})
+			// providerKey = supplier/channel, extract supplier
+			supplier := providerKey
+			if idx := strings.Index(providerKey, "/"); idx > 0 {
+				supplier = providerKey[:idx]
+			}
+			for _, m := range models {
+				mm, ok := m.(map[string]interface{})
+				if !ok {
+					skipped++
+					continue
+				}
+				id, _ := mm["id"].(string)
+				if id == "" {
+					skipped++
+					continue
+				}
+				var meta catalog.Meta
+				var found bool
+				if supplier != "" {
+					if prof, ok := cfg.Profiles[supplier]; ok {
+						pk := resolveModelsDevProvider(prof)
+						if pk != "" {
+							meta, found = snap.LookupWithProvider(id, pk)
+						}
+					}
+					if !found {
+						meta, found = snap.LookupWithProvider(id, supplier)
+					}
+				}
+				if !found {
+					meta, found = snap.Lookup(id)
+				}
+				if !found {
+					skipped++
+					continue
+				}
+				if catalog.FillOverwrite(mm, meta) {
+					enriched++
+				} else {
+					skipped++
+				}
+			}
+		}
+		return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
+	}
+	models, _ := proposed["models"].([]interface{})
 	for _, m := range models {
 		mm, ok := m.(map[string]interface{})
 		if !ok {
