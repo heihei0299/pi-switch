@@ -22,6 +22,11 @@ func ModelsPath() string {
 	return filepath.Join(home, ".pi", "agent", "models.json")
 }
 
+const (
+	gatewayResponsesProvider = "pi-switch-res"
+	gatewayChatProvider      = "pi-switch-chat"
+)
+
 func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{} {
 	host := cfg.Settings.Proxy.Host
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
@@ -29,29 +34,59 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 	}
 	port := cfg.Settings.Proxy.Port
 	baseUrl := "http://" + host + ":" + itoa(port) + "/v1"
-	providers := map[string]interface{}{}
-	for name, prof := range cfg.Profiles {
+
+	type providerDraft struct {
+		api    string
+		models []interface{}
+	}
+	drafts := map[string]*providerDraft{
+		gatewayResponsesProvider: {api: "openai-responses"},
+		gatewayChatProvider:      {api: "openai-completions"},
+	}
+
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		prof := cfg.Profiles[name]
 		for i := range prof.Upstreams {
 			channel := prof.Upstreams[i]
-			channelName := prof.ChannelName(i)
-			if channelName == "" || channel.API == "" || len(channel.ExposedModels) == 0 {
+			providerKey := gatewayProviderForAPI(channel.API)
+			if providerKey == "" {
 				continue
 			}
-			models := []interface{}{}
 			for _, exposedID := range channel.ExposedModels {
-				models = append(models, gatewayModelEntry(exposedID, channel.Models, exposedID))
+				entry := gatewayModelEntry(exposedID, channel.Models, exposedID)
+				if strings.Contains(strings.ToLower(channel.BaseURL), "opencode.ai") {
+					compat, _ := entry["compat"].(map[string]interface{})
+					if compat == nil {
+						compat = map[string]interface{}{}
+						entry["compat"] = compat
+					}
+					compat["sendSessionAffinityHeaders"] = true
+				}
+				drafts[providerKey].models = append(drafts[providerKey].models, entry)
 			}
-			provider := map[string]interface{}{
-				"api":     channel.API,
-				"baseUrl": baseUrl,
-				"apiKey":  "pi-switch-proxy",
-				"models":  models,
-				"proxy":   false,
-			}
-			if strings.Contains(strings.ToLower(channel.BaseURL), "opencode.ai") {
-				provider["compat"] = map[string]interface{}{"sendSessionAffinityHeaders": true}
-			}
-			providers[name+"/"+channelName] = provider
+		}
+	}
+
+	providers := map[string]interface{}{}
+	for _, providerKey := range []string{gatewayResponsesProvider, gatewayChatProvider} {
+		draft := drafts[providerKey]
+		sort.SliceStable(draft.models, func(i, j int) bool {
+			return draft.models[i].(map[string]interface{})["id"].(string) < draft.models[j].(map[string]interface{})["id"].(string)
+		})
+		if len(draft.models) == 0 {
+			continue
+		}
+		providers[providerKey] = map[string]interface{}{
+			"api":     draft.api,
+			"baseUrl": baseUrl,
+			"apiKey":  "pi-switch-proxy",
+			"models":  draft.models,
+			"proxy":   false,
 		}
 	}
 	return map[string]interface{}{"providers": providers}
@@ -432,12 +467,24 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	return os.Rename(tmp, path)
 }
 
+func gatewayProviderForAPI(api string) string {
+	switch api {
+	case "openai-responses":
+		return gatewayResponsesProvider
+	case "openai-completions":
+		return gatewayChatProvider
+	default:
+		return ""
+	}
+}
+
 // PreviewGroup is one supplier/channel group of exposed candidates for the
 // gateway preview: each model carries published/pending status against current.
 type PreviewGroup struct {
-	Supplier string             `json:"supplier"`
-	Channel  string             `json:"channel"`
-	Models   []PreviewGroupItem `json:"models"`
+	Supplier        string             `json:"supplier"`
+	Channel         string             `json:"channel"`
+	GatewayProvider string             `json:"gatewayProvider"`
+	Models          []PreviewGroupItem `json:"models"`
 }
 
 // PreviewGroupItem is one exposed candidate with its publish status.
@@ -471,7 +518,8 @@ func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]
 	}
 	curByID := buildByID(current)
 	propByID := buildByID(proposed)
-	statusOf := func(id string) string {
+	statusOf := func(providerKey, modelID string) string {
+		id := providerKey + "/" + modelID
 		cur, ok := curByID[id]
 		if !ok {
 			return "pending"
@@ -498,17 +546,28 @@ func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]
 		for i := range prof.Upstreams {
 			channel := prof.Upstreams[i]
 			ch := prof.ChannelName(i)
-			if ch == "" {
+			gatewayProvider := gatewayProviderForAPI(channel.API)
+			if ch == "" || gatewayProvider == "" {
 				continue
 			}
 			items := []PreviewGroupItem{}
 			for _, eid := range channel.ExposedModels {
-				gid := name + "/" + ch + "/" + eid
-				items = append(items, PreviewGroupItem{ID: eid, Status: statusOf(gid)})
+				items = append(items, PreviewGroupItem{ID: eid, Status: statusOf(gatewayProvider, eid)})
 			}
-			groups = append(groups, PreviewGroup{Supplier: name, Channel: ch, Models: items})
+			groups = append(groups, PreviewGroup{Supplier: name, Channel: ch, GatewayProvider: gatewayProvider, Models: items})
 		}
 	}
+	providerOrder := map[string]int{gatewayResponsesProvider: 0, gatewayChatProvider: 1}
+	sort.SliceStable(groups, func(i, j int) bool {
+		left, right := groups[i], groups[j]
+		if providerOrder[left.GatewayProvider] != providerOrder[right.GatewayProvider] {
+			return providerOrder[left.GatewayProvider] < providerOrder[right.GatewayProvider]
+		}
+		if left.Supplier != right.Supplier {
+			return left.Supplier < right.Supplier
+		}
+		return left.Channel < right.Channel
+	})
 	var removed []string
 	for id := range curByID {
 		if _, ok := propByID[id]; !ok {

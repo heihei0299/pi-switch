@@ -36,16 +36,8 @@ func TestGatewayEnrich_OverwriteDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("proposed missing")
 	}
-	var models []interface{}
-	if prov, ok := prop["deepseek/main"]; ok {
-		entry := prov.(map[string]interface{})
-		models, _ = entry["models"].([]interface{})
-	} else if provs, ok := prop["providers"]; ok {
-		entry := provs.(map[string]interface{})["deepseek"].(map[string]interface{})
-		models, _ = entry["models"].([]interface{})
-	} else {
-		models, _ = prop["models"].([]interface{})
-	}
+	entry := prop["pi-switch-chat"].(map[string]interface{})
+	models, _ := entry["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("models len %d want 1", len(models))
 	}

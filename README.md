@@ -141,7 +141,7 @@ pi-switch stats                                     # View request statistics
 | 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with api/baseUrl/apiKey/headers/weight/name, each channel carrying its own `models`/`exposedModels` partition), per-channel fetch/expose, gateway publish with secondary model selection, configure Responses API passthrough/conversion mode |
 | ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
-| 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes per-channel providers to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless bare-model routing, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, circuit breaker |
+| 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes at most two fixed providers (`pi-switch-res` / `pi-switch-chat`) to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless bare-model routing, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, circuit breaker |
 | 🗂️ **Model Catalog** | Fill missing model metadata (cost/limit/reasoning/input/name) from https://models.dev snapshot cached at `~/.pi-switch/cache/models-dev.json` (24h TTL, stale fallback with warning): fetch-time enrich via per-profile `modelsDevProvider` mapping, plus gateway preview/publish fill-missing (existing values win, pools untouched, ambiguous names skipped) |
 | 📦 **Package Management** | Install, enable/disable, and manage packages across CLI, TUI, and WebUI |
 | 🖥️ **TUI (secondary)** | charmbracelet/bubbletea + lipgloss + bubbles — profile list/switch, gateway publish, stats (totalCost ` - ` / `$0.00` / `$1.2K`), full parity with WebUI/CLI |
@@ -231,16 +231,16 @@ _TUI: `Profiles → a → fill form → Ctrl+S` still works as a terminal altern
 pi-switch provider expose provider-a gpt-5.4
 ```
 
-**2.5 Publish to Pi** — Gateway explicitly writes one provider per supplier/channel
+**2.5 Publish to Pi** — Gateway explicitly writes at most two fixed providers: `pi-switch-res` (Responses) and `pi-switch-chat` (Chat). Models are aggregated by their exposed Channel API contract.
 
 ```bash
 # WebUI: Gateway → Current vs Proposed → Apply to Pi
 # or via API: PUT /api/models/gateway
 ```
 
-In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback). The supplier vs gateway isolation guarantees Profiles mutations never auto-write `~/.pi/agent/models.json` — you publish explicitly.
+In WebUI: `Gateway → Apply to Pi` (shows pending diff, supports rollback). The Supplier vs gateway isolation guarantees Profiles mutations never auto-write `~/.pi/agent/models.json` — you publish explicitly.
 
-**3. Start the proxy** — it reads the published supplier/channel providers
+**3. Start the proxy** — it reads the published fixed gateway providers
 
 ```bash
 pi-switch proxy start --daemon
@@ -248,15 +248,15 @@ pi-switch proxy start --daemon
 
 _WebUI: `Proxy → Start` (same daemon, WebUI shows status)._
 
-**4. Use in pi** — select a published `<supplier>/<channel>` provider, then pick a bare model ID like `gpt-5.4`
+**4. Use in pi** — select `pi-switch-res` for Responses models or `pi-switch-chat` for Chat models, then pick a bare model ID like `gpt-5.4`
 
 ### How Gateway Routing Works
 
 Requests are routed by the model name in the request body — no out-of-band state, no "current target":
 
-- **Bare model routing** — `"model": "gpt-5.4"` resolves to the unique exposed supplier/channel; duplicate bare IDs return an ambiguity error so the caller can choose a provider
-- **Channel-pinned routing** — each `<supplier>/<channel>` provider contains only that channel's bare model IDs and uses that channel's credentials
-- **Per-channel gateway providers** — pi sees one provider for each supplier/channel, while the provider's model list stays independent from other channels
+- **Bare model routing** — `"model": "gpt-5.4"` resolves to the unique exposed supplier/channel; duplicate exposed IDs are rejected by gateway validation and unresolved duplicates return an ambiguity error
+- **Fixed gateway providers** — pi sees at most `pi-switch-res` and `pi-switch-chat`; their model lists are aggregated by the Channel API contract
+- **Source routing** — the proxy keeps Supplier/Channel credentials and routes each bare model id to its unique exposed source
 - **Circuit breaker** — after 3 consecutive failures, provider enters 60s cooldown; auto-recovery on half-open probe success
 - **Streaming (SSE)** — same-format requests (openai→openai, anthropic→anthropic) stream token-by-token, as do Responses↔Chat cross-format routes (converted both directions); upstream response headers (Content-Type, etc.) are preserved
 - **OpenAI ↔ Anthropic** — transparently converts between chat completions and messages APIs
@@ -275,7 +275,7 @@ pi-switch/
 ├── cmd/pi-switch/main.go    # Go entry (gin + proxy/mgmt routers, daemon, tui)
 ├── internal/
 │   ├── config/              # Config load/save, types, per-request hot reload, v1→v2 migration
-│   ├── gateway/             # Gateway publish (models.json:providers[supplier/channel])
+│   ├── gateway/             # Gateway publish (models.json: fixed pi-switch-res/pi-switch-chat providers)
 │   ├── proxy/               # Proxy helpers (cost, limit clamp)
 │   ├── limit/               # contextWindow/maxTokens clamp (est=ceil(jsonLen/4), reserve 4096)
 │   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses conversion (native/convert via responsesMode)
@@ -296,7 +296,7 @@ pi-switch/
 - `~/.pi-switch/config.json` — profiles and proxy settings
 - `~/.pi-switch/requests.db` — SQLite (modernc) per-request log (status, latency, token usage, cost, conversation) — zero-migration from old requests.log + .db
 - `~/.pi-switch/backups/` — timestamped auto-backups on every mutation
-- `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes one provider per supplier/channel)
+- `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes at most the fixed `pi-switch-res` and `pi-switch-chat` providers)
 
 For the WebUI's thin-adapter architecture, the 4-step recipe for adding operations, and the REST ↔ core map, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — that guide is the thick reference; this README stays thin.
 
@@ -308,7 +308,7 @@ For the WebUI's thin-adapter architecture, the 4-step recipe for adding operatio
 <summary><b>How do I switch models in pi?</b></summary>
 <br>
 
-In pi, open `/model`, select a published `<supplier>/<channel>` provider, and pick one of its bare model IDs (for example `gpt-5.4`). The proxy routes by the model name in each request — no extra step needed.
+In pi, open `/model`, select the published `pi-switch-res` or `pi-switch-chat` provider, and pick one of its bare model IDs (for example `gpt-5.4`). The proxy routes by the model name in each request — no extra step needed.
 
 To add more models, expose them in WebUI (`Profiles → select provider → Models`) or via CLI:
 ```bash
@@ -324,7 +324,7 @@ pi-switch provider expose <name> <model-id>...
 
 The `[proxy]` badge indicates this profile is a meta-profile (with `"proxy": true`). Proxy profiles are used to register a pi provider that points to the local gateway. They are excluded from upstream routing.
 
-In the current gateway mode, proxy profiles are typically not needed — the proxy reads the published supplier/channel providers from `~/.pi/agent/models.json` (publish explicitly via **Gateway → Apply to Pi**, not automatically on startup).
+In the current gateway mode, proxy profiles are typically not needed — the proxy reads the fixed providers published to `~/.pi/agent/models.json` (publish explicitly via **Gateway → Apply to Pi**, not automatically on startup).
 
 </details>
 
@@ -332,7 +332,7 @@ In the current gateway mode, proxy profiles are typically not needed — the pro
 <summary><b>How does gateway routing work?</b></summary>
 <br>
 
-The proxy publishes each supplier/channel as its own provider with bare model IDs. When pi sends a request with `"model": "gpt-5.4"`, the proxy:
+The proxy publishes two fixed providers: `pi-switch-res` for Responses models and `pi-switch-chat` for Chat models. When pi sends a request with `"model": "gpt-5.4"`, the proxy:
 
 1. Finds the unique exposed supplier/channel that owns `gpt-5.4`
 2. Routes to that channel's credentials without changing the bare model ID
@@ -347,7 +347,7 @@ pi-switch provider expose provider-b gpt-5.4
 pi-switch proxy start --daemon
 ```
 
-In pi, select the relevant `<supplier>/<channel>` provider, then `gpt-5.4`. The model name in each request determines the route — no "target" to manage.
+In pi, select `pi-switch-res` or `pi-switch-chat` according to the model's API contract, then pick `gpt-5.4`. The model name in each request determines the route — no "target" to manage.
 
 </details>
 
@@ -360,8 +360,7 @@ In pi, select the relevant `<supplier>/<channel>` provider, then `gpt-5.4`. The 
 ```
 400: messages[0].role: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`
 ```
-
-**Fix — edit pi's config `~/.pi/agent/models.json`**: on each offending model in the relevant supplier/channel provider, add `"compat": { "supportsDeveloperRole": false }` — pi then sends the `system` role while keeping thinking features:
+**Fix — edit pi's config `~/.pi/agent/models.json`**: on each offending model in `pi-switch-res` or `pi-switch-chat`, add `"compat": { "supportsDeveloperRole": false }` — pi then sends the `system` role while keeping thinking features:
 
 ```json
 {
@@ -371,13 +370,13 @@ In pi, select the relevant `<supplier>/<channel>` provider, then `gpt-5.4`. The 
 }
 ```
 
-**Note** — the next Gateway publish rebuilds the relevant supplier/channel provider entry and wipes manual edits to `models.json`. To survive syncs, put the same `compat` on that channel's model entry inside `~/.pi-switch/config.json` — publish passes it through verbatim.
+**Note** — the next Gateway publish rebuilds the relevant fixed provider entry and wipes manual edits to `models.json`. To survive syncs, put the same `compat` on that model entry inside `~/.pi-switch/config.json` — publish passes it through verbatim.
 
-Reference — supplier/channel provider entry with an opencode upstream (sanitized example):
+Reference — fixed Chat provider entry with an opencode upstream (sanitized example):
 
 ```json
 {
-  "opencode-go/main": {
+  "pi-switch-chat": {
     "api": "openai-completions",
     "apiKey": "pi-switch-proxy",
     "baseUrl": "http://127.0.0.1:43112/v1",

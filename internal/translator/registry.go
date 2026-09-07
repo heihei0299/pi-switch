@@ -153,6 +153,9 @@ func upstreamPathFor(to Format) string {
 // fail with a routable error instead of a mistranslated request.
 func PlanRequest(proto, api, mode string) (Plan, error) {
 	from, err := inboundFormat(proto)
+	if mode == "" {
+		mode = "auto"
+	}
 	if err != nil {
 		return Plan{}, err
 	}

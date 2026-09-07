@@ -53,7 +53,7 @@ func TestGatewayPreview_CatalogFillsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	prop := resp["proposed"].(map[string]interface{})
-	providers := prop["sup/main"].(map[string]interface{})
+	providers := prop["pi-switch-chat"].(map[string]interface{})
 	models := providers["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("models = %v", models)
@@ -98,7 +98,7 @@ func TestGatewayPreview_CatalogUnmatchedSkipped(t *testing.T) {
 	var resp map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	prop := resp["proposed"].(map[string]interface{})
-	providers := prop["sup/main"].(map[string]interface{})
+	providers := prop["pi-switch-chat"].(map[string]interface{})
 	m := providers["models"].([]interface{})[0].(map[string]interface{})
 	if _, ok := m["cost"]; ok {
 		t.Fatalf("unmatched model must not gain cost: %v", m)
@@ -125,7 +125,7 @@ func TestGatewayPublish_CatalogFillsBeforeWrite(t *testing.T) {
 	mp := filepath.Join(dir, "models.json")
 	t.Setenv("PI_SWITCH_MODELS", mp)
 	r := NewMgmtRouter()
-	payload := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -141,7 +141,7 @@ func TestGatewayPublish_CatalogFillsBeforeWrite(t *testing.T) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	entry := stored["providers"].(map[string]interface{})["sup/main"].(map[string]interface{})
+	entry := stored["providers"].(map[string]interface{})["pi-switch-chat"].(map[string]interface{})
 	models := entry["models"].([]interface{})
 	if len(models) != 1 {
 		t.Fatalf("stored models = %v", models)
@@ -183,7 +183,7 @@ func TestGatewayRoutePublish_CatalogFillsBeforeWrite(t *testing.T) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	entry := stored["providers"].(map[string]interface{})["sup/main"].(map[string]interface{})
+	entry := stored["providers"].(map[string]interface{})["pi-switch-chat"].(map[string]interface{})
 	m := entry["models"].([]interface{})[0].(map[string]interface{})
 	if m["contextWindow"] != float64(5000) {
 		t.Fatalf("route-published limits not enriched: %v", m)
@@ -210,7 +210,7 @@ func TestGatewayPut_WrapperEnrichedSameAsSingle(t *testing.T) {
 	t.Setenv("PI_SWITCH_MODELS", mp)
 	r := NewMgmtRouter()
 	// providers wrapper 经 PUT 写入：内层条目须与单条目同一口径被补齐。
-	payload := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"test-model"}]}}}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")

@@ -221,7 +221,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     setDrafts((drafts) => drafts.map((x) => (x.key === prev.key ? mapped : x)));
   }
   function providerModelKey(g: PreviewGroup, itemId: string): string {
-    return g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
+    return g.gatewayProvider ? `${g.gatewayProvider}/${itemId}` : g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
   }
   function displayGatewayId(_g: PreviewGroup, itemId: string): string {
     return itemId;
@@ -418,10 +418,11 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
           </div>
           <div className="space-y-2">
             {groups.map((g) => {
-              const title = g.channel ? `${g.supplier} / ${g.channel}` : g.supplier;
+              const sourceTitle = g.channel ? `${g.supplier} / ${g.channel}` : g.supplier;
+              const title = g.gatewayProvider ? `${g.gatewayProvider} · ${sourceTitle}` : sourceTitle;
               const pub = g.models.filter((m) => m.status === "published").length;
               return (
-                <div key={title} className="rounded border border-white/10 px-2 py-1">
+                <div key={`${g.gatewayProvider}/${g.supplier}/${g.channel}`} className="rounded border border-white/10 px-2 py-1">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium text-zinc-200">{title}</span>
                     <span className="text-zinc-500">已发布 {pub} / 待发布 {g.models.length - pub}</span>

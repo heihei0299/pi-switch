@@ -35,6 +35,22 @@ func TestRegistry_PlanRequestPairs(t *testing.T) {
 	}
 }
 
+func TestRegistry_EmptyResponsesModeDefaultsToAuto(t *testing.T) {
+	for _, tc := range []struct {
+		proto string
+		api   string
+	}{
+		{proto: "responses", api: "openai-responses"},
+		{proto: "chat", api: "openai-completions"},
+	} {
+		t.Run(tc.proto+"/"+tc.api, func(t *testing.T) {
+			if _, err := PlanRequest(tc.proto, tc.api, ""); err != nil {
+				t.Fatalf("PlanRequest with omitted responsesMode: %v", err)
+			}
+		})
+	}
+}
+
 func TestRegistry_UnsupportedCombo(t *testing.T) {
 	if _, err := PlanRequest("responses", "anthropic-messages", "auto"); err == nil {
 		t.Fatal("responses on anthropic-messages must be unsupported")

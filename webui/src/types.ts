@@ -267,6 +267,7 @@ export interface PreviewGroupItem {
 
 export interface PreviewGroup {
   supplier: string;
+  gatewayProvider: string;
   channel: string;
   models: PreviewGroupItem[];
 }

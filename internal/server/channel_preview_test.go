@@ -21,7 +21,7 @@ func TestGatewayPreview_GroupsBySupplierChannel(t *testing.T) {
 		"leg":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://c","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://c","apiKey":"k","models":[{"id":"old","contextWindow":128000,"maxTokens":16384}],"exposedModels":["old"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	p := writeChannelConfig(t, dir, cfgJSON)
-	modelsJSON := `{"providers":{"sup/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"m1","contextWindow":100,"maxTokens":10}]},"leg/main":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"old","contextWindow":128000,"maxTokens":16384}]},"legacy":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"ghost/x","contextWindow":10,"maxTokens":10}]}}}`
+	modelsJSON := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"m1","contextWindow":100,"maxTokens":10},{"id":"old","contextWindow":128000,"maxTokens":16384}]},"legacy":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"ghost/x","contextWindow":10,"maxTokens":10}]}}}`
 	mp := filepath.Join(dir, "models.json")
 	if err := os.WriteFile(mp, []byte(modelsJSON), 0644); err != nil {
 		t.Fatalf("write models: %v", err)

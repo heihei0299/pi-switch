@@ -566,3 +566,86 @@ describe("GatewayPanel display-to-full id mapping", () => {
     expect(ids).toContain("custom-new");
   });
 });
+
+describe("GatewayPanel fixed provider projection", () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage?.clear();
+  });
+
+  it("shows target providers with source channels and publishes fixed keys", async () => {
+    const fixedPreview = {
+      current: {
+        "pi-switch-chat": {
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          models: [{ id: "chat-live" }],
+          proxy: false,
+        },
+        "pi-switch-res": {
+          api: "openai-responses",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          models: [{ id: "res-live" }],
+          proxy: false,
+        },
+      },
+      proposed: {
+        "pi-switch-chat": {
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          models: [{ id: "chat-live" }, { id: "chat-new" }],
+          proxy: false,
+        },
+        "pi-switch-res": {
+          api: "openai-responses",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          models: [{ id: "res-live" }],
+          proxy: false,
+        },
+      },
+      conflicts: [],
+      pending_count: 1,
+      groups: [
+        {
+          supplier: "deepseek",
+          channel: "main",
+          gatewayProvider: "pi-switch-chat",
+          models: [
+            { id: "chat-live", status: "published" },
+            { id: "chat-new", status: "pending" },
+          ],
+        },
+        {
+          supplier: "oc",
+          channel: "responses",
+          gatewayProvider: "pi-switch-res",
+          models: [{ id: "res-live", status: "published" }],
+        },
+      ],
+      removed: [],
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue(fixedPreview as any);
+const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+vi.spyOn(api, "getState").mockResolvedValue({ settings: { proxy: { host: "127.0.0.1", port: 43112 } } } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText("pi-switch-chat · deepseek / main")).toBeInTheDocument());
+    expect(screen.getByText("pi-switch-res · oc / responses")).toBeInTheDocument();
+    const pending = screen.getByRole("checkbox", { name: "pi-switch-chat/chat-new" });
+    expect(pending).not.toBeChecked();
+    fireEvent.click(pending);
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    const payload = apply.mock.calls[0][0] as any;
+    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
+    expect(Object.keys(providers).sort()).toEqual(["pi-switch-chat", "pi-switch-res"]);
+    expect(providers["pi-switch-chat"].models.map((m) => m.id)).toContain("chat-new");
+    expect(providers["pi-switch-res"].models.map((m) => m.id)).toEqual(["res-live"]);
+    expect(providers["deepseek/main"]).toBeUndefined();
+    expect(providers["oc/responses"]).toBeUndefined();
+  });
+});

@@ -1642,7 +1642,23 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 	snap, stale, warning := catalog.Ensure()
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	enriched, skipped := 0, 0
-	// Wrapper case: providers[supplier/channel] with bare ids
+	// Fixed gateway providers use bare ids; resolve catalog metadata through the originating supplier.
+	modelSuppliers := map[string]string{}
+	ambiguousModelSuppliers := map[string]bool{}
+	for supplier, prof := range cfg.Profiles {
+		for _, upstream := range prof.Upstreams {
+			for _, id := range upstream.ExposedModels {
+				if previous, ok := modelSuppliers[id]; ok && previous != supplier {
+					delete(modelSuppliers, id)
+					ambiguousModelSuppliers[id] = true
+					continue
+				}
+				if !ambiguousModelSuppliers[id] {
+					modelSuppliers[id] = supplier
+				}
+			}
+		}
+	}
 	if provs, ok := proposed["providers"].(map[string]interface{}); ok {
 		for providerKey, pv := range provs {
 			entry, ok := pv.(map[string]interface{})
@@ -1650,10 +1666,10 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 				continue
 			}
 			models, _ := entry["models"].([]interface{})
-			// providerKey = supplier/channel, extract supplier
-			supplier := providerKey
+			// Non-fixed provider entries use the provider key as their supplier hint.
+			supplierHint := providerKey
 			if idx := strings.Index(providerKey, "/"); idx > 0 {
-				supplier = providerKey[:idx]
+				supplierHint = providerKey[:idx]
 			}
 			for _, m := range models {
 				mm, ok := m.(map[string]interface{})
@@ -1662,6 +1678,10 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 					continue
 				}
 				id, _ := mm["id"].(string)
+				supplier := supplierHint
+				if providerKey == "pi-switch-res" || providerKey == "pi-switch-chat" {
+					supplier = modelSuppliers[id]
+				}
 				if id == "" {
 					skipped++
 					continue
