@@ -53,7 +53,7 @@ _Avoid_: 模型参数、模型信息
 _Avoid_: profile、provider、供应商配置
 
 **渠道（Channel）**：
-上游（Upstream）的同义词，指供应商下的单条上游连接，`name` 为渠道主键（同一供应商内唯一必填），含 `api/baseUrl/apiKey/headers/weight`。每条渠道独立拉取与独立暴露，跨渠道同 id 由 provider key 区分。
+上游（Upstream）的同义词，指供应商下的单条上游连接，`name` 为渠道主键（同一供应商内唯一必填），含 `api/baseUrl/apiKey/headers/weight`。每条渠道独立拉取与独立暴露；多个渠道可声明同一模型 id，但网关发布时所有 exposed model 的裸 id 必须全局唯一。
 _Avoid_: 通道、节点、endpoint、渠道配置
 
 **上游（Upstream）**：
@@ -61,9 +61,9 @@ _Avoid_: 通道、节点、endpoint、渠道配置
 _Avoid_: endpoint、upstream 配置、节点
 
 **网关（Gateway）**：
-写入 `models.json: providers[supplier/channel]` 的合成 provider 视图，由各渠道的已暴露模型经网关侧二次勾选的子集派生；provider 内的 `models[].id` 为裸 `modelId`，设置只保留 proxy host/port 等本地运行参数。
+写入 `models.json: providers` 的面向客户端 provider 视图，由当前 Supplier/Channel 的 exposed model 按 API contract 聚合为 `pi-switch-res`（Responses）与 `pi-switch-chat`（Chat）；provider 内的模型 id 为裸 `modelId`，设置只保留本地 proxy host/port 等运行参数。
 _Avoid_: gateway provider、pi gateway、网关配置
 
 **网关发布（Gateway Publish）**：
-将供应商与网关面板中的当前 provider 草稿显式写入网关文件的唯一路径（`PUT /models/gateway` / GatewayPanel「应用到 Pi」）；每个 provider 的 API 来自对应 channel，模型 id 保持裸名。发布外任何供应商变更均不自动写网关。
+将当前 gateway provider 草稿显式写入网关文件的唯一路径（`PUT /models/gateway` / GatewayPanel「应用到 Pi」）；草稿只维护有 exposed model 的 `pi-switch-res` 与 `pi-switch-chat`，每个 provider 的 API contract 固定，模型 id 保持裸名。发布外任何供应商变更均不自动写网关。
 _Avoid_: 同步、自动同步、apply
