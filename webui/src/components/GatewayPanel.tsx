@@ -8,6 +8,7 @@ import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
 import { resolveGatewayId, shortGatewayId } from "../lib/gatewayId";
+import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
 
@@ -81,7 +82,14 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       const removedList = (preview as any).removed;
       const removedArr = Array.isArray(removedList) ? removedList.map((id) => String(id)) : [];
       const removedSet = new Set(removedArr);
-      setChecked(new Set([...propIds, ...draftIds].filter((id) => !removedSet.has(id))));
+      // 用户的历史取消勾选：跨 load 持久，新 id 默认仍勾选。
+      const knownIds = new Set([...propIds, ...draftIds]);
+      const persistedUnchecked = loadUncheckedIds(knownIds);
+      setChecked(
+        new Set(
+          [...propIds, ...draftIds].filter((id) => !removedSet.has(id) && !persistedUnchecked.has(id)),
+        ),
+      );
       setGroups(Array.isArray((preview as any).groups) ? ((preview as any).groups as PreviewGroup[]) : []);
       setRemovedIds(removedArr);
       skipAutoCheck.current.clear();
@@ -89,6 +97,9 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       // 会立刻把它们加回 checked（清理永远发不出去）。用户在“已撤回”区
       // 显式勾选时 toggleChecked 会将其移出跳过集，仍可复活。
       for (const id of removedSet) skipAutoCheck.current.add(id);
+      // 持久化的用户排除同样记入跳过集，防自动补勾 effect 加回；
+      // 显式勾选时 toggleChecked 会同步清除持久记录。
+      for (const id of persistedUnchecked) skipAutoCheck.current.add(id);
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     } finally {
@@ -298,8 +309,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   function toggleChecked(id: string) {
     setChecked((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); skipAutoCheck.current.add(id); }
-      else { next.add(id); skipAutoCheck.current.delete(id); }
+      if (next.has(id)) { next.delete(id); skipAutoCheck.current.add(id); addUncheckedId(id); }
+      else { next.add(id); skipAutoCheck.current.delete(id); removeUncheckedId(id); }
       return next;
     });
   }

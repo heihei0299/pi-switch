@@ -292,6 +292,76 @@ describe("GatewayPanel gateway id-shape + delete", () => {
   });
 });
 
+describe("GatewayPanel unchecked persistence", () => {
+  beforeEach(() => {
+    if (!window.localStorage) {
+      const store = new Map<string, string>();
+      Object.defineProperty(window, "localStorage", {
+        value: {
+          getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+          setItem: (k: string, v: string) => { store.set(k, String(v)); },
+          removeItem: (k: string) => { store.delete(k); },
+          clear: () => store.clear(),
+        },
+        configurable: true,
+      });
+    }
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage?.clear();
+  });
+
+  const persistPreview = {
+    current: { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "sup/main/m1" }], proxy: false },
+    proposed: {
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:43112/v1",
+      models: [{ id: "sup/main/m1" }, { id: "sup/bk/b1" }],
+      proxy: false,
+    },
+    conflicts: [],
+    pending_count: 1,
+    groups: [
+      { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
+      { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },
+    ],
+    removed: [],
+  };
+
+  it("unchecking a candidate survives reload", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(persistPreview as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(box).not.toBeChecked();
+    // 取消（重载）后依然不勾选：排除记忆跨 load 生效
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /sup\/main\/m1/ })).toBeChecked();
+  });
+
+  it("re-checking clears the persisted exclusion", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(persistPreview as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    const box = screen.getByRole("checkbox", { name: /sup\/bk\/b1/ });
+    fireEvent.click(box);
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ })).toBeChecked();
+  });
+});
+
 describe("GatewayPanel display-to-full id mapping", () => {
   beforeEach(() => {
     window.localStorage?.clear();
