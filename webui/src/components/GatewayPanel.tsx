@@ -7,6 +7,7 @@ import { ModelCard } from "./ModelCard";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, newModelDraft, type ModelDraft } from "../lib/piModel";
 import { diffGateway, validateGatewayJson } from "../lib/gatewayDiff";
+import { resolveGatewayId, shortGatewayId } from "../lib/gatewayId";
 import type { ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
 
@@ -231,6 +232,30 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     });
   }, [drafts, proposed, rawValidation.value]);
 
+
+  // 输入框短显示 ↔ 全限定数据的映射基准：提议与已注入的全部全量 id。
+  const knownGatewayIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const src of [proposed, current]) {
+      const models = asRecord(src ?? {}).models;
+      if (Array.isArray(models)) {
+        for (const m of models) {
+          const id = String((m as any)?.id ?? "");
+          if (id) ids.add(id);
+        }
+      }
+    }
+    return ids;
+  }, [proposed, current]);
+
+  // 草稿行 id 写回：输入框给的是短显示文本，映射回全限定 id 再落草稿。
+  function handleDraftChange(prev: ModelDraft, next: ModelDraft) {
+    if (next.id !== prev.id) {
+      next = { ...next, id: resolveGatewayId(next.id, prev.id, knownGatewayIds) };
+    }
+    const mapped = next;
+    setDrafts((drafts) => drafts.map((x) => (x.key === prev.key ? mapped : x)));
+  }
   function gatewayIdOf(g: PreviewGroup, itemId: string): string {
     return g.channel ? `${g.supplier}/${g.channel}/${itemId}` : `${g.supplier}/${itemId}`;
   }
@@ -538,7 +563,9 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
                 exposed={true}
                 hideExposed
                 onToggleExposed={() => {}}
-                onChange={(next) => setDrafts((prev) => prev.map((x) => (x.key === d.key ? next : x)))}
+                onChange={(next) => handleDraftChange(d, next)}
+                displayId={shortGatewayId(d.id)}
+                fullId={d.id}
                 onRemove={() => {
                   // 删行等价于取消勾选：否则 buildSelectedModels 会从
                   // proposed/current 按 id 取回该行，删了也发回去（删不掉）。

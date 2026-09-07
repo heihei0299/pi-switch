@@ -21,11 +21,17 @@ export function ModelCard({
   expanded,
   onToggleExpanded,
   hideExposed,
+  displayId,
+  fullId,
 }: {
   draft: ModelDraft;
   exposed: boolean;
   onToggleExposed: () => void;
   hideExposed?: boolean;
+  // 网关专用：输入框短显示（draft.id 保持全限定，只换渲染文本）
+  displayId?: string;
+  // 与短显示配套的完整 id 标注；与显示一致时不渲染
+  fullId?: string;
   onChange: (next: ModelDraft) => void;
   onRemove: () => void;
   expanded: boolean;
@@ -93,7 +99,8 @@ export function ModelCard({
         <div className="flex min-w-0 flex-1 gap-2">
           <Input
             id={`model-id-${draft.key}`}
-            value={draft.id}
+            value={displayId ?? draft.id}
+            title={fullId ?? draft.id}
             onChange={(e) => update({ id: e.target.value })}
             placeholder={t("Model ID")}
             aria-label={t("Model ID")}
@@ -117,6 +124,11 @@ export function ModelCard({
           🗑
         </button>
       </div>
+      {fullId && fullId !== (displayId ?? draft.id) && (
+        <div className="px-2 pb-2 font-mono text-[11px] text-zinc-500" title={fullId}>
+          {tOr("Full ID", "完整 ID")}：{fullId}
+        </div>
+      )}
 
       {expanded && (
         <div className="border-t border-white/5 p-3">
