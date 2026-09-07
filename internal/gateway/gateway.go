@@ -373,6 +373,30 @@ func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]inte
 	return merged
 }
 
+func managedProviderKeys(cfg config.PiSwitchConfig) map[string]bool {
+	keys := map[string]bool{}
+	for name, prof := range cfg.Profiles {
+		for i := range prof.Upstreams {
+			if channel := prof.ChannelName(i); channel != "" {
+				keys[name+"/"+channel] = true
+			}
+		}
+	}
+	return keys
+}
+
+func isPiSwitchProvider(key string, value interface{}, managed map[string]bool) bool {
+	if managed[key] {
+		return true
+	}
+	entry, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	apiKey, _ := entry["apiKey"].(string)
+	return apiKey == "pi-switch-proxy"
+}
+
 func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	path := ModelsPath()
 	dir := filepath.Dir(path)
@@ -381,7 +405,26 @@ func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
 	if !ok {
 		return fmt.Errorf("gateway.providers is required")
 	}
-	b, _ := json.MarshalIndent(map[string]interface{}{"providers": provs}, "", "  ")
+
+	mergedProvs := map[string]interface{}{}
+	managed := managedProviderKeys(cfg)
+	if currentBytes, err := os.ReadFile(path); err == nil {
+		var current map[string]interface{}
+		if json.Unmarshal(currentBytes, &current) == nil {
+			if currentProvs := getProviders(current); currentProvs != nil {
+				for key, value := range currentProvs {
+					if !isPiSwitchProvider(key, value, managed) {
+						mergedProvs[key] = value
+					}
+				}
+			}
+		}
+	}
+	for key, value := range provs {
+		mergedProvs[key] = value
+	}
+
+	b, _ := json.MarshalIndent(map[string]interface{}{"providers": mergedProvs}, "", "  ")
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
 		return err

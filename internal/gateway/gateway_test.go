@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -206,5 +208,69 @@ func TestProposedChannelPrefixedIDs(t *testing.T) {
 	}
 	if len(provs) != 3 {
 		t.Fatalf("providers len %d want 3", len(provs))
+	}
+}
+
+func TestPublishPreservesThirdPartyProviders(t *testing.T) {
+	modelsPath := filepath.Join(t.TempDir(), "models.json")
+	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+
+	thirdParty := map[string]interface{}{
+		"api":     "openai-responses",
+		"baseUrl": "https://third-party.example/v1",
+		"apiKey":  "third-party-key",
+		"headers": map[string]interface{}{"X-Third-Party": "keep-me"},
+		"models":  []interface{}{map[string]interface{}{"id": "third-model", "contextWindow": float64(200000)}},
+		"custom":  map[string]interface{}{"ownedBy": "someone-else"},
+	}
+	initial := map[string]interface{}{
+		"providers": map[string]interface{}{
+			"third-party": thirdParty,
+			"oc/chat": map[string]interface{}{
+				"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1",
+				"apiKey": "pi-switch-proxy", "models": []interface{}{}, "proxy": false,
+			},
+		},
+	}
+	data, err := json.Marshal(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modelsPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{
+		"oc": {Upstreams: []config.Upstream{{Name: strptr("chat"), API: "openai-completions"}}},
+	}}
+	edited := map[string]interface{}{
+		"providers": map[string]interface{}{
+			"oc/chat": map[string]interface{}{
+				"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1",
+				"apiKey": "pi-switch-proxy", "models": []interface{}{map[string]interface{}{"id": "new-model"}}, "proxy": false,
+			},
+		},
+	}
+	if err := Publish(cfg, edited); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatal(err)
+	}
+	providers := got["providers"].(map[string]interface{})
+	gotThird := providers["third-party"]
+	wantJSON, _ := json.Marshal(thirdParty)
+	gotJSON, _ := json.Marshal(gotThird)
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("third-party provider changed or disappeared: got %s want %s", gotJSON, wantJSON)
+	}
+	if _, ok := providers["oc/chat"]; !ok {
+		t.Fatal("published pi-switch provider missing")
 	}
 }

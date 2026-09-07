@@ -1758,8 +1758,9 @@ func handlePutGateway(c *gin.Context) {
 			return
 		}
 	}
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	enrichProposedModels(gw)
-	if err := gateway.Publish(config.PiSwitchConfig{}, gw); err != nil {
+	if err := gateway.Publish(cfg, gw); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
