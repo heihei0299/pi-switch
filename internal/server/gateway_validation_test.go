@@ -57,7 +57,7 @@ func TestGatewayPutRejectsDuplicateAndPreservesFile(t *testing.T) {
 	}
 }
 
-func TestGatewayPutRejectsThirdProxyProviderAndInvalidModel(t *testing.T) {
+func TestGatewayPutRejectsThirdProxyProviderAndPreservesFile(t *testing.T) {
 	dir := t.TempDir()
 	writeChannelConfig(t, dir, `{"version":2,"profiles":{}}`)
 	modelsPath := filepath.Join(dir, "models.json")
@@ -66,22 +66,41 @@ func TestGatewayPutRejectsThirdProxyProviderAndInvalidModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PI_SWITCH_MODELS", modelsPath)
-	cases := []string{
-		`{"providers":{"pi-switch-extra":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[]}}}`,
-		`{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","models":[1]}}}`,
+	payload := `{"providers":{"pi-switch-extra":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[]}}}`
+	w := httptest.NewRecorder()
+	NewMgmtRouter().ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(payload)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	for _, payload := range cases {
-		w := httptest.NewRecorder()
-		NewMgmtRouter().ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(payload)))
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("payload=%s status=%d body=%s", payload, w.Code, w.Body.String())
-		}
-		got, err := os.ReadFile(modelsPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(original) {
-			t.Fatalf("models.json changed for rejected payload: %s", got)
-		}
+	got, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("models.json changed on rejected provider: %s", got)
+	}
+}
+
+func TestGatewayPutRejectsInvalidModelAndPreservesFile(t *testing.T) {
+	dir := t.TempDir()
+	writeChannelConfig(t, dir, `{"version":2,"profiles":{}}`)
+	modelsPath := filepath.Join(dir, "models.json")
+	original := []byte(`{"providers":{"third-party":{"api":"openai-completions","models":[]}}}`)
+	if err := os.WriteFile(modelsPath, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","models":[1]}}}`
+	w := httptest.NewRecorder()
+	NewMgmtRouter().ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(payload)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("models.json changed on rejected model: %s", got)
 	}
 }
