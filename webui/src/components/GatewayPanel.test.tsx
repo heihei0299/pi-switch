@@ -26,6 +26,21 @@ const channelGateway = (models: Array<Record<string, unknown>>) => ({
 const currentGw = channelGateway([{ id: "m1" }]);
 const proposedGw = channelGateway([{ id: "m1" }, { id: "m2" }]);
 
+function backendPreview(
+  current: Record<string, unknown> | null,
+  proposed: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    current,
+    proposed,
+    conflicts: [],
+    pending_count: current === proposed ? 0 : 1,
+    diff: { added: [], removed: [], changed: [] },
+    ...extra,
+  };
+}
+
 describe("GatewayPanel gateway-sep", () => {
   beforeEach(() => {
     window.localStorage?.clear();
@@ -38,7 +53,9 @@ describe("GatewayPanel gateway-sep", () => {
   });
 
   it("shows Current vs Proposed status bar with diff and pending count", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
+      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+    }) as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     // status bar shows a newly added bare model under the channel provider
@@ -51,7 +68,7 @@ describe("GatewayPanel gateway-sep", () => {
 
 
   it("does not show mismatch banner when no diff", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: currentGw, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, currentGw) as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     expect(screen.queryByText(/检测到本地与 Pi 网关不一致/)).not.toBeInTheDocument();
@@ -59,8 +76,10 @@ describe("GatewayPanel gateway-sep", () => {
 
   it("clicking 应用到 Pi calls PUT /models/gateway and on success refresh and clears pending", async () => {
     vi.spyOn(api, "previewGateway")
-      .mockResolvedValueOnce({ current: currentGw, proposed: proposedGw, conflicts: [] } as any)
-      .mockResolvedValueOnce({ current: proposedGw, proposed: proposedGw, conflicts: [] } as any);
+      .mockResolvedValueOnce(backendPreview(currentGw, proposedGw, {
+        diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+      }) as any)
+      .mockResolvedValueOnce(backendPreview(proposedGw, proposedGw) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     const refresh = vi.fn(async () => {});
     renderGateway(refresh);
@@ -90,7 +109,7 @@ describe("GatewayPanel gateway-sep", () => {
         proxy: false,
       },
     };
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: gateway, proposed: gateway, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(gateway, gateway) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     const getState = vi.spyOn(api, "getState").mockResolvedValue({
       settings: { proxy: { host: "127.0.0.1", port: 43112 } },
@@ -114,7 +133,7 @@ describe("GatewayPanel gateway-sep", () => {
         proxy: false,
       },
     };
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: gateway, proposed: gateway, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(gateway, gateway) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByRole("button", { name: "应用到 Pi" })).toBeEnabled());
@@ -125,7 +144,9 @@ describe("GatewayPanel gateway-sep", () => {
   });
 
   it("failed apply retains config and does not refresh or clear pending", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: proposedGw, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
+      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+    }) as any);
     vi.spyOn(api, "applyGateway").mockRejectedValue(new Error("apply failed"));
     const refresh = vi.fn(async () => {});
     renderGateway(refresh);
@@ -142,7 +163,9 @@ describe("GatewayPanel gateway-sep", () => {
   });
 
   it("shows 上次发布时间 after successful publish and persists", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: proposedGw, conflicts: [] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(null, proposedGw, {
+      diff: { added: ["oc/chat/m1", "oc/chat/m2"], removed: [], changed: [] },
+    }) as any);
     vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     // Initially no current -> shows 尚未发布
     renderGateway();
@@ -150,8 +173,10 @@ describe("GatewayPanel gateway-sep", () => {
     cleanup();
     // after publish, should show timestamp
     vi.spyOn(api, "previewGateway")
-      .mockResolvedValueOnce({ current: null, proposed: proposedGw, conflicts: [] } as any)
-      .mockResolvedValueOnce({ current: proposedGw, proposed: proposedGw, conflicts: [] } as any);
+      .mockResolvedValueOnce(backendPreview(null, proposedGw, {
+        diff: { added: ["oc/chat/m1", "oc/chat/m2"], removed: [], changed: [] },
+      }) as any)
+      .mockResolvedValueOnce(backendPreview(proposedGw, proposedGw) as any);
     vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     const refresh2 = vi.fn(async () => {});
     renderGateway(refresh2);
@@ -164,7 +189,10 @@ describe("GatewayPanel gateway-sep", () => {
 
 
   it("shows conflicts when preview returns conflicts", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentGw, proposed: { ...proposedGw, baseUrl: "http://127.0.0.1:43113/v1" }, conflicts: ["baseUrl", "models"] } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue({
+      ...backendPreview(currentGw, proposedGw),
+      conflicts: ["baseUrl", "models"],
+    } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
     const conflictEl = screen.getByText(/冲突:/);
@@ -217,6 +245,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     },
     conflicts: [],
     pending_count: 1,
+    diff: { added: ["sup/bk/b1"], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
       { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },
@@ -264,15 +293,15 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
   it("subset pending follows the selection", async () => {
     renderGrouped();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
-    // 默认只勾选已发布：子集与已注入一致 → 0
-    await waitFor(() => expect(screen.getByText(/勾选子集待发布：0/)).toBeInTheDocument());
+		// Backend pending_count is the canonical count for the initial full proposal.
+		await waitFor(() => expect(screen.getByText(/勾选子集待发布：1/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("checkbox", { name: /sup\/bk\/b1/ }));
     // 勾选 b1：子集多出待发布 → 1
     await waitFor(() => expect(screen.getByText(/勾选子集待发布：1/)).toBeInTheDocument());
   });
 });
 
-describe("GatewayPanel gateway id-shape + delete", () => {
+describe("GatewayPanel canonical draft", () => {
   beforeEach(() => {
     window.localStorage?.clear();
     vi.restoreAllMocks();
@@ -283,97 +312,49 @@ describe("GatewayPanel gateway id-shape + delete", () => {
     window.localStorage?.clear();
   });
 
-  // Preview returns the inner per-channel provider map with bare model ids.
-  const mixedPreview = {
-    current: {
-      "oc/chat": {
-        api: "openai-completions",
-        baseUrl: "http://127.0.0.1:43112/v1",
-        models: [
-          { id: "mimo-v2.5" },
-          { id: "muse-spark-1.3-contributor" },
-        ],
-        proxy: false,
-      },
-    },
-    proposed: {
-      "oc/chat": {
-        api: "openai-completions",
-        baseUrl: "http://127.0.0.1:43112/v1",
-        models: [
-          { id: "mimo-v2.5" },
-          { id: "muse-spark-1.3-contributor" },
-          { id: "omen-alpha" },
-        ],
-        proxy: false,
-      },
-    },
-    conflicts: [],
-    pending_count: 1,
-    groups: [],
-    removed: [],
-  };
-
-  function mockApply() {
+  it("renders structured preview read-only and publishes the backend proposal", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
+      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+    }) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
-    vi.spyOn(api, "getState").mockResolvedValue({ settings: { gatewayApi: "openai-completions", proxy: { host: "127.0.0.1", port: 43112 } } } as any);
-    return apply;
-  }
-
-  it("shows and publishes bare ids under the channel provider", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue(mixedPreview as any);
-    const apply = mockApply();
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    // 新裸 id 形态：输入框直接显示裸 id
-    const idInputs = screen.getAllByLabelText("Model ID") as HTMLInputElement[];
-    const values = idInputs.map((el) => el.value);
-    expect(values).toContain("mimo-v2.5");
-    expect(values).toContain("muse-spark-1.3-contributor");
-    // 不应再有三段式 id 在输入框
-    expect(values).not.toContain("oc/chat/mimo-v2.5");
+    expect(screen.getByText("m1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "remove" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
-    const payload = apply.mock.calls[0][0] as any;
-    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
-    const allIds: string[] = [];
-    for (const prov of Object.values(providers ?? {})) {
-      for (const m of prov.models) allIds.push(m.id);
-    }
-    // 发布载荷为裸 id 按渠道分 provider
-    expect(allIds).toContain("mimo-v2.5");
-    expect(allIds).toContain("muse-spark-1.3-contributor");
-    expect(allIds).not.toContain("oc/mimo-v2.5");
-    expect(allIds).not.toContain("omen-alpha");
+    expect(apply.mock.calls[0][0]).toEqual({ providers: proposedGw });
   });
 
-  it("deleting a draft row removes it from the apply payload", async () => {
-    const singlePreview = {
-      current: channelGateway([{ id: "m1" }]),
-      proposed: channelGateway([{ id: "m1" }]),
-      conflicts: [],
-      pending_count: 0,
-      groups: [],
-      removed: [],
+  it("sends edited JSON to backend preview before publishing", async () => {
+    const preview = vi.spyOn(api, "previewGateway")
+      .mockResolvedValueOnce(backendPreview(currentGw, proposedGw, {
+        diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+      }) as any)
+      .mockResolvedValue(backendPreview(proposedGw, proposedGw) as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    const edited = {
+      providers: {
+        "pi-switch-chat": {
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          apiKey: "pi-switch-proxy",
+          models: [{ id: "edited-model" }],
+          proxy: false,
+        },
+      },
     };
-    vi.spyOn(api, "previewGateway").mockResolvedValue(singlePreview as any);
-    const apply = mockApply();
-    renderGateway();
-    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe("m1");
-    fireEvent.click(screen.getByRole("button", { name: "remove" }));
-    await waitFor(() => expect(screen.queryByLabelText("Model ID")).not.toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("gateway json"), {
+      target: { value: JSON.stringify(edited) },
+    });
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
-    const payload = apply.mock.calls[0][0] as any;
-    const providers = payload.providers as Record<string, { models: Array<{ id: string }> }>;
-    const allIds: string[] = [];
-    for (const prov of Object.values(providers ?? {})) {
-      for (const m of prov.models) allIds.push(m.id);
-    }
-    expect(allIds).not.toContain("m1");
-    expect(allIds).toHaveLength(0);
+    expect(preview.mock.calls).toContainEqual([{ draft: edited }]);
+    expect(apply.mock.calls[0][0]).toEqual({ providers: proposedGw });
   });
+
   it("uses canonical proposed draft when current gateway contains legacy prefixed ids", async () => {
     const legacyCurrent = {
       "pi-switch": {
@@ -396,15 +377,14 @@ describe("GatewayPanel gateway id-shape + delete", () => {
       proposed: canonicalProposed,
       conflicts: [],
       pending_count: 1,
+      diff: { added: [], removed: ["pi-switch/oc/responses/gpt-5.6-luna"], changed: [] },
       groups: [],
       removed: ["pi-switch/oc/responses/gpt-5.6-luna"],
     } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    const ids = (screen.getAllByLabelText("Model ID") as HTMLInputElement[]).map((input) => input.value);
-    expect(ids).toContain("gpt-5.6-luna");
-    expect(ids).not.toContain("oc/responses/gpt-5.6-luna");
-    expect(screen.queryByText(/must not contain/)).not.toBeInTheDocument();
+		expect(screen.getByText("gpt-5.6-luna")).toBeInTheDocument()
+		expect(screen.queryByText("oc/responses/gpt-5.6-luna")).not.toBeInTheDocument()
   });
 });
 
@@ -479,7 +459,7 @@ describe("GatewayPanel unchecked persistence", () => {
   });
 });
 
-describe("GatewayPanel display-to-full id mapping", () => {
+describe("GatewayPanel selection preview", () => {
   beforeEach(() => {
     window.localStorage?.clear();
     vi.restoreAllMocks();
@@ -490,80 +470,38 @@ describe("GatewayPanel display-to-full id mapping", () => {
     window.localStorage?.clear();
   });
 
-  const editPreview = {
-    current: channelGateway([{ id: "mimo-v2.5" }]),
-    proposed: channelGateway([{ id: "mimo-v2.5" }, { id: "omen-alpha" }]),
-    conflicts: [],
-    pending_count: 1,
-    groups: [],
-    removed: [],
-  };
-
-  function mockApply() {
-    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
-    vi.spyOn(api, "getState").mockResolvedValue({ settings: { gatewayApi: "openai-completions", proxy: { host: "127.0.0.1", port: 43112 } } } as any);
-    return apply;
-  }
-
-  async function applyIds() {
-    const apply = mockApply();
+  it("sends source selections to backend preview instead of rebuilding providers", async () => {
+    const preview = vi.spyOn(api, "previewGateway")
+      .mockResolvedValueOnce({
+        current: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-live" }] } },
+        proposed: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-live" }, { id: "chat-new" }] } },
+        conflicts: [],
+        pending_count: 1,
+        diff: { added: ["pi-switch-chat/chat-new"], removed: [], changed: [] },
+        groups: [{ supplier: "deepseek", channel: "main", gatewayProvider: "pi-switch-chat", models: [
+          { id: "chat-live", status: "published" },
+          { id: "chat-new", status: "pending" },
+        ] }],
+        removed: [],
+      } as any)
+      .mockResolvedValue({
+        current: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-live" }] } },
+        proposed: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-new" }] } },
+        conflicts: [],
+        pending_count: 1,
+        diff: { added: ["pi-switch-chat/chat-new"], removed: ["pi-switch-chat/chat-live"], changed: [] },
+        groups: [{ supplier: "deepseek", channel: "main", gatewayProvider: "pi-switch-chat", models: [{ id: "chat-new", status: "pending" }] }],
+        removed: [],
+      } as any);
     renderGateway();
-    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    expect(input.value).toBe("mimo-v2.5");
-    return { apply, input };
-  }
-
-  it("retyping the same short name keeps the mapped full id", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue(editPreview as any);
-    const { apply, input } = await applyIds();
-    fireEvent.change(input, { target: { value: "mimo-v2.5" } });
-    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
-    await waitFor(() => expect(apply).toHaveBeenCalled());
-    const payload = apply.mock.calls[0][0] as any;
-    const ids = ((payload.providers as Record<string, { models: Array<{ id: string }> }>)?.["oc/chat"]?.models ?? payload.models ?? []) as Array<{ id: string }>;
-    const flatIds = (Array.isArray(ids) ? ids : []).map((m: any) => m.id ?? m);
-    expect(flatIds).toContain("mimo-v2.5");
-  });
-
-  it("pasting a known full id switches the mapping", async () => {
-    const stalePreview = {
-      current: channelGateway([{ id: "old-model" }]),
-      proposed: channelGateway([{ id: "omen-alpha" }]),
-      conflicts: [],
-      pending_count: 1,
-      groups: [],
-      removed: ["old-model"],
-    };
-    vi.spyOn(api, "previewGateway").mockResolvedValue(stalePreview as any);
-    const apply = mockApply();
-    renderGateway();
-    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    expect(input.value).toBe("old-model");
-    fireEvent.change(input, { target: { value: "omen-alpha" } });
-    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
-    await waitFor(() => expect(apply).toHaveBeenCalled());
-    const payload = apply.mock.calls[0][0] as any;
-    const models = (payload.providers?.["oc/chat"]?.models ?? payload.models) as Array<{ id: string }>;
-    const ids = (models ?? []).map((m: any) => m.id);
-    expect(ids).toContain("omen-alpha");
-  });
-
-  it("typing a brand-new id opts it in for publish", async () => {
-    vi.spyOn(api, "previewGateway").mockResolvedValue(editPreview as any);
-    const apply = mockApply();
-    renderGateway();
-    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    const input = screen.getByLabelText("Model ID") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "custom-new" } });
-    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
-    await waitFor(() => expect(apply).toHaveBeenCalled());
-    const payload = apply.mock.calls[0][0] as any;
-    const models = (payload.providers?.["oc/chat"]?.models ?? payload.models) as Array<{ id: string }>;
-    const ids = (models ?? []).map((m: any) => m.id);
-    // 手工输入是显式意图：新 id 自动纳入本次发布
-    expect(ids).toContain("custom-new");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /deepseek\/main\/chat-new/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: /deepseek\/main\/chat-new/ }));
+    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+      selected: [
+        { supplier: "deepseek", channel: "main", model: "chat-live" },
+        { supplier: "deepseek", channel: "main", model: "chat-new" },
+      ],
+    })));
   });
 });
 
@@ -607,7 +545,8 @@ describe("GatewayPanel fixed provider projection", () => {
           models: [{ id: "res-live" }],
           proxy: false,
         },
-      },
+		},
+		diff: { added: ["pi-switch-chat/chat-new"], removed: [], changed: [] },
       conflicts: [],
       pending_count: 1,
       groups: [
@@ -635,7 +574,7 @@ vi.spyOn(api, "getState").mockResolvedValue({ settings: { proxy: { host: "127.0.
     renderGateway();
     await waitFor(() => expect(screen.getByText("pi-switch-chat · deepseek / main")).toBeInTheDocument());
     expect(screen.getByText("pi-switch-res · oc / responses")).toBeInTheDocument();
-    const pending = screen.getByRole("checkbox", { name: "pi-switch-chat/chat-new" });
+		const pending = screen.getByRole("checkbox", { name: "deepseek/main/chat-new" });
     expect(pending).not.toBeChecked();
     fireEvent.click(pending);
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));

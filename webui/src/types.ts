@@ -272,6 +272,30 @@ export interface PreviewGroup {
   models: PreviewGroupItem[];
 }
 
+export interface GatewaySelection {
+  supplier: string;
+  channel: string;
+  model: string;
+}
+
+export interface GatewayDiff {
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
+export interface GatewayPreview {
+  current: Record<string, unknown> | null;
+  proposed: Record<string, unknown> | null;
+  conflicts: string[];
+  diagnostics?: Array<Record<string, unknown>>;
+  pending_count: number;
+  diff?: GatewayDiff;
+  groups?: PreviewGroup[];
+  removed?: string[];
+  enrich?: PreviewEnrich;
+}
+
 // 网关预览 enrich 摘要（与后端 enrich gin.H 同步）。
 export interface PreviewEnrich {
   enriched: number;

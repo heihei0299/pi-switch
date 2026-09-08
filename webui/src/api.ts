@@ -15,8 +15,8 @@ import type {
   TestResult,
   UsageStats,
   ValidationIssue,
-  PreviewGroup,
-  PreviewEnrich,
+  GatewayPreview,
+  GatewaySelection,
 } from "./types";
 import type { ConversationRange, StatsRange } from "./lib/statsWindow";
 import type { NormalizedCredits } from "./lib/credits";
@@ -119,7 +119,10 @@ export const api = {
   proxyStop: () => req<DaemonResult>("POST", "/proxy/stop"),
   updateSettings: (settings: AppState["settings"]) => req("PUT", "/settings", settings),
   getGateway: () => req<{ gateway: unknown }>("GET", "/models/gateway"),
-  previewGateway: () => req<{ current: unknown; proposed: unknown; conflicts: string[]; pending_count: number; groups?: PreviewGroup[]; removed?: string[]; enrich?: PreviewEnrich }>("GET", "/models/gateway/preview"),
+  previewGateway: (input?: { selected?: GatewaySelection[]; draft?: unknown }) =>
+    input === undefined
+      ? req<GatewayPreview>("GET", "/models/gateway/preview")
+      : req<GatewayPreview>("POST", "/models/gateway/preview", input),
   applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway),
   getGatewayHealth: () => req<{ running: boolean; mode: string; gateway_id: string; has_models_file: boolean; last_notify: string | null; upstreams_total: number; message: string }>("GET", "/gateway/health"),
   startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start"),

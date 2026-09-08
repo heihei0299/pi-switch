@@ -221,6 +221,7 @@ func NewMgmtRouter() *gin.Engine {
 		api.GET("/export", handleLogsExport)
 		api.GET("/models/gateway", handleGetGateway)
 		api.GET("/models/gateway/preview", handleGatewayPreview)
+		api.POST("/models/gateway/preview", handleGatewayPreviewPost)
 		api.PUT("/models/gateway", handlePutGateway)
 		api.POST("/gateway/publish", handleGatewayPublish)
 		api.PUT("/gateway/publish", handleGatewayPublish)
@@ -1591,14 +1592,60 @@ func handleGetGateway(c *gin.Context) {
 	_ = json.Unmarshal(b, &m)
 	c.JSON(200, gin.H{"gateway": m})
 }
+
+type gatewayPreviewRequest struct {
+	Selected *[]gateway.GatewaySelection `json:"selected"`
+	Draft    map[string]interface{}      `json:"draft"`
+}
+
 func handleGatewayPreview(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	serveGatewayPreview(c, nil)
+}
+
+func handleGatewayPreviewPost(c *gin.Context) {
+	var request gatewayPreviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(400, gin.H{"error": "invalid gateway preview request"})
+		return
+	}
+	var edited map[string]interface{}
+	if request.Selected != nil {
+		cfg, _, configErr := config.LoadConfigAtPath(configPath())
+		if configErr != nil {
+			c.JSON(500, gin.H{"error": configErr.Error()})
+			return
+		}
+		var err error
+		if request.Draft != nil {
+			edited, err = gateway.ApplyGatewaySelectionToDraft(cfg, request.Draft, *request.Selected)
+		} else {
+			edited, err = gateway.BuildSelectedGatewayEntry(cfg, *request.Selected)
+		}
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+	} else if request.Draft != nil {
+		edited = request.Draft
+	}
+	serveGatewayPreview(c, edited)
+}
+
+func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
+	cfg, _, configErr := config.LoadConfigAtPath(configPath())
+	if configErr != nil {
+		c.JSON(500, gin.H{"error": configErr.Error()})
+		return
+	}
 	current, err := gateway.ReadCurrent()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	proposed := gateway.BuildProposedGatewayEntry(cfg)
+	proposed := edited
+	if proposed == nil {
+		proposed = gateway.BuildProposedGatewayEntry(cfg)
+	}
 	plan, summary := buildGatewayPlan(cfg, current, proposed)
 	currentForResp := interface{}(map[string]interface{}{})
 	if provs, ok := plan.Current["providers"].(map[string]interface{}); ok {

@@ -241,6 +241,111 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 	return map[string]interface{}{"providers": providers}
 }
 
+// GatewaySelection identifies one exposed model by its source config location.
+// The WebUI sends these source facts instead of reconstructing gateway provider
+// keys and model entries itself.
+type GatewaySelection struct {
+	Supplier string `json:"supplier"`
+	Channel  string `json:"channel"`
+	Model    string `json:"model"`
+}
+
+func selectedGatewayModels(cfg config.PiSwitchConfig, selections []GatewaySelection) (map[string]map[string]bool, error) {
+	selected := map[string]map[string]bool{}
+	for _, selection := range selections {
+		if strings.TrimSpace(selection.Supplier) == "" ||
+			strings.TrimSpace(selection.Channel) == "" ||
+			strings.TrimSpace(selection.Model) == "" {
+			return nil, fmt.Errorf("gateway selection requires supplier, channel, and model")
+		}
+		profile, ok := cfg.Profiles[selection.Supplier]
+		if !ok {
+			return nil, fmt.Errorf("unknown gateway selection supplier %q", selection.Supplier)
+		}
+		found := false
+		for i := range profile.Upstreams {
+			channel := profile.Upstreams[i]
+			if profile.ChannelName(i) != selection.Channel {
+				continue
+			}
+			providerKey := gatewayProviderForAPI(effectiveChannelAPI(profile, channel))
+			if providerKey == "" {
+				return nil, fmt.Errorf("gateway selection %s/%s uses unsupported api", selection.Supplier, selection.Channel)
+			}
+			for _, exposedID := range channel.ExposedModels {
+				if exposedID == selection.Model {
+					if selected[providerKey] == nil {
+						selected[providerKey] = map[string]bool{}
+					}
+					selected[providerKey][selection.Model] = true
+					found = true
+					break
+				}
+			}
+			break
+		}
+		if !found {
+			return nil, fmt.Errorf("gateway selection %s/%s/%s is not exposed", selection.Supplier, selection.Channel, selection.Model)
+		}
+	}
+	return selected, nil
+}
+
+func filterGatewaySelection(draft map[string]interface{}, selected map[string]map[string]bool) map[string]interface{} {
+	filteredDraft := cloneGatewayMap(draft)
+	providers := getProviders(filteredDraft)
+	for providerKey, raw := range providers {
+		if !IsFixedGatewayProvider(providerKey) {
+			continue
+		}
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			delete(providers, providerKey)
+			continue
+		}
+		allowed := selected[providerKey]
+		rawModels, _ := entry["models"].([]interface{})
+		filtered := make([]interface{}, 0, len(rawModels))
+		for _, rawModel := range rawModels {
+			model, ok := rawModel.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			id, _ := model["id"].(string)
+			if allowed[id] {
+				filtered = append(filtered, model)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(providers, providerKey)
+			continue
+		}
+		entry["models"] = filtered
+	}
+	return filteredDraft
+}
+
+// BuildSelectedGatewayEntry projects only the explicitly selected source models
+// into the fixed gateway providers. Model metadata and provider extras remain
+// owned by the backend's canonical builder.
+func BuildSelectedGatewayEntry(cfg config.PiSwitchConfig, selections []GatewaySelection) (map[string]interface{}, error) {
+	selected, err := selectedGatewayModels(cfg, selections)
+	if err != nil {
+		return nil, err
+	}
+	return filterGatewaySelection(BuildProposedGatewayEntry(cfg), selected), nil
+}
+
+// ApplyGatewaySelectionToDraft filters a user-edited canonical draft without
+// rebuilding provider entries or discarding JSON edits and extras.
+func ApplyGatewaySelectionToDraft(cfg config.PiSwitchConfig, draft map[string]interface{}, selections []GatewaySelection) (map[string]interface{}, error) {
+	selected, err := selectedGatewayModels(cfg, selections)
+	if err != nil {
+		return nil, err
+	}
+	return filterGatewaySelection(draft, selected), nil
+}
+
 // gatewayModelEntry builds one gateway model entry by looking the exposed id up
 // in its channel's model pool.
 func gatewayModelEntry(id string, pool []config.ModelEntry, exposedID string) map[string]interface{} {
