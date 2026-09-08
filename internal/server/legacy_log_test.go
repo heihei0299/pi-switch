@@ -2,12 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heihei0299/pi-switch/internal/store"
 )
@@ -214,5 +216,67 @@ func TestLegacyLog_AppendedLinesImportedOnce(t *testing.T) {
 	}
 	if m := getStatsMap(t, r); m["totalRequests"] != float64(2) {
 		t.Fatalf("requery totalRequests = %v, want 2", m["totalRequests"])
+	}
+}
+
+// A Stats query that overlaps the startup import must wait for that import: the
+// first response should include all legacy rows, not a transient empty view.
+func TestLegacyLog_StartupImportVisibleToImmediateStats(t *testing.T) {
+	const rows = 5000
+	var log strings.Builder
+	for i := 0; i < rows; i++ {
+		fmt.Fprintf(&log, `{"ts":"2026-08-06T09:%02d:%02dZ","provider":"p","model":"m-%d","ok":true,"status":200,"promptTokens":1,"completionTokens":1}`+"\n", (i/60)%60, i%60, i)
+	}
+	dir := writeLegacyTestEnv(t, log.String())
+
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(done)
+		db, err := store.GetDB()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		ensureLegacyImported(db)
+	}()
+	finished := false
+	defer func() {
+		if !finished {
+			<-done
+		}
+	}()
+
+	// The journal proves the background importer has entered its write transaction,
+	// so the following Stats request deterministically overlaps that import.
+	journal := filepath.Join(dir, "requests.db-journal")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(journal); err == nil {
+			break
+		}
+		select {
+		case err := <-errCh:
+			t.Fatalf("start legacy import: %v", err)
+		case <-done:
+			t.Fatal("legacy import finished before overlap could be established")
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("legacy import did not enter a write transaction")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	stats := getStatsMap(t, NewMgmtRouter())
+	<-done
+	finished = true
+	select {
+	case err := <-errCh:
+		t.Fatalf("legacy import: %v", err)
+	default:
+	}
+	if stats["totalRequests"] != float64(rows) {
+		t.Fatalf("immediate Stats totalRequests = %v, want %d", stats["totalRequests"], rows)
 	}
 }

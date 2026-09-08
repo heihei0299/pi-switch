@@ -15,6 +15,7 @@ import (
 func init() { gin.SetMode(gin.TestMode) }
 
 func TestHelp_ListsAllCommands(t *testing.T) {
+	writeLegacyTestEnv(t, "")
 	// We test via spawning go binary's help output indirectly via main printHelp?
 	// Instead test that our server exposes all required API groups mentioned in ticket
 	r := NewMgmtRouter()

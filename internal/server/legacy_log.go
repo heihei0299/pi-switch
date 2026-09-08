@@ -46,21 +46,21 @@ func ensureLegacyImported(db *sql.DB) {
 		return
 	}
 	fp := legacyFingerprint{size: fi.Size(), mtime: fi.ModTime().UnixNano()}
+	// Keep the fingerprint check, import, and update in one critical section.
+	// Startup and Stats may call this concurrently; the query must wait for the
+	// in-flight import instead of racing a second SQLite writer and seeing zero rows.
 	legacyMu.Lock()
+	defer legacyMu.Unlock()
 	if last, ok := legacyImported[path]; ok && last == fp {
-		legacyMu.Unlock()
 		return
 	}
 	offset := int64(0)
 	if last, ok := legacyImported[path]; ok && last.size < fp.size {
 		offset = last.size
 	}
-	legacyMu.Unlock()
 	imported, skipped, completed := importLegacyLog(db, path, offset)
 	if completed {
-		legacyMu.Lock()
 		legacyImported[path] = fp
-		legacyMu.Unlock()
 		if imported+skipped > 0 {
 			log.Printf("legacy requests.log import: %d imported, %d skipped (%s)", imported, skipped, path)
 		}
