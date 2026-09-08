@@ -11,11 +11,9 @@ import (
 )
 
 type OutboundRequestPlan struct {
-	BaseURL          string
+	Upstream         config.Upstream
 	Path             string
-	APIKey           string
 	ProfileHeaders   map[string]string
-	ChannelHeaders   map[string]string
 	IncomingHeaders  http.Header
 	Body             []byte
 	ContentType      string
@@ -40,7 +38,7 @@ type BuiltOutboundRequest struct {
 
 func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error) {
 	method := http.MethodPost
-	url := buildUpstreamURL(plan.BaseURL, plan.Path)
+	url := buildUpstreamURL(plan.Upstream.BaseURL, plan.Path)
 	req, err := http.NewRequest(method, url, bytes.NewReader(plan.Body))
 	if err != nil {
 		return BuiltOutboundRequest{}, err
@@ -52,14 +50,14 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 	if plan.Accept != "" {
 		req.Header.Set("Accept", plan.Accept)
 	}
-	if plan.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+plan.APIKey)
+	if plan.Upstream.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+plan.Upstream.APIKey)
 	}
-	for key, value := range mergeOutboundHeaders(plan.ProfileHeaders, plan.ChannelHeaders) {
+	for key, value := range mergeOutboundHeaders(plan.ProfileHeaders, plan.Upstream.Headers) {
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("User-Agent", resolveUserAgentValues(plan.ProfileUserAgent, plan.GlobalUserAgent))
-	applyOpenCodeSessionAffinityHeader(plan.BaseURL, plan.IncomingHeaders, req.Header)
+	applyOpenCodeSessionAffinityHeader(plan.Upstream.BaseURL, plan.IncomingHeaders, req.Header)
 
 	headerNames := make([]string, 0, len(req.Header))
 	for name := range req.Header {
@@ -72,7 +70,7 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 		Metadata: OutboundRequestMetadata{
 			URL:              url,
 			Method:           method,
-			HasAuthorization: plan.APIKey != "",
+			HasAuthorization: plan.Upstream.APIKey != "",
 			HeaderNames:      headerNames,
 		},
 	}, nil
@@ -89,12 +87,22 @@ func mergeOutboundHeaders(profile, channel map[string]string) map[string]string 
 	return merged
 }
 
-func primaryChannelHeaders(prof config.ProviderProfile) map[string]string {
+func selectedOutboundUpstream(prof config.ProviderProfile) config.Upstream {
 	upstreams := prof.ResolvedUpstreams()
 	if len(upstreams) == 0 {
-		return nil
+		return config.Upstream{}
 	}
-	return upstreams[0].Headers
+	u := upstreams[0]
+	if u.BaseURL == "" {
+		u.BaseURL = prof.BaseURL
+	}
+	if u.APIKey == "" {
+		u.APIKey = prof.APIKey
+	}
+	if u.Headers == nil {
+		u.Headers = prof.Headers
+	}
+	return u
 }
 
 func setOutboundHeader(headers map[string]string, key, value string) {

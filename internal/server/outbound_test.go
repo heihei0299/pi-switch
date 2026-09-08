@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/heihei0299/pi-switch/internal/config"
 )
 
 // Contract: docs/system-contract.md §2.4 requires one outbound path for URL, headers, UA, affinity, and timeout policy.
@@ -18,17 +20,19 @@ func TestBuildOutboundRequestMergesPolicyAndMetadata(t *testing.T) {
 	profileUserAgent := "profile-agent"
 	globalUserAgent := "global-agent"
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
-		BaseURL: "https://opencode.ai/zen/go/v1",
-		Path:    "/v1/responses",
-		APIKey:  "secret-key",
+		Upstream: config.Upstream{
+			BaseURL: "https://opencode.ai/zen/go/v1",
+			APIKey:  "secret-key",
+			Headers: map[string]string{
+				"X-Channel":  "channel",
+				"X-Shared":   "channel-value",
+				"User-Agent": "header-agent",
+			},
+		},
+		Path: "/v1/responses",
 		ProfileHeaders: map[string]string{
 			"X-Profile": "profile",
 			"X-Shared":  "profile-value",
-		},
-		ChannelHeaders: map[string]string{
-			"X-Channel":  "channel",
-			"X-Shared":   "channel-value",
-			"User-Agent": "header-agent",
 		},
 		IncomingHeaders: http.Header{
 			"X-Session-Affinity": []string{"session-1"},
@@ -85,7 +89,7 @@ func TestBuildOutboundRequestMergesPolicyAndMetadata(t *testing.T) {
 func TestBuildOutboundRequestUserAgentFallback(t *testing.T) {
 	global := "global-agent"
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
-		BaseURL:         "https://api.example.com/v1",
+		Upstream:        config.Upstream{BaseURL: "https://api.example.com/v1"},
 		Path:            "/v1/chat/completions",
 		GlobalUserAgent: &global,
 	})
@@ -99,8 +103,8 @@ func TestBuildOutboundRequestUserAgentFallback(t *testing.T) {
 
 func TestBuildOutboundRequestDoesNotInjectAffinityForOtherProviders(t *testing.T) {
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
-		BaseURL: "https://api.example.com/v1",
-		Path:    "/v1/chat/completions",
+		Upstream: config.Upstream{BaseURL: "https://api.example.com/v1"},
+		Path:     "/v1/chat/completions",
 		IncomingHeaders: http.Header{
 			"X-Opencode-Session": []string{"session-1"},
 			"X-Opencode-Client":  []string{"pi"},
@@ -117,11 +121,42 @@ func TestBuildOutboundRequestDoesNotInjectAffinityForOtherProviders(t *testing.T
 	}
 }
 
+func TestBuildOutboundRequestUsesSelectedUpstream(t *testing.T) {
+	selected := config.Upstream{
+		BaseURL: "https://channel-b.example.com/v1",
+		APIKey:  "channel-b-key",
+		Headers: map[string]string{"X-Channel": "b"},
+	}
+	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
+		Upstream: selected,
+		Path:     "/v1/chat/completions",
+		Body:     []byte(`{"model":"m"}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildOutboundRequest() error = %v", err)
+	}
+	if got, want := outbound.Request.URL.String(), "https://channel-b.example.com/v1/chat/completions"; got != want {
+		t.Fatalf("URL = %q, want %q", got, want)
+	}
+	if got, want := outbound.Request.Header.Get("Authorization"), "Bearer channel-b-key"; got != want {
+		t.Fatalf("Authorization = %q, want %q", got, want)
+	}
+	if got, want := outbound.Request.Header.Get("X-Channel"), "b"; got != want {
+		t.Fatalf("X-Channel = %q, want %q", got, want)
+	}
+}
+
 func TestOutboundHeadersMatchAcrossInitialRetryAndStream(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "requests.db")
 	var captured []map[string]string
 	var nonStreamCalls int
+	var firstChannelHits int
+	firstChannel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstChannelHits++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer firstChannel.Close()
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		headers := map[string]string{}
 		for _, key := range []string{"Authorization", "User-Agent", "X-Profile", "X-Channel", "X-Shared", "X-Opencode-Session", "X-Opencode-Client", "Content-Type", "Accept"} {
@@ -152,9 +187,9 @@ func TestOutboundHeadersMatchAcrossInitialRetryAndStream(t *testing.T) {
 	cfg := fmt.Sprintf(`{
 "version":2,
 "current":"oc",
-"profiles":{"oc":{"api":"openai-responses","responsesMode":"auto","baseUrl":%q,"apiKey":"profile-key","userAgent":"profile-agent","headers":{"X-Profile":"profile","X-Shared":"profile"},"upstreams":[{"name":"main","api":"openai-responses","baseUrl":%q,"apiKey":"channel-key","headers":{"X-Channel":"channel","X-Shared":"channel"},"models":[{"id":"m","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m"]}]}},
+"profiles":{"oc":{"api":"openai-responses","responsesMode":"auto","baseUrl":%q,"apiKey":"profile-key","userAgent":"profile-agent","headers":{"X-Profile":"profile","X-Shared":"profile"},"upstreams":[{"name":"main","api":"openai-responses","baseUrl":%q,"apiKey":"first-channel-key","headers":{"X-Channel":"first-channel","X-Shared":"first-channel"},"models":[],"exposedModels":[]},{"name":"backup","api":"openai-responses","baseUrl":%q,"apiKey":"channel-key","headers":{"X-Channel":"channel","X-Shared":"channel"},"models":[{"id":"m","contextWindow":128000,"maxTokens":16384}],"exposedModels":["m"]}]}},
 "settings":{"providerPrefix":"pi-switch","writeMode":"gateway","conversationSource":"off","proxy":{"host":"127.0.0.1","port":43112,"userAgent":"global-agent","circuitBreaker":{"enabled":true,"failureThreshold":3,"cooldownSeconds":60}},"web":{"host":"127.0.0.1","port":43110}}
-}`, opencodeBase, opencodeBase)
+}`, firstChannel.URL, firstChannel.URL, opencodeBase)
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +213,9 @@ func TestOutboundHeadersMatchAcrossInitialRetryAndStream(t *testing.T) {
 	}
 	if len(captured) != 3 {
 		t.Fatalf("captured %d upstream requests, want initial, retry, stream", len(captured))
+	}
+	if firstChannelHits != 0 {
+		t.Fatalf("first channel received %d requests; selected channel credentials drifted", firstChannelHits)
 	}
 	for _, key := range []string{"Authorization", "User-Agent", "X-Profile", "X-Channel", "X-Shared", "X-Opencode-Session", "X-Opencode-Client", "Content-Type"} {
 		if captured[0][key] != captured[1][key] || captured[1][key] != captured[2][key] {

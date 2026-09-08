@@ -3562,7 +3562,8 @@ func handleChatCompletions(c *gin.Context) {
 			prof = narrowToChannel(prof, matched)
 		}
 	}
-	base := prof.PrimaryBaseURL()
+	upstream := selectedOutboundUpstream(prof)
+	base := upstream.BaseURL
 	if base == "" {
 		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
 		return
@@ -3585,14 +3586,11 @@ func handleChatCompletions(c *gin.Context) {
 	upstreamBody := convBody
 	upstreamPath := plan.UpstreamPath
 	needRespConvert := plan.NeedsConvert()
-	channelHeaders := primaryChannelHeaders(prof)
 	bbytes, _ := json.Marshal(upstreamBody)
 	outboundPlan := OutboundRequestPlan{
-		BaseURL:          base,
+		Upstream:         upstream,
 		Path:             upstreamPath,
-		APIKey:           prof.PrimaryAPIKey(),
 		ProfileHeaders:   prof.Headers,
-		ChannelHeaders:   channelHeaders,
 		IncomingHeaders:  c.Request.Header,
 		Body:             bbytes,
 		ContentType:      "application/json",
@@ -3791,7 +3789,8 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			prof = narrowToChannel(prof, matched)
 		}
 	}
-	base := prof.PrimaryBaseURL()
+	upstream := selectedOutboundUpstream(prof)
+	base := upstream.BaseURL
 	if base == "" {
 		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
 		return
@@ -3815,14 +3814,11 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	clampBody(convBody, modelEntry, rawLen)
 	upstreamBody := convBody
 	upstreamPath := plan.UpstreamPath
-	channelHeaders := primaryChannelHeaders(prof)
 	bbytes, _ := json.Marshal(upstreamBody)
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
-		BaseURL:          base,
+		Upstream:         upstream,
 		Path:             upstreamPath,
-		APIKey:           prof.PrimaryAPIKey(),
 		ProfileHeaders:   prof.Headers,
-		ChannelHeaders:   channelHeaders,
 		IncomingHeaders:  c.Request.Header,
 		Body:             bbytes,
 		ContentType:      "application/json",
