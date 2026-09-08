@@ -3999,7 +3999,14 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 	c.Header("Connection", "keep-alive")
 	c.Status(resp.StatusCode)
 	flusher, _ := c.Writer.(http.Flusher)
+	streamFailed := false
 	emit := func(ev map[string]interface{}) {
+		if _, ok := ev["error"]; ok {
+			streamFailed = true
+		}
+		if typ, ok := ev["type"].(string); ok && typ == "response.failed" {
+			streamFailed = true
+		}
 		b, _ := json.Marshal(ev)
 		var line string
 		if responsesStyle {
@@ -4078,8 +4085,14 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 			cost = computeCost(modelEntry, prompt, completion, cached)
 		}
 	}
+	statusCode := resp.StatusCode
+	errorMessage := ""
+	if streamFailed {
+		statusCode = http.StatusBadGateway
+		errorMessage = "upstream stream failed"
+	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "", requestURLOf(resp))
+	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
 }
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {
@@ -4090,48 +4103,11 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 }
 
 func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reasoning int) {
-	usage, ok := resp["usage"].(map[string]interface{})
-	if !ok {
+	summary := usage.ExtractUsage(resp)
+	if summary == nil {
 		return 0, 0, 0, 0
 	}
-	if v, ok := usage["prompt_tokens"].(float64); ok {
-		prompt = int(v)
-	}
-	if v, ok := usage["completion_tokens"].(float64); ok {
-		completion = int(v)
-	}
-	if v, err := getNested(usage, "prompt_tokens_details", "cached_tokens"); err == nil {
-		if f, ok := v.(float64); ok {
-			cached = int(f)
-		}
-	}
-	if c, ok := usage["cached_tokens"].(float64); ok && cached == 0 {
-		cached = int(c)
-	}
-	if v, err := getNested(usage, "completion_tokens_details", "reasoning_tokens"); err == nil {
-		if f, ok := v.(float64); ok {
-			reasoning = int(f)
-		}
-	}
-	if reasoning == 0 {
-		if v, err := getNested(usage, "output_tokens_details", "reasoning_tokens"); err == nil {
-			if f, ok := v.(float64); ok {
-				reasoning = int(f)
-			}
-		}
-	}
-	return
-}
-func getNested(m map[string]interface{}, keys ...string) (interface{}, error) {
-	cur := interface{}(m)
-	for _, k := range keys {
-		if mp, ok := cur.(map[string]interface{}); ok {
-			cur = mp[k]
-		} else {
-			return nil, fmt.Errorf("not found")
-		}
-	}
-	return cur, nil
+	return int(summary.PromptTokens), int(summary.CompletionTokens), int(summary.CachedTokens), int(summary.ReasoningTokens)
 }
 
 func computeCost(entry *config.ModelEntry, prompt, completion, cached int) *float64 {

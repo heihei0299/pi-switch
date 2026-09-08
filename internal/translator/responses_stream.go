@@ -153,14 +153,22 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 		if delta != "" {
 			emit(c.toolDeltaChunk(st, delta))
 		}
-	case "response.completed":
-		if resp, ok := data["response"].(map[string]interface{}); ok {
+	case "response.completed", "response.incomplete":
+		resp, _ := data["response"].(map[string]interface{})
+		if resp != nil {
 			if u, ok := resp["usage"]; ok {
 				c.Usage = u
 			}
 		}
 		c.done = true
-		out = append(out, c.finishChunk(c.finishReason()))
+		reason, ok := c.finishReasonForResponse(resp, typ == "response.incomplete")
+		if !ok {
+			out = append(out, map[string]interface{}{
+				"error": map[string]interface{}{"message": "unsupported Responses terminal state", "type": "upstream_error"},
+			})
+			break
+		}
+		out = append(out, c.finishChunk(reason))
 	case "response.failed":
 		if resp, ok := data["response"].(map[string]interface{}); ok {
 			if em, ok := resp["error"].(map[string]interface{}); ok {
@@ -168,7 +176,13 @@ func (c *ResponsesSseToChat) PushEvent(data map[string]interface{}) ([]map[strin
 			}
 		}
 		c.done = true
-		out = append(out, c.finishChunk("stop"))
+		message := c.failed
+		if message == "" {
+			message = "upstream Responses request failed"
+		}
+		out = append(out, map[string]interface{}{
+			"error": map[string]interface{}{"message": message, "type": "upstream_error"},
+		})
 	}
 	return out, nil
 }
@@ -203,6 +217,26 @@ func (c *ResponsesSseToChat) finishReason() string {
 		return "tool_calls"
 	}
 	return "stop"
+}
+
+func (c *ResponsesSseToChat) finishReasonForResponse(resp map[string]interface{}, incompleteEvent bool) (string, bool) {
+	status, _ := resp["status"].(string)
+	if incompleteEvent || status == "incomplete" {
+		details, _ := resp["incomplete_details"].(map[string]interface{})
+		reason, _ := details["reason"].(string)
+		switch reason {
+		case "max_output_tokens", "max_tokens", "length":
+			return "length", true
+		case "content_filter":
+			return "content_filter", true
+		default:
+			return "", false
+		}
+	}
+	if status == "failed" {
+		return "", false
+	}
+	return c.finishReason(), true
 }
 
 // finishChunk emits the terminal Chat chunk with the given finish_reason and

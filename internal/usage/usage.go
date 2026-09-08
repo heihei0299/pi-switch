@@ -6,10 +6,12 @@ import (
 )
 
 type UsageSummary struct {
-	PromptTokens     uint64 `json:"prompt_tokens"`
-	CompletionTokens uint64 `json:"completion_tokens"`
-	CachedTokens     uint64 `json:"cached_tokens"`
-	ReasoningTokens  uint64 `json:"reasoning_tokens"`
+	PromptTokens         uint64 `json:"prompt_tokens"`
+	CompletionTokens     uint64 `json:"completion_tokens"`
+	CachedTokens         uint64 `json:"cached_tokens"`
+	ReasoningTokens      uint64 `json:"reasoning_tokens"`
+	CachedTokensKnown    bool   `json:"-"`
+	ReasoningTokensKnown bool   `json:"-"`
 }
 
 func ExtractUsage(v map[string]interface{}) *UsageSummary {
@@ -32,66 +34,69 @@ func ExtractUsage(v map[string]interface{}) *UsageSummary {
 		return 0
 	}
 	cached := uint64(0)
+	cachedKnown := false
 	if v, ok := usage["cache_read_input_tokens"]; ok {
 		if f, ok := v.(float64); ok {
 			cached = uint64(f)
+			cachedKnown = true
 		}
 	}
-	if cached == 0 {
-		if pt, ok := usage["prompt_tokens_details"]; ok {
-			if m, ok := pt.(map[string]interface{}); ok {
-				if c, ok := m["cached_tokens"]; ok {
-					if f, ok := c.(float64); ok {
+	if !cachedKnown {
+		for _, key := range []string{"prompt_tokens_details", "input_tokens_details"} {
+			if details, ok := usage[key].(map[string]interface{}); ok {
+				if v, ok := details["cached_tokens"]; ok {
+					if f, ok := v.(float64); ok {
 						cached = uint64(f)
+						cachedKnown = true
+						break
 					}
 				}
 			}
 		}
 	}
-	if cached == 0 {
-		if pt, ok := usage["input_tokens_details"]; ok {
-			if m, ok := pt.(map[string]interface{}); ok {
-				if c, ok := m["cached_tokens"]; ok {
-					if f, ok := c.(float64); ok {
-						cached = uint64(f)
-					}
-				}
+	if !cachedKnown {
+		if v, ok := usage["cached_tokens"]; ok {
+			if f, ok := v.(float64); ok {
+				cached = uint64(f)
+				cachedKnown = true
 			}
 		}
 	}
-	if cached == 0 {
+	if !cachedKnown {
 		if v, ok := usage["prompt_cache_hit_tokens"]; ok {
 			if f, ok := v.(float64); ok {
 				cached = uint64(f)
+				cachedKnown = true
 			}
 		}
 	}
 	reasoning := uint64(0)
-	if cd, ok := usage["completion_tokens_details"]; ok {
-		if m, ok := cd.(map[string]interface{}); ok {
-			if r, ok := m["reasoning_tokens"]; ok {
-				if f, ok := r.(float64); ok {
-					reasoning = uint64(f)
-				}
+	reasoningKnown := false
+	if details, ok := usage["completion_tokens_details"].(map[string]interface{}); ok {
+		if v, ok := details["reasoning_tokens"]; ok {
+			if f, ok := v.(float64); ok {
+				reasoning = uint64(f)
+				reasoningKnown = true
 			}
 		}
 	}
-	if reasoning == 0 {
-		if od, ok := usage["output_tokens_details"]; ok {
-			if m, ok := od.(map[string]interface{}); ok {
-				if r, ok := m["reasoning_tokens"]; ok {
-					if f, ok := r.(float64); ok {
-						reasoning = uint64(f)
-					}
+	if !reasoningKnown {
+		if details, ok := usage["output_tokens_details"].(map[string]interface{}); ok {
+			if v, ok := details["reasoning_tokens"]; ok {
+				if f, ok := v.(float64); ok {
+					reasoning = uint64(f)
+					reasoningKnown = true
 				}
 			}
 		}
 	}
 	return &UsageSummary{
-		PromptTokens:     firstU64("input_tokens", "prompt_tokens"),
-		CompletionTokens: firstU64("output_tokens", "completion_tokens"),
-		CachedTokens:     cached,
-		ReasoningTokens:  reasoning,
+		PromptTokens:         firstU64("input_tokens", "prompt_tokens"),
+		CompletionTokens:     firstU64("output_tokens", "completion_tokens"),
+		CachedTokens:         cached,
+		ReasoningTokens:      reasoning,
+		CachedTokensKnown:    cachedKnown,
+		ReasoningTokensKnown: reasoningKnown,
 	}
 }
 
@@ -215,10 +220,11 @@ func (p *SseUsageParser) Finish() *UsageSummary {
 			cached = *p.anthropicCached
 		}
 		return &UsageSummary{
-			PromptTokens:     *p.anthropicInput,
-			CompletionTokens: *p.anthropicCompletion,
-			CachedTokens:     cached,
-			ReasoningTokens:  0,
+			PromptTokens:      *p.anthropicInput,
+			CompletionTokens:  *p.anthropicCompletion,
+			CachedTokens:      cached,
+			CachedTokensKnown: p.anthropicCached != nil,
+			ReasoningTokens:   0,
 		}
 	}
 	return nil

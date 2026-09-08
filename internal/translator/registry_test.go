@@ -4,6 +4,7 @@ import "testing"
 
 // RED: registry must resolve the OpenAI bidirectional + Anthropic pairs
 // that handleChatCompletions/handleStream currently hard-code in switch statements.
+// Contract: docs/system-contract.md §2.4 and the IMP-04 matrix define the supported inbound/provider/mode combinations.
 func TestRegistry_PlanRequestPairs(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -15,9 +16,13 @@ func TestRegistry_PlanRequestPairs(t *testing.T) {
 		wantPath string
 	}{
 		{"responses passthrough", "responses", "openai-responses", "auto", FormatOpenAIResponses, FormatOpenAIResponses, "/v1/responses"},
+		{"responses passthrough explicit", "responses", "openai-responses", "passthrough", FormatOpenAIResponses, FormatOpenAIResponses, "/v1/responses"},
+		{"responses convert explicit", "responses", "openai-completions", "convert", FormatOpenAIResponses, FormatOpenAIChat, "/v1/chat/completions"},
 		{"responses convert", "responses", "openai-completions", "auto", FormatOpenAIResponses, FormatOpenAIChat, "/v1/chat/completions"},
 		{"chat to responses", "chat", "openai-responses", "auto", FormatOpenAIChat, FormatOpenAIResponses, "/v1/responses"},
+		{"chat to responses explicit", "chat", "openai-responses", "passthrough", FormatOpenAIChat, FormatOpenAIResponses, "/v1/responses"},
 		{"chat passthrough", "chat", "openai-completions", "auto", FormatOpenAIChat, FormatOpenAIChat, "/v1/chat/completions"},
+		{"chat convert explicit", "chat", "openai-completions", "convert", FormatOpenAIChat, FormatOpenAIChat, "/v1/chat/completions"},
 		{"chat to anthropic", "chat", "anthropic-messages", "auto", FormatOpenAIChat, FormatAnthropic, "/v1/messages"},
 		{"messages passthrough", "messages", "anthropic-messages", "auto", FormatAnthropic, FormatAnthropic, "/v1/messages"},
 		{"messages to chat", "messages", "openai-completions", "auto", FormatAnthropic, FormatOpenAIChat, "/v1/chat/completions"},

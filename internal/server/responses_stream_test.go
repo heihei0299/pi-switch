@@ -66,3 +66,55 @@ func TestStream_ResponsesUpstreamToChat(t *testing.T) {
 		t.Fatalf("prompt_tokens want 8 got %v", first["prompt_tokens"])
 	}
 }
+
+func TestStream_ResponsesIncompleteToChatLength(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "requests.db")
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+		fmt.Fprint(w, "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n")
+	}))
+	defer mock.Close()
+	cfgPath := writeTranslatorConfig(t, dir, mock.URL, "openai-responses", "auto", false)
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", dbPath)
+	router := NewProxyRouter()
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"finish_reason":"length"`) {
+		t.Fatalf("incomplete Responses stream must map to Chat length finish: %s", w.Body.String())
+	}
+}
+
+func TestStream_ResponsesFailureToChatError(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "requests.db")
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstream boom\"}}}\n\n")
+	}))
+	defer mock.Close()
+	cfgPath := writeTranslatorConfig(t, dir, mock.URL, "openai-responses", "auto", false)
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", dbPath)
+	router := NewProxyRouter()
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"error":{"message":"upstream boom"`) {
+		t.Fatalf("failure stream must preserve upstream error: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"finish_reason":"stop"`) {
+		t.Fatalf("failure stream must not emit successful stop finish: %s", w.Body.String())
+	}
+}

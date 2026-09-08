@@ -596,6 +596,7 @@ type ChatSseToResponses struct {
 	Text               string
 	ToolCalls          []ChatToolCallState
 	Usage              interface{}
+	FinishReason       string
 }
 
 func NewChatSseToResponses(model string) *ChatSseToResponses {
@@ -627,6 +628,9 @@ func (c *ChatSseToResponses) PushFrame(data map[string]interface{}) ([]map[strin
 	choice, ok := choices[0].(map[string]interface{})
 	if !ok {
 		return events, nil
+	}
+	if reason, ok := choice["finish_reason"].(string); ok && reason != "" {
+		c.FinishReason = reason
 	}
 	delta, ok := choice["delta"].(map[string]interface{})
 	if !ok {
@@ -700,6 +704,13 @@ func chatUsageToResponsesUsageGeneric(u interface{}) map[string]interface{} {
 	return nil
 }
 
+func (c *ChatSseToResponses) outputItemStatus() string {
+	if c.FinishReason == "length" || c.FinishReason == "content_filter" {
+		return "incomplete"
+	}
+	return "completed"
+}
+
 func (c *ChatSseToResponses) Finish() []map[string]interface{} {
 	var events []map[string]interface{}
 	if c.MessageOpen && c.Text != "" {
@@ -711,7 +722,7 @@ func (c *ChatSseToResponses) Finish() []map[string]interface{} {
 			"part": map[string]interface{}{"type": "output_text", "text": c.Text, "annotations": []interface{}{}},
 		})
 		events = append(events, map[string]interface{}{
-			"type": "response.output_item.done", "output_index": c.MessageOutputIndex, "item": c.messageItem("completed"),
+			"type": "response.output_item.done", "output_index": c.MessageOutputIndex, "item": c.messageItem(c.outputItemStatus()),
 		})
 	}
 	for _, call := range c.ToolCalls {
@@ -719,16 +730,32 @@ func (c *ChatSseToResponses) Finish() []map[string]interface{} {
 			"type": "response.function_call_arguments.done", "item_id": call.ItemID, "output_index": call.OutputIndex, "arguments": call.Arguments,
 		})
 		events = append(events, map[string]interface{}{
-			"type": "response.output_item.done", "output_index": call.OutputIndex, "item": toolCallItem(&call, "completed"),
+			"type": "response.output_item.done", "output_index": call.OutputIndex, "item": toolCallItem(&call, c.outputItemStatus()),
 		})
 	}
+	status := "completed"
+	eventType := "response.completed"
+	var incompleteDetails map[string]interface{}
+	switch c.FinishReason {
+	case "length":
+		status = "incomplete"
+		eventType = "response.incomplete"
+		incompleteDetails = map[string]interface{}{"reason": "max_output_tokens"}
+	case "content_filter":
+		status = "incomplete"
+		eventType = "response.incomplete"
+		incompleteDetails = map[string]interface{}{"reason": "content_filter"}
+	}
 	resp := map[string]interface{}{
-		"id": c.ResponseID, "object": "response", "created_at": float64(c.CreatedAt), "status": "completed", "model": c.Model, "output": c.completedOutput(),
+		"id": c.ResponseID, "object": "response", "created_at": float64(c.CreatedAt), "status": status, "model": c.Model, "output": c.completedOutput(),
+	}
+	if incompleteDetails != nil {
+		resp["incomplete_details"] = incompleteDetails
 	}
 	if c.Usage != nil {
 		resp["usage"] = c.Usage
 	}
-	events = append(events, map[string]interface{}{"type": "response.completed", "response": resp})
+	events = append(events, map[string]interface{}{"type": eventType, "response": resp})
 	return events
 }
 
@@ -745,10 +772,10 @@ func (c *ChatSseToResponses) FailedEvent(msg string) map[string]interface{} {
 func (c *ChatSseToResponses) completedOutput() []interface{} {
 	var out []interface{}
 	if c.MessageOpen && c.Text != "" {
-		out = append(out, c.messageItem("completed"))
+		out = append(out, c.messageItem(c.outputItemStatus()))
 	}
 	for _, call := range c.ToolCalls {
-		out = append(out, toolCallItem(&call, "completed"))
+		out = append(out, toolCallItem(&call, c.outputItemStatus()))
 	}
 	if out == nil {
 		out = []interface{}{}

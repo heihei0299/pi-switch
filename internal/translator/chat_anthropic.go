@@ -1,24 +1,31 @@
 package translator
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ChatToResponses converts an OpenAI Chat Completions body into an OpenAI
 // Responses body. Moved from internal/server (chatToResponses) so every
 // conversion lives behind the translator registry.
 func ChatToResponses(body map[string]interface{}) map[string]interface{} {
 	var input []interface{}
+	var instructions []string
 	if msgs, ok := body["messages"].([]interface{}); ok {
 		for _, m := range msgs {
 			if pm, ok := m.(map[string]interface{}); ok {
 				role, _ := pm["role"].(string)
 				content := normalizeChatContent(pm["content"])
-				if role == "system" {
+				if role == "system" || role == "developer" {
+					if text := chatInstructionText(pm["content"]); text != "" {
+						instructions = append(instructions, text)
+					}
 					continue
 				}
 				input = append(input, map[string]interface{}{"role": role, "content": content})
 			}
 		}
-}
+	}
 	out := map[string]interface{}{
 		"model": body["model"],
 		"input": input,
@@ -31,23 +38,35 @@ func ChatToResponses(body map[string]interface{}) map[string]interface{} {
 			out[k] = v
 		}
 	}
-	if msgs, ok := body["messages"].([]interface{}); ok {
-		for _, m := range msgs {
-			if pm, ok := m.(map[string]interface{}); ok {
-				if pm["role"] == "system" {
-					if t, ok := pm["content"].(string); ok && t != "" {
-						out["instructions"] = t
-						break
-					}
-				}
-			}
-		}
+	if len(instructions) > 0 {
+		out["instructions"] = strings.Join(instructions, "\n")
 	}
 	if tools, ok := body["tools"]; ok {
 		out["tools"] = tools
 	}
 	return out
 }
+func chatInstructionText(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		texts := make([]string, 0, len(v))
+		for _, raw := range v {
+			part, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if text, ok := part["text"].(string); ok && text != "" {
+				texts = append(texts, text)
+			}
+		}
+		return strings.Join(texts, "\n")
+	default:
+		return ""
+	}
+}
+
 func normalizeChatContent(content interface{}) interface{} {
 	if s, ok := content.(string); ok {
 		return []interface{}{map[string]interface{}{"type": "input_text", "text": s}}

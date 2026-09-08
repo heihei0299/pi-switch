@@ -4,9 +4,9 @@ import "testing"
 
 func TestChatToResponses_NormalizesContent(t *testing.T) {
 	cases := []struct {
-		name    string
-		body    map[string]interface{}
-		want    []interface{}
+		name string
+		body map[string]interface{}
+		want []interface{}
 	}{
 		{
 			name: "text array to input_text",
@@ -31,7 +31,7 @@ func TestChatToResponses_NormalizesContent(t *testing.T) {
 		{
 			name: "string content wrapped",
 			body: map[string]interface{}{
-				"model": "muse",
+				"model":    "muse",
 				"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
 			},
 			want: []interface{}{map[string]interface{}{"role": "user", "content": []interface{}{map[string]interface{}{"type": "input_text", "text": "hi"}}}},
@@ -72,5 +72,46 @@ func TestChatToResponses_NormalizesContent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResponsesToChatConvertsInstructionsToSystemMessage(t *testing.T) {
+	out, err := ResponsesToChat(map[string]interface{}{
+		"model":        "muse",
+		"instructions": "follow this",
+		"input":        []interface{}{map[string]interface{}{"role": "user", "content": []interface{}{map[string]interface{}{"type": "input_text", "text": "hello"}}}},
+	})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	messages, _ := out["messages"].([]interface{})
+	if len(messages) != 2 {
+		t.Fatalf("messages = %v", messages)
+	}
+	system, _ := messages[0].(map[string]interface{})
+	if system["role"] != "system" || system["content"] != "follow this" {
+		t.Fatalf("system message = %v", system)
+	}
+}
+
+func TestChatToResponsesCombinesSystemAndDeveloperInstructions(t *testing.T) {
+	out := ChatToResponses(map[string]interface{}{
+		"model": "muse",
+		"messages": []interface{}{
+			map[string]interface{}{"role": "system", "content": "system rule"},
+			map[string]interface{}{"role": "developer", "content": "developer rule"},
+			map[string]interface{}{"role": "user", "content": "hello"},
+		},
+	})
+	if out["instructions"] != "system rule\ndeveloper rule" {
+		t.Fatalf("instructions = %v", out["instructions"])
+	}
+	input, _ := out["input"].([]interface{})
+	if len(input) != 1 {
+		t.Fatalf("input = %v, want only user message", input)
+	}
+	message, _ := input[0].(map[string]interface{})
+	if message["role"] != "user" {
+		t.Fatalf("input role = %v, want user", message["role"])
 	}
 }

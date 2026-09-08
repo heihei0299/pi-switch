@@ -87,3 +87,39 @@ func TestChatSseToResponses_ReasoningDelta(t *testing.T) {
 		t.Fatalf("Text = %q, want r1", c.Text)
 	}
 }
+
+func TestChatSseToResponses_ReasoningAndContentRemainOutputText(t *testing.T) {
+	c := NewChatSseToResponses("m")
+	for _, delta := range []map[string]interface{}{
+		{"reasoning_content": "think"},
+		{"content": "answer"},
+	} {
+		if _, err := c.PushFrame(map[string]interface{}{
+			"choices": []interface{}{map[string]interface{}{"delta": delta}},
+		}); err != nil {
+			t.Fatalf("PushFrame: %v", err)
+		}
+	}
+	joined := ""
+	for _, event := range c.Finish() {
+		if event["type"] != "response.completed" {
+			continue
+		}
+		response, _ := event["response"].(map[string]interface{})
+		output, _ := response["output"].([]interface{})
+		if len(output) == 0 {
+			t.Fatal("reasoning/content stream produced empty output")
+		}
+		item, _ := output[0].(map[string]interface{})
+		parts, _ := item["content"].([]interface{})
+		for _, raw := range parts {
+			part, _ := raw.(map[string]interface{})
+			if text, ok := part["text"].(string); ok {
+				joined += text
+			}
+		}
+	}
+	if joined != "thinkanswer" {
+		t.Fatalf("output text = %q, want thinkanswer", joined)
+	}
+}

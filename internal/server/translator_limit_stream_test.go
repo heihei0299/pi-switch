@@ -99,6 +99,29 @@ func TestResponsesMode_Validation(t *testing.T) {
 	}
 }
 
+func TestTranslator_IncompatibleModeFailsBeforeUpstream(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "requests.db")
+	calls := 0
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+	}))
+	defer mock.Close()
+	cfgPath := writeTranslatorConfig(t, dir, mock.URL, "openai-responses", "convert", false)
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", dbPath)
+	router := NewProxyRouter()
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"gpt-4o-mini","input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d body = %s, want 502", w.Code, w.Body.String())
+	}
+	if calls != 0 {
+		t.Fatalf("incompatible request reached upstream %d time(s)", calls)
+	}
+}
 func TestTranslator_ResponsesPassthroughAndConvert(t *testing.T) {
 	// Passthrough case: api=openai-responses, POST /v1/responses should be forwarded as-is
 	t.Run("passthrough", func(t *testing.T) {
