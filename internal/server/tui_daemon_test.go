@@ -20,27 +20,10 @@ func init() { gin.SetMode(gin.TestMode) }
 // S6 跨平台与 API — 二进制统一 pi-switch[.exe]，FilterKey Alt 由 conhost 屏蔽，*.pid 单文件仅记最后实例，POST /api/proxy/start --daemon 的 already running 与 EADDRINUSE 500 在 gin.TestMode httptest 覆盖
 
 func TestTuiDaemon_S6_BinaryUnified(t *testing.T) {
-	// binary unified pi-switch[.exe] not pi-switch-go
-	// Check that bin/pi-switch.js dispatches to pi-switch- not pi-switch-go-
-	// and that go binary exists as pi-switch
-	candidates := []string{"/home/shial/Project/pi-switch/.worktrees/rewrite-go-increment-11/bin/pi-switch.js", "bin/pi-switch.js", "/home/shial/Project/pi-switch/bin/pi-switch.js"}
-	var data []byte
-	var err error
-	for _, p := range candidates {
-		data, err = os.ReadFile(p)
-		if err == nil {
-			break
-		}
-		if err == nil {
-			break
-		}
-		// try worktree path
-		data, err = os.ReadFile(filepath.Join(".", p))
-		if err == nil {
-			break
-		}
-	}
-	if data == nil {
+	root := testRepoRoot(t)
+	// Check that bin/pi-switch.js dispatches to pi-switch- not pi-switch-go-.
+	data, err := os.ReadFile(filepath.Join(root, "bin", "pi-switch.js"))
+	if err != nil {
 		t.Skip("bin/pi-switch.js not found")
 	}
 	s := string(data)
@@ -50,15 +33,10 @@ func TestTuiDaemon_S6_BinaryUnified(t *testing.T) {
 	if !strings.Contains(s, "pi-switch-") {
 		t.Fatalf("bin/pi-switch.js missing pi-switch- dispatch")
 	}
-	// check that built binary is pi-switch not pi-switch-go
-	if _, err := os.Stat("bin/pi-switch"); err == nil {
-		// ok
-	} else if _, err := os.Stat("/home/shial/Project/pi-switch/bin/pi-switch"); err == nil {
-	} else {
-		// check worktree bin
-		if _, err := os.Stat(filepath.Join(".", "bin/pi-switch")); err != nil {
-			t.Logf("binary pi-switch not found (may not be built yet), skip")
-		}
+	// The verify job runs before build artifacts are produced; the build matrix
+	// separately verifies that the platform binaries are generated.
+	if _, err := os.Stat(filepath.Join(root, "bin", "pi-switch")); err != nil {
+		t.Logf("binary pi-switch not found (may not be built yet), skip")
 	}
 }
 
