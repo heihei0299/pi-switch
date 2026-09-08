@@ -85,7 +85,7 @@ func TestPublishRemovesLegacyProvidersAndKeepsThirdParty(t *testing.T) {
 	}}
 	edited := map[string]interface{}{"providers": map[string]interface{}{
 		gatewayChatProvider: map[string]interface{}{
-			"api": "openai-completions", "apiKey": "pi-switch-proxy",
+			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy",
 			"models": []interface{}{map[string]interface{}{"id": "m1"}},
 		},
 	}}

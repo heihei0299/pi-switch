@@ -1593,53 +1593,36 @@ func handleGetGateway(c *gin.Context) {
 }
 func handleGatewayPreview(c *gin.Context) {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	proposedWrapper := gateway.BuildProposedGatewayEntry(cfg)
-	path := gateway.ModelsPath()
-	var curWrapper map[string]interface{}
-	if b, err := os.ReadFile(path); err == nil {
-		var m map[string]interface{}
-		_ = json.Unmarshal(b, &m)
-		if provs, ok := m["providers"].(map[string]interface{}); ok {
-			curWrapper = map[string]interface{}{"providers": provs}
-		} else {
-			curWrapper = map[string]interface{}{"providers": map[string]interface{}{}}
-		}
-	} else {
-		curWrapper = map[string]interface{}{"providers": map[string]interface{}{}}
+	current, err := gateway.ReadCurrent()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
-	// Normalize proposed with current's extra keys (compat/headers etc)
-	mergedWrapper := gateway.MergeGatewayExtraForConfig(cfg, curWrapper, proposedWrapper)
-	summary := enrichProposedModels(mergedWrapper)
-	pending := gateway.ComputePendingCount(curWrapper, mergedWrapper)
-	groups, removed := gateway.BuildPreviewGroups(cfg, curWrapper, mergedWrapper)
-	diagnostics := gateway.BuildGatewayDiagnostics(cfg)
-	conflicts := []string{}
-	if err := gateway.ValidateProposedGateway(cfg, mergedWrapper); err != nil {
-		conflicts = append(conflicts, err.Error())
-	}
-	for _, diagnostic := range diagnostics {
-		conflicts = append(conflicts, diagnostic.Message)
-	}
-	// Response uses inner providers maps for current/proposed (nil if empty)
-	var currentForResp interface{}
-	var proposedForResp interface{}
-	if provs, ok := curWrapper["providers"].(map[string]interface{}); ok && len(provs) > 0 {
+	proposed := gateway.BuildProposedGatewayEntry(cfg)
+	plan, summary := buildGatewayPlan(cfg, current, proposed)
+	currentForResp := interface{}(map[string]interface{}{})
+	if provs, ok := plan.Current["providers"].(map[string]interface{}); ok {
 		currentForResp = provs
-	} else {
-		// if file not exists or empty, keep nil to match previous behavior where current == nil
-		if len(provs) == 0 {
-			currentForResp = nil
-		} else {
-			currentForResp = provs
-		}
 	}
-	if provs, ok := mergedWrapper["providers"].(map[string]interface{}); ok {
+	var proposedForResp interface{}
+	if provs, ok := plan.Proposed["providers"].(map[string]interface{}); ok {
 		proposedForResp = provs
-	} else {
-		proposedForResp = nil
 	}
-	c.JSON(200, gin.H{"current": currentForResp, "proposed": proposedForResp, "conflicts": conflicts, "pending_count": pending, "groups": groups, "removed": removed,
-		"enrich": gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning}})
+	c.JSON(200, gin.H{
+		"current":       currentForResp,
+		"proposed":      proposedForResp,
+		"conflicts":     plan.Conflicts,
+		"diagnostics":   plan.Diagnostics,
+		"pending_count": plan.PendingCount,
+		"groups":        plan.Groups,
+		"removed":       plan.PreviewRemoved,
+		"diff":          gin.H{"added": plan.Added, "removed": plan.Removed, "changed": plan.Changed},
+		"enrich":        gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning},
+	})
+}
+func buildGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
+	summary := enrichProposedModels(draft)
+	return gateway.BuildCanonicalGatewayPlan(cfg, current, draft), summary
 }
 
 // enrichProposedModels fills gateway proposed models from the models.dev snapshot.
@@ -1726,43 +1709,6 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
-func validateGatewayProvider(gw map[string]interface{}) string {
-	allowedAPI := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
-	api, _ := gw["api"].(string)
-	if !allowedAPI[api] {
-		return "api is required or unsupported"
-	}
-	baseURL, _ := gw["baseUrl"].(string)
-	if baseURL == "" {
-		return "baseUrl required"
-	}
-	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		return "baseUrl must start with http:// or https://"
-	}
-	models, ok := gw["models"]
-	if !ok {
-		return "models must be array"
-	}
-	arr, ok := models.([]interface{})
-	if !ok {
-		return "models must be array"
-	}
-	for i, v := range arr {
-		mm, ok := v.(map[string]interface{})
-		if !ok {
-			return fmt.Sprintf("models[%d] must be object", i)
-		}
-		id, _ := mm["id"].(string)
-		if strings.TrimSpace(id) == "" {
-			return fmt.Sprintf("models[%d].id required", i)
-		}
-		if strings.Contains(id, "/") {
-			return fmt.Sprintf("models[%d].id must not contain \"/\"", i)
-		}
-	}
-	return ""
-}
-
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	var gw map[string]interface{}
@@ -1770,29 +1716,22 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
-	provs, ok := gw["providers"].(map[string]interface{})
-	if !ok {
+	if gw == nil {
 		c.JSON(400, gin.H{"error": "providers is required"})
 		return
 	}
-	for name, v := range provs {
-		em, ok := v.(map[string]interface{})
-		if !ok {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
-			return
-		}
-		if msg := validateGatewayProvider(em); msg != "" {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
-			return
-		}
-	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	if err := gateway.ValidateProposedGateway(cfg, gw); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	current, currentErr := gateway.ReadCurrent()
+	if currentErr != nil {
+		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
-	enrichProposedModels(gw)
-	if err := gateway.Publish(cfg, gw); err != nil {
+	plan, _ := buildGatewayPlan(cfg, current, gw)
+	if len(plan.Conflicts) > 0 {
+		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
+		return
+	}
+	if err := gateway.PublishPlan(plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -3200,8 +3139,17 @@ func handleGatewayPublish(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "invalid json"})
 			return
 		}
+		if len(raw) > 0 && body == nil {
+			c.JSON(400, gin.H{"error": "providers is required"})
+			return
+		}
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	current, currentErr := gateway.ReadCurrent()
+	if currentErr != nil {
+		c.JSON(500, gin.H{"error": currentErr.Error()})
+		return
+	}
 	var toPublish map[string]interface{}
 	if body != nil && len(body) > 0 {
 		if _, ok := body["providers"]; ok {
@@ -3213,28 +3161,12 @@ func handleGatewayPublish(c *gin.Context) {
 	} else {
 		toPublish = gateway.BuildProposedGatewayEntry(cfg)
 	}
-	provs, ok := toPublish["providers"].(map[string]interface{})
-	if !ok {
-		c.JSON(400, gin.H{"error": "providers is required"})
+	plan, _ := buildGatewayPlan(cfg, current, toPublish)
+	if len(plan.Conflicts) > 0 {
+		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
 	}
-	for name, value := range provs {
-		entry, ok := value.(map[string]interface{})
-		if !ok {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s] must be object", name)})
-			return
-		}
-		if msg := validateGatewayProvider(entry); msg != "" {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("providers[%s]: %s", name, msg)})
-			return
-		}
-	}
-	if err := gateway.ValidateProposedGateway(cfg, toPublish); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	enrichProposedModels(toPublish)
-	if err := gateway.Publish(cfg, toPublish); err != nil {
+	if err := gateway.PublishPlan(plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

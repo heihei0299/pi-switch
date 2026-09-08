@@ -27,8 +27,12 @@ func TestGatewayPreviewReportsUnsupportedAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	conflicts, _ := body["conflicts"].([]interface{})
-	if len(conflicts) != 1 || !strings.Contains(conflicts[0].(string), "unsupported API") {
-		t.Fatalf("preview conflicts = %#v", conflicts)
+	if len(conflicts) != 0 {
+		t.Fatalf("preview conflicts = %#v, want empty diagnostics-only response", conflicts)
+	}
+	diagnostics, _ := body["diagnostics"].([]interface{})
+	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].(map[string]interface{})["message"].(string), "unsupported API") {
+		t.Fatalf("preview diagnostics = %#v", diagnostics)
 	}
 }
 

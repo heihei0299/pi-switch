@@ -138,6 +138,60 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	}
 }
 
+func TestCanonicalGatewayPlanUnifiesViews(t *testing.T) {
+	channel := "main"
+	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{
+		"sup": {Upstreams: []config.Upstream{{Name: &channel, API: "openai-completions", Models: []config.ModelEntry{{ID: "m1", ContextWindow: 100, MaxTokens: 10}}, ExposedModels: []string{"m1"}}}},
+	}}
+	cfg.Settings.Proxy.Host = "127.0.0.1"
+	cfg.Settings.Proxy.Port = 43112
+	current := map[string]interface{}{"providers": map[string]interface{}{
+		gatewayChatProvider: map[string]interface{}{
+			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
+			"models": []interface{}{map[string]interface{}{"id": "m1", "contextWindow": float64(100), "maxTokens": float64(10)}},
+		},
+		"third-party": map[string]interface{}{"api": "openai-completions", "baseUrl": "https://third.example/v1", "apiKey": "third-key", "models": []interface{}{map[string]interface{}{"id": "third-model"}}},
+	}}
+	plan := BuildCanonicalGatewayPlan(cfg, current, nil)
+	if len(plan.Conflicts) != 0 || plan.PendingCount != 0 {
+		t.Fatalf("canonical plan = conflicts=%v pending=%d proposed=%v", plan.Conflicts, plan.PendingCount, plan.Proposed)
+	}
+	providers := plan.Proposed["providers"].(map[string]interface{})
+	if _, ok := providers["third-party"]; !ok {
+		t.Fatalf("canonical plan dropped third-party provider: %v", providers)
+	}
+	if len(plan.Groups) != 1 || plan.Groups[0].Models[0].Status != "published" {
+		t.Fatalf("canonical groups = %#v", plan.Groups)
+	}
+	if len(plan.Added) != 0 || len(plan.Removed) != 0 || len(plan.Changed) != 0 {
+		t.Fatalf("canonical diff = added=%v removed=%v changed=%v", plan.Added, plan.Removed, plan.Changed)
+	}
+}
+
+func TestCanonicalPlanPreservesThirdPartyEntryFromCurrent(t *testing.T) {
+	cfg := config.PiSwitchConfig{}
+	current := map[string]interface{}{"providers": map[string]interface{}{
+		"third-party": map[string]interface{}{"api": "openai-completions", "apiKey": "original", "models": []interface{}{map[string]interface{}{"id": "m"}}, "custom": "keep"},
+	}}
+	edited := map[string]interface{}{"providers": map[string]interface{}{
+		"third-party": map[string]interface{}{"api": "openai-completions", "apiKey": "tampered", "models": []interface{}{map[string]interface{}{"id": "changed"}}},
+	}}
+	before, _ := json.Marshal(edited)
+	plan := BuildCanonicalGatewayPlan(cfg, current, edited)
+	providers := plan.Proposed["providers"].(map[string]interface{})
+	after, _ := json.Marshal(edited)
+	if string(after) != string(before) {
+		t.Fatalf("canonical plan mutated edited draft: before=%s after=%s", before, after)
+	}
+	if len(plan.Conflicts) != 1 || !strings.Contains(plan.Conflicts[0], "third-party provider third-party is read-only") {
+		t.Fatalf("third-party edit conflict = %v", plan.Conflicts)
+	}
+	got := providers["third-party"].(map[string]interface{})
+	if got["apiKey"] != "original" || got["custom"] != "keep" {
+		t.Fatalf("third-party entry changed: %#v", got)
+	}
+}
+
 // Fixed gateway providers keep model ids bare while separating API contracts.
 func TestProposedGatewayUsesBareIDsAcrossFixedProviders(t *testing.T) {
 	cfg := config.PiSwitchConfig{
@@ -233,6 +287,17 @@ func TestPublishPreservesThirdPartyProviders(t *testing.T) {
 	result, err := os.ReadFile(modelsPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	firstPublish := string(result)
+	if err := Publish(cfg, edited); err != nil {
+		t.Fatal(err)
+	}
+	secondPublish, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secondPublish) != firstPublish {
+		t.Fatalf("second publish changed models.json:\nfirst=%s\nsecond=%s", firstPublish, secondPublish)
 	}
 	var got map[string]interface{}
 	if err := json.Unmarshal(result, &got); err != nil {
@@ -379,5 +444,34 @@ func TestBuildPreviewGroupsMapsSourcesToFixedProviders(t *testing.T) {
 		if item["id"] != want.model || item["status"] != "published" {
 			t.Fatalf("%s/%s model = %#v, want published %s", want.supplier, want.channel, item, want.model)
 		}
+	}
+}
+
+func TestPublishRejectsInvalidCanonicalPlanWithoutWrite(t *testing.T) {
+	modelsPath := filepath.Join(t.TempDir(), "models.json")
+	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+	original := []byte(`{"providers":{"third-party":{"api":"openai-completions","models":[]}}}`)
+	if err := os.WriteFile(modelsPath, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	main, backup := "main", "backup"
+	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{
+		"alpha": {Upstreams: []config.Upstream{{Name: &main, API: "openai-completions", ExposedModels: []string{"same"}}}},
+		"beta":  {Upstreams: []config.Upstream{{Name: &backup, API: "openai-completions", ExposedModels: []string{"same"}}}},
+	}}
+	edited := map[string]interface{}{"providers": map[string]interface{}{
+		gatewayChatProvider: map[string]interface{}{
+			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "models": []interface{}{map[string]interface{}{"id": "same"}},
+		},
+	}}
+	if err := Publish(cfg, edited); err == nil {
+		t.Fatal("Publish accepted duplicate exposed model")
+	}
+	got, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("models.json changed after rejected publish: %s", got)
 	}
 }
