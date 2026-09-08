@@ -54,3 +54,34 @@ func TestClampBody_EncryptedContentConservative(t *testing.T) {
 		t.Fatalf("clamped too high for encrypted_content case, got %d want <800k", got)
 	}
 }
+
+// Contract: docs/system-contract.md §2.2 and the IMP-02 matrix require missing model metadata to leave all three max keys unchanged.
+func TestClampBody_NoModelMetadataLeavesRequestedValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry *config.ModelEntry
+	}{
+		{name: "nil", entry: nil},
+		{name: "missing context window", entry: &config.ModelEntry{MaxTokens: 16}},
+		{name: "missing max tokens", entry: &config.ModelEntry{ContextWindow: 128000}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]interface{}{
+				"max_tokens":            float64(999999),
+				"max_output_tokens":     float64(888888),
+				"max_completion_tokens": float64(777777),
+			}
+			clampBody(body, tc.entry, 100)
+			for key, want := range map[string]float64{
+				"max_tokens":            999999,
+				"max_output_tokens":     888888,
+				"max_completion_tokens": 777777,
+			} {
+				if got := body[key]; got != want {
+					t.Fatalf("%s = %v, want %v", key, got, want)
+				}
+			}
+		})
+	}
+}

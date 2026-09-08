@@ -3494,6 +3494,9 @@ func estimateEffectiveLen(body map[string]interface{}, rawLen int) int {
 }
 
 func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLen int) {
+	if modelEntry == nil || modelEntry.ContextWindow == 0 || modelEntry.MaxTokens == 0 {
+		return
+	}
 	effectiveLen := estimateEffectiveLen(body, rawLen)
 	for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
 		if v, ok := body[key]; ok {
@@ -3670,9 +3673,6 @@ func handleChatCompletions(c *gin.Context) {
 		return
 	}
 	modelEntry := findModelEntry(prof, realModel)
-	if modelEntry == nil {
-		modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
-	}
 	bcopy := cloneMap(body)
 	bcopy["model"] = realModel
 	clampBody(bcopy, modelEntry, rawLen)
@@ -3924,9 +3924,6 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		return
 	}
 	modelEntry := findModelEntry(prof, realModel)
-	if modelEntry == nil {
-		modelEntry = &config.ModelEntry{ID: realModel, ContextWindow: 128000, MaxTokens: 16384}
-	}
 	bcopy := cloneMap(body)
 	bcopy["model"] = realModel
 	bcopy["stream"] = true
