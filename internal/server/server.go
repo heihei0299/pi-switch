@@ -1348,7 +1348,7 @@ func handleGetCredits(c *gin.Context) {
 	// 真实回源：opencode 兼容网关的 {baseURL}/usage（zen/go 实测返回
 	// rolling/weekly/monthly 用量百分比；Zen-only key 可能 403）。
 	// 非 200/解析失败一律如实报错，前端显示错误+重试，不再编造数字。
-	usage, err := fetchUpstreamUsage(baseURL, apiKey, resolveUserAgent(prof, cfg))
+	usage, err := fetchUpstreamUsage(baseURL, apiKey, resolveUserAgentValues(prof.UserAgent, cfg.Settings.Proxy.UserAgent))
 	if err != nil {
 		c.JSON(502, gin.H{"error": err.Error(), "type": "upstream_error"})
 		return
@@ -3518,14 +3518,6 @@ func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLe
 	}
 }
 
-func buildUpstreamURL(base, path string) string {
-	u := strings.TrimRight(base, "/")
-	if strings.HasSuffix(u, "/v1") {
-		return u + strings.TrimPrefix(path, "/v1")
-	}
-	return u + path
-}
-
 func findFrameEnd(buf []byte) (int, int) {
 	for i := 0; i+3 < len(buf); i++ {
 		if buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n' {
@@ -3552,35 +3544,6 @@ func extractData(frame []byte) string {
 		}
 	}
 	return ""
-}
-
-func resolveUserAgent(prof config.ProviderProfile, cfg config.PiSwitchConfig) string {
-	if prof.UserAgent != nil && *prof.UserAgent != "" {
-		return *prof.UserAgent
-	}
-	if cfg.Settings.Proxy.UserAgent != nil && *cfg.Settings.Proxy.UserAgent != "" {
-		return *cfg.Settings.Proxy.UserAgent
-	}
-	return "curl/8.5.0"
-}
-
-func applyOpenCodeSessionAffinityHeader(baseURL string, incoming, outgoing http.Header) {
-	if !strings.Contains(strings.ToLower(baseURL), "opencode.ai") {
-		return
-	}
-	sessionID := incoming.Get("x-opencode-session")
-	if sessionID == "" {
-		sessionID = incoming.Get("x-session-affinity")
-	}
-	if sessionID == "" {
-		sessionID = incoming.Get("x-client-request-id")
-	}
-	if sessionID != "" {
-		outgoing.Set("x-opencode-session", sessionID)
-	}
-	if client := incoming.Get("x-opencode-client"); client != "" {
-		outgoing.Set("x-opencode-client", client)
-	}
 }
 
 func handleChatCompletions(c *gin.Context) {
@@ -3690,42 +3653,29 @@ func handleChatCompletions(c *gin.Context) {
 	upstreamBody := convBody
 	upstreamPath := plan.UpstreamPath
 	needRespConvert := plan.NeedsConvert()
-	u := buildUpstreamURL(base, upstreamPath)
-	apiKey := prof.PrimaryAPIKey()
-	headers := map[string]string{}
-	for k, v := range prof.Headers {
-		headers[k] = v
-	}
-	for _, ups := range prof.ResolvedUpstreams() {
-		if ups.BaseURL == base {
-			for k, v := range ups.Headers {
-				headers[k] = v
-			}
-			break
-		}
-	}
-	if len(headers) == 0 {
-		headers = prof.PrimaryHeaders()
-	}
+	channelHeaders := primaryChannelHeaders(prof)
 	bbytes, _ := json.Marshal(upstreamBody)
-	req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
+	outboundPlan := OutboundRequestPlan{
+		BaseURL:          base,
+		Path:             upstreamPath,
+		APIKey:           prof.PrimaryAPIKey(),
+		ProfileHeaders:   prof.Headers,
+		ChannelHeaders:   channelHeaders,
+		IncomingHeaders:  c.Request.Header,
+		Body:             bbytes,
+		ContentType:      "application/json",
+		ProfileUserAgent: prof.UserAgent,
+		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
+		Timeout:          30 * time.Second,
+	}
+	outbound, err := BuildOutboundRequest(outboundPlan)
 	if err != nil {
 		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
-	client := &http.Client{Timeout: 30 * time.Second}
-	applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req.Header)
-	resp, err := client.Do(req)
+	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), u)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
 		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
 		return
 	}
@@ -3753,20 +3703,11 @@ func handleChatCompletions(c *gin.Context) {
 				}
 				clampBody(convBody2, modelEntry, rawLen)
 				bbytes2, _ := json.Marshal(convBody2)
-				u2 := buildUpstreamURL(base, upstreamPath)
-				req2, err2 := http.NewRequest("POST", u2, bytes.NewReader(bbytes2))
+				retryPlan := outboundPlan
+				retryPlan.Body = bbytes2
+				outbound2, err2 := BuildOutboundRequest(retryPlan)
 				if err2 == nil {
-					req2.Header.Set("Content-Type", "application/json")
-					if apiKey != "" {
-						req2.Header.Set("Authorization", "Bearer "+apiKey)
-					}
-					for k, v := range headers {
-						req2.Header.Set(k, v)
-					}
-					req2.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
-					applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req2.Header)
-					client2 := &http.Client{Timeout: 30 * time.Second}
-					resp2, err2 := client2.Do(req2)
+					resp2, err2 := outbound2.Client.Do(outbound2.Request)
 					if err2 == nil {
 						respBody2, _ := io.ReadAll(resp2.Body)
 						resp2.Body.Close()
@@ -3798,7 +3739,7 @@ func handleChatCompletions(c *gin.Context) {
 							}
 							cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
 							latMs := time.Since(start).Milliseconds()
-							logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp2.StatusCode, "", u2)
+							logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
 							for k, vv := range finalHeaders2 {
 								for _, v := range vv {
 									if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
@@ -3821,7 +3762,7 @@ func handleChatCompletions(c *gin.Context) {
 			}
 		}
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), u)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), outbound.Metadata.URL)
 		return
 	}
 	finalBody := respBody
@@ -3850,7 +3791,7 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
 	latMs := time.Since(start).Milliseconds()
-	logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp.StatusCode, "", u)
+	logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
 	for k, vv := range finalHeaders {
 		for _, v := range vv {
 			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
@@ -3942,44 +3883,29 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	clampBody(convBody, modelEntry, rawLen)
 	upstreamBody := convBody
 	upstreamPath := plan.UpstreamPath
-	u := buildUpstreamURL(base, upstreamPath)
-	apiKey := prof.PrimaryAPIKey()
-	headers := prof.PrimaryHeaders()
+	channelHeaders := primaryChannelHeaders(prof)
 	bbytes, _ := json.Marshal(upstreamBody)
-	req, err := http.NewRequest("POST", u, bytes.NewReader(bbytes))
+	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
+		BaseURL:          base,
+		Path:             upstreamPath,
+		APIKey:           prof.PrimaryAPIKey(),
+		ProfileHeaders:   prof.Headers,
+		ChannelHeaders:   channelHeaders,
+		IncomingHeaders:  c.Request.Header,
+		Body:             bbytes,
+		ContentType:      "application/json",
+		Accept:           "text/event-stream",
+		ProfileUserAgent: prof.UserAgent,
+		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
+		Timeout:          0,
+	})
 	if err != nil {
 		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	mergedHeaders := map[string]string{}
-	for k, v := range prof.Headers {
-		mergedHeaders[k] = v
-	}
-	for _, ups := range prof.ResolvedUpstreams() {
-		if ups.BaseURL == base {
-			for k, v := range ups.Headers {
-				mergedHeaders[k] = v
-			}
-			break
-		}
-	}
-	if len(mergedHeaders) == 0 {
-		mergedHeaders = headers
-	}
-	for k, v := range mergedHeaders {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
-	applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req.Header)
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
+	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), u)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
 		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
 		return
 	}
@@ -3992,7 +3918,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			}
 		}
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), u)
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), outbound.Metadata.URL)
 		return
 	}
 	if conv := plan.StreamConverter(realModel); conv != nil {
