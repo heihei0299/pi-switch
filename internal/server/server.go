@@ -3764,6 +3764,7 @@ func handleChatCompletions(c *gin.Context) {
 						req2.Header.Set(k, v)
 					}
 					req2.Header.Set("User-Agent", resolveUserAgent(prof, cfg))
+					applyOpenCodeSessionAffinityHeader(base, c.Request.Header, req2.Header)
 					client2 := &http.Client{Timeout: 30 * time.Second}
 					resp2, err2 := client2.Do(req2)
 					if err2 == nil {
