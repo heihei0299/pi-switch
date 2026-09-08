@@ -67,3 +67,7 @@ _Avoid_: gateway provider、pi gateway、网关配置
 **网关发布（Gateway Publish）**：
 将当前 gateway provider 草稿显式写入网关文件的唯一路径（`PUT /models/gateway` / GatewayPanel「应用到 Pi」）；草稿只维护有 exposed model 的 `pi-switch-res` 与 `pi-switch-chat`，每个 provider 的 API contract 固定，模型 id 保持裸名。发布外任何供应商变更均不自动写网关。
 _Avoid_: 同步、自动同步、apply
+
+## System Contract
+**Canonical facts and boundary contract**：各领域唯一事实来源、缺失/`null`/`[]` 语义、Gateway/Responses/Stats/WebUI/daemon 不变量和 IMP-01～IMP-05 追踪矩阵见 `docs/system-contract.md`。实现与测试必须引用该 contract；不能用未定义的 fallback、自动探测或重复 projection 替代明确边界。
+**ADR draft**：对应决策草稿暂存于 `.scratch/bug-history/adr-draft-canonical-system-contract.md`；未经显式确认不得写入 `docs/adr/`。
