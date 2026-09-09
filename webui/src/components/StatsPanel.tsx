@@ -30,6 +30,7 @@ const REFRESH_TIERS: { label: string; ms: number | null }[] = [
 export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<void> }) {
   const { t } = useI18n();
   const [stats, setStats] = useState<UsageStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [range, setRange] = useState<StatsRange>("today");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -43,6 +44,7 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
   const [convFrom, setConvFrom] = useState("");
   const [convTo, setConvTo] = useState("");
   const [convError, setConvError] = useState<string | null>(null);
+  const [convLoadError, setConvLoadError] = useState<string | null>(null);
   const [convPage, setConvPage] = useState(0);
   const [convPageSize, setConvPageSize] = useState(50);
   const [convData, setConvData] = useState<ConversationsPage | null>(null);
@@ -74,11 +76,13 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
             return;
           }
           setStats(next);
+          setStatsError(null);
         }
-      } catch {
-        // A failed auto-refresh keeps the current data instead of blanking the page.
-        if (id === seq.current && !keepOnError) {
-          setStats(null);
+      } catch (error) {
+        // Keep the last successful snapshot, but surface the contract/network
+        // error instead of silently rendering an empty dashboard.
+        if (id === seq.current) {
+          setStatsError(error instanceof Error ? error.message : String(error));
         }
       }
     },
@@ -108,10 +112,11 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
             return;
           }
           setConvData(next);
+          setConvLoadError(null);
         }
-      } catch {
-        if (id === convSeq.current && !keepOnError) {
-          setConvData(null);
+      } catch (error) {
+        if (id === convSeq.current) {
+          setConvLoadError(error instanceof Error ? error.message : String(error));
         }
       }
     },
@@ -360,10 +365,17 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
         </a>
       </div>
 
+      {statsError && (
+        <Card className="mb-3 border-red-500/30">
+          <div role="alert" className="break-words text-sm text-red-300">{statsError}</div>
+          {stats && <div className="mt-1 text-xs text-zinc-500">Showing the last successful snapshot.</div>}
+        </Card>
+      )}
+
       {!stats || stats.totalRequests === 0 ? (
         <Card>
-          <div className="text-sm text-zinc-500">
-            {t("No request data yet. Start the proxy and make some requests.")}
+          <div className={statsError ? "break-words text-sm text-red-300" : "text-sm text-zinc-500"}>
+            {statsError ?? t("No request data yet. Start the proxy and make some requests.")}
           </div>
         </Card>
       ) : (
@@ -611,7 +623,7 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
             </Card>
           ) : null}
 
-          {state.settings?.conversationSource !== "off" && (
+          {state.settings.conversationSource !== "off" && (
           <Card className="mt-4 overflow-hidden">
             <button
               type="button"
@@ -644,7 +656,9 @@ export function StatsPanel({ state }: { state: AppState; refresh: () => Promise<
                     </span>
                   )}
                 </div>
-                {!convData || convData.total === 0 ? (
+                {convLoadError ? (
+                  <div role="alert" className="break-words text-sm text-red-300">{convLoadError}</div>
+                ) : !convData || convData.total === 0 ? (
                   <div className="text-sm text-zinc-500">{t("No conversation data in this range.")}</div>
                 ) : (
                   <>

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { BuildInfo } from "../apiSchema";
 import type { AppState, Settings } from "../types";
 import { api } from "../api";
 import { Button, Card, Field, Input, SectionTitle, Select, useAction, useToast } from "./ui";
@@ -13,17 +14,13 @@ export function SettingsPanel({
   const run = useAction();
   const toast = useToast();
   const { t, lang, setLang } = useI18n();
-  // Deep clone so edits don't mutate the shared state until saved.
-  const [s, setS] = useState<Settings>(() => {
-    const init = JSON.parse(JSON.stringify(state.settings));
-    if (!init.conversationSource) init.conversationSource = "sessionScan";
-    if (!init.proxy) init.proxy = { host: "127.0.0.1", port: 43112, circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 } } as Settings["proxy"];
-    if (!init.proxy.circuitBreaker) init.proxy.circuitBreaker = { enabled: true, failureThreshold: 3, cooldownSeconds: 60 };
-    if (init.proxy.circuitBreaker.failureThreshold == null) init.proxy.circuitBreaker.failureThreshold = 3;
-    if (init.proxy.circuitBreaker.cooldownSeconds == null) init.proxy.circuitBreaker.cooldownSeconds = 60;
-    if (init.proxy.circuitBreaker.enabled == null) init.proxy.circuitBreaker.enabled = true;
-    return init;
-  });
+  // Deep clone so edits don't mutate the shared state until saved. API defaults
+  // are applied once by apiSchema.ts before the component receives this value.
+  const [s, setS] = useState<Settings>(() => JSON.parse(JSON.stringify(state.settings)));
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
+  useEffect(() => {
+    void api.buildInfo().then(setBuildInfo).catch(() => setBuildInfo(null));
+  }, []);
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
   const setProxy = (patch: Partial<Settings["proxy"]>) =>
@@ -31,7 +28,7 @@ export function SettingsPanel({
   const setCb = (patch: Partial<Settings["proxy"]["circuitBreaker"]>) =>
     setS((prev) => ({
       ...prev,
-      proxy: { ...prev.proxy, circuitBreaker: { ...(prev.proxy.circuitBreaker ?? { enabled: true, failureThreshold: 3, cooldownSeconds: 60 }), ...patch } },
+      proxy: { ...prev.proxy, circuitBreaker: { ...prev.proxy.circuitBreaker, ...patch } },
     }));
   const setWeb = (patch: Partial<Settings["web"]>) =>
     setS((prev) => ({ ...prev, web: { ...prev.web, ...patch } }));
@@ -75,7 +72,7 @@ export function SettingsPanel({
           <Field label={t("Conversation source")}>
             <Select
               aria-label={t("Conversation source")}
-              value={s.conversationSource ?? "sessionScan"}
+              value={s.conversationSource}
               onChange={(e) => set({ conversationSource: e.target.value as Settings["conversationSource"] })}
             >
               <option value="sessionScan">sessionScan</option>
@@ -121,7 +118,7 @@ export function SettingsPanel({
           <label className="flex items-center gap-2 text-sm text-zinc-300">
             <input
               type="checkbox"
-              checked={s.proxy.circuitBreaker?.enabled ?? true}
+              checked={s.proxy.circuitBreaker.enabled}
               onChange={(e) => setCb({ enabled: e.target.checked })}
             />
             {t("Circuit breaker enabled")}
@@ -130,7 +127,7 @@ export function SettingsPanel({
             <Field label={t("Failure threshold")}>
               <Input
                 type="number"
-                value={s.proxy.circuitBreaker?.failureThreshold ?? 3}
+                value={s.proxy.circuitBreaker.failureThreshold}
                 onChange={(e) =>
                   setCb({ failureThreshold: parseInt(e.target.value, 10) || 0 })
                 }
@@ -139,7 +136,7 @@ export function SettingsPanel({
             <Field label={t("Cooldown (seconds)")}>
               <Input
                 type="number"
-                value={s.proxy.circuitBreaker?.cooldownSeconds ?? 60}
+                value={s.proxy.circuitBreaker.cooldownSeconds}
                 onChange={(e) =>
                   setCb({ cooldownSeconds: parseInt(e.target.value, 10) || 0 })
                 }
@@ -167,6 +164,18 @@ export function SettingsPanel({
           {t("Non-loopback hosts require Basic auth (password in ~/.pi-switch/webui_password). Changes take effect on next webui start.")}
         </div>
       </Card>
+
+      {buildInfo && (
+        <Card className="mb-4">
+          <div className="mb-2 text-sm font-semibold text-zinc-200">{t("Build identity") || "Build identity"}</div>
+          <div className="grid gap-1 text-xs text-zinc-400 sm:grid-cols-2">
+            <span>version: <code className="text-zinc-200">{buildInfo.version}</code></span>
+            <span>commit: <code className="text-zinc-200">{buildInfo.commit}</code></span>
+            <span>target: <code className="text-zinc-200">{buildInfo.target}</code></span>
+            <span>built: <code className="text-zinc-200">{buildInfo.buildTime}</code> · dirty: <code className="text-zinc-200">{buildInfo.dirty}</code></span>
+          </div>
+        </Card>
+      )}
 
       <div className="flex justify-end">
         <Button

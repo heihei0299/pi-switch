@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/heihei0299/pi-switch/internal/store"
 )
@@ -33,6 +33,13 @@ func writeLegacyTestEnv(t *testing.T, logContent string) (dir string) {
 	return dir
 }
 
+func importLegacyForTest(t *testing.T) {
+	t.Helper()
+	if err := ImportLegacyNow(); err != nil {
+		t.Fatalf("import legacy log: %v", err)
+	}
+}
+
 func getStatsMap(t *testing.T, r http.Handler) map[string]interface{} {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -54,6 +61,7 @@ func TestLegacyLog_ImportedIntoStats(t *testing.T) {
 		"{\"ts\":\"2026-08-02T10:00:00Z\",\"provider\":\"opencode-go\",\"model\":\"deepseek-v4-flash\",\"ok\":true,\"status\":200,\"error\":null,\"upstreamUrl\":\"https://opencode.ai/zen/go/v1/chat/completions\",\"promptTokens\":200,\"completionTokens\":30,\"cachedTokens\":0,\"reasoningTokens\":0}\n" +
 		"not-json{{{\n"
 	writeLegacyTestEnv(t, logContent)
+	importLegacyForTest(t)
 	r := NewMgmtRouter()
 	m := getStatsMap(t, r)
 	if m["totalRequests"] != float64(2) {
@@ -81,6 +89,7 @@ func TestLegacyLog_ImportedIntoStats(t *testing.T) {
 func TestLegacyLog_RequeryDoesNotDuplicate(t *testing.T) {
 	logContent := "{\"ts\":\"2026-08-03T12:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"status\":200,\"promptTokens\":10,\"completionTokens\":5,\"cachedTokens\":0,\"reasoningTokens\":0,\"costTotal\":0.002}\n"
 	writeLegacyTestEnv(t, logContent)
+	importLegacyForTest(t)
 	r := NewMgmtRouter()
 	first := getStatsMap(t, r)
 	second := getStatsMap(t, r)
@@ -150,6 +159,7 @@ func TestLegacyLog_NewRequestDualWritesLog(t *testing.T) {
 func TestLegacyLog_VisibleInConversationsAndExport(t *testing.T) {
 	logContent := "{\"ts\":\"2026-08-04T09:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"status\":200,\"error\":null,\"upstreamUrl\":\"http://x\",\"promptTokens\":50,\"completionTokens\":10,\"cachedTokens\":5,\"reasoningTokens\":1,\"costTotal\":0.003,\"conversationId\":\"conv-old\",\"conversationName\":\"旧对话\"}\n"
 	writeLegacyTestEnv(t, logContent)
+	importLegacyForTest(t)
 	r := NewMgmtRouter()
 
 	w := httptest.NewRecorder()
@@ -199,6 +209,7 @@ func TestLegacyLog_VisibleInConversationsAndExport(t *testing.T) {
 // T5: 日志追加后增量导入，不重复计数
 func TestLegacyLog_AppendedLinesImportedOnce(t *testing.T) {
 	dir := writeLegacyTestEnv(t, "{\"ts\":\"2026-08-05T09:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"status\":200,\"promptTokens\":7,\"completionTokens\":3,\"cachedTokens\":0,\"reasoningTokens\":0}\n")
+	importLegacyForTest(t)
 	r := NewMgmtRouter()
 	if m := getStatsMap(t, r); m["totalRequests"] != float64(1) {
 		t.Fatalf("totalRequests = %v, want 1", m["totalRequests"])
@@ -211,6 +222,7 @@ func TestLegacyLog_AppendedLinesImportedOnce(t *testing.T) {
 		t.Fatalf("append log: %v", err)
 	}
 	_ = f.Close()
+	importLegacyForTest(t)
 	if m := getStatsMap(t, r); m["totalRequests"] != float64(2) {
 		t.Fatalf("after append totalRequests = %v, want 2", m["totalRequests"])
 	}
@@ -219,9 +231,9 @@ func TestLegacyLog_AppendedLinesImportedOnce(t *testing.T) {
 	}
 }
 
-// A Stats query that overlaps the startup import must wait for that import: the
-// first response should include all legacy rows, not a transient empty view.
-func TestLegacyLog_StartupImportVisibleToImmediateStats(t *testing.T) {
+// Stats reads SQLite only. Legacy visibility is eventual and is provided by
+// the explicit/startup importer rather than by a GET-side write.
+func TestLegacyLog_StatsDoesNotImportLegacyLog(t *testing.T) {
 	const rows = 5000
 	var log strings.Builder
 	for i := 0; i < rows; i++ {
@@ -229,54 +241,76 @@ func TestLegacyLog_StartupImportVisibleToImmediateStats(t *testing.T) {
 	}
 	dir := writeLegacyTestEnv(t, log.String())
 
-	done := make(chan struct{})
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(done)
-		db, err := store.GetDB()
-		if err != nil {
-			errCh <- err
-			return
-		}
-		ensureLegacyImported(db)
-	}()
-	finished := false
-	defer func() {
-		if !finished {
-			<-done
-		}
-	}()
-
-	// The journal proves the background importer has entered its write transaction,
-	// so the following Stats request deterministically overlaps that import.
-	journal := filepath.Join(dir, "requests.db-journal")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(journal); err == nil {
-			break
-		}
-		select {
-		case err := <-errCh:
-			t.Fatalf("start legacy import: %v", err)
-		case <-done:
-			t.Fatal("legacy import finished before overlap could be established")
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("legacy import did not enter a write transaction")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
 	stats := getStatsMap(t, NewMgmtRouter())
-	<-done
-	finished = true
-	select {
-	case err := <-errCh:
-		t.Fatalf("legacy import: %v", err)
-	default:
+	if stats["totalRequests"] != float64(0) {
+		t.Fatalf("Stats GET must not import legacy rows, got %v", stats["totalRequests"])
 	}
+	importLegacyForTest(t)
+	stats = getStatsMap(t, NewMgmtRouter())
 	if stats["totalRequests"] != float64(rows) {
-		t.Fatalf("immediate Stats totalRequests = %v, want %d", stats["totalRequests"], rows)
+		t.Fatalf("after explicit import totalRequests = %v, want %d", stats["totalRequests"], rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "requests.log")); err != nil {
+		t.Fatalf("legacy log missing: %v", err)
+	}
+}
+
+func TestLegacyLog_PartialTailResumesAtCommittedOffset(t *testing.T) {
+	dir := writeLegacyTestEnv(t, `{"ts":"2026-08-07T09:00:00Z","provider":"p","model":"m","ok":true,"promptTokens":1,"completionTokens":1}`)
+	importLegacyForTest(t)
+	if got := getStatsMap(t, NewMgmtRouter())["totalRequests"]; got != float64(0) {
+		t.Fatalf("partial line should not be imported, got %v", got)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "requests.log"), os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	importLegacyForTest(t)
+	if got := getStatsMap(t, NewMgmtRouter())["totalRequests"]; got != float64(1) {
+		t.Fatalf("completed tail totalRequests=%v, want 1", got)
+	}
+}
+
+func TestLegacyLog_FileReplacementUsesNewMigrationGeneration(t *testing.T) {
+	dir := writeLegacyTestEnv(t, "{\"ts\":\"2026-08-08T09:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"promptTokens\":1,\"completionTokens\":1}\n")
+	importLegacyForTest(t)
+	path := filepath.Join(dir, "requests.log")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{\"ts\":\"2026-08-08T10:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"promptTokens\":2,\"completionTokens\":2}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	importLegacyForTest(t)
+	if got := getStatsMap(t, NewMgmtRouter())["totalRequests"]; got != float64(2) {
+		t.Fatalf("replacement totalRequests=%v, want 2", got)
+	}
+}
+
+func TestLegacyLog_ConcurrentImportersAreIdempotent(t *testing.T) {
+	writeLegacyTestEnv(t, "{\"ts\":\"2026-08-09T09:00:00Z\",\"provider\":\"p\",\"model\":\"m\",\"ok\":true,\"promptTokens\":1,\"completionTokens\":1}\n")
+	const workers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- ImportLegacyNow()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent import: %v", err)
+		}
+	}
+	if got := getStatsMap(t, NewMgmtRouter())["totalRequests"]; got != float64(1) {
+		t.Fatalf("concurrent totalRequests=%v, want 1", got)
 	}
 }

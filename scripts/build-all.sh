@@ -9,15 +9,13 @@ if [ ! -d "webui/dist" ] || [ -z "$(ls -A webui/dist 2>/dev/null)" ]; then
 fi
 
 mkdir -p bin
-VER=$(node -p "require('./package.json').version")
-BUILD_FLAGS="-s -w -X main.version=$VER -X github.com/heihei0299/pi-switch/internal/server.Version=$VER"
 for GOOS in linux darwin windows; do
   for GOARCH in amd64 arm64; do
     EXT=""
     if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
     OUT="bin/pi-switch-${GOOS}-${GOARCH}${EXT}"
     echo "Building $OUT ..."
-    GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$BUILD_FLAGS" -o "$OUT" ./cmd/pi-switch
+    GOOS=$GOOS GOARCH=$GOARCH bash scripts/build-go.sh "$OUT"
   done
 done
 echo "All builds done:"

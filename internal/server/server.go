@@ -13,22 +13,22 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/catalog"
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
 	"github.com/heihei0299/pi-switch/internal/limit"
 	"github.com/heihei0299/pi-switch/internal/scan"
+	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/translator"
 	"github.com/heihei0299/pi-switch/internal/usage"
@@ -38,8 +38,11 @@ import (
 var webUIFS = webuiFS.FS
 
 var (
-	Version   = "dev"
-	BuildTime = "unknown"
+	Version     = "dev"
+	BuildTime   = "unknown"
+	BuildCommit = "unknown"
+	BuildTarget = "unknown"
+	BuildDirty  = "unknown"
 )
 
 var (
@@ -485,6 +488,9 @@ func handleBuildInfo(c *gin.Context) {
 		"status":    "ok",
 		"version":   Version,
 		"buildTime": BuildTime,
+		"commit":    BuildCommit,
+		"target":    BuildTarget,
+		"dirty":     BuildDirty,
 		"webui": gin.H{
 			"embedded":   webuiEmbedded,
 			"indexHash":  webuiIndexHash,
@@ -2255,640 +2261,93 @@ func parseWindowQuery(rangeParam, fromStr, toStr string) (*window, error) {
 	return nil, nil
 }
 
-func tsEpochMs(ts string) (int64, bool) {
-	if ts == "" {
-		return 0, false
+func statsWindowFor(c *gin.Context) (*statsservice.Window, error) {
+	rangeParam := c.Query("range")
+	if rangeParam == "" {
+		rangeParam = c.Query("window")
 	}
-	// try RFC3339 and RFC3339Nano
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05Z07:00"} {
-		if t, err := time.Parse(layout, ts); err == nil {
-			return t.UnixMilli(), true
-		}
+	w, err := parseWindowQuery(rangeParam, c.Query("from"), c.Query("to"))
+	if err != nil || w == nil {
+		return nil, err
 	}
-	return 0, false
+	return &statsservice.Window{From: w.from, To: w.to}, nil
 }
-func inWindow(ts string, w *window) bool {
-	if w == nil {
-		return true
+
+func statsPageLimit(c *gin.Context, max int) (page, limit int) {
+	page, _ = strconv.Atoi(c.DefaultQuery("page", "0"))
+	limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if page < 0 {
+		page = 0
 	}
-	ms, ok := tsEpochMs(ts)
-	if !ok {
-		return false
+	if limit <= 0 {
+		limit = 50
 	}
-	return ms >= w.from && ms < w.to
+	if max > 0 && limit > max {
+		limit = max
+	}
+	return page, limit
 }
-func cacheRateOf(input, cached int64) string {
-	if input == 0 {
-		return "-"
+
+func newStatsService(db *sql.DB) statsservice.Service {
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	source := cfg.Settings.ConversationSource
+	return statsservice.Service{
+		DB:         db,
+		Source:     conversation.Source(source),
+		Candidates: conversationCandidates(sessionScanCandidates(source)),
 	}
-	if cached == 0 {
-		return "0.0%"
-	}
-	return fmt.Sprintf("%.1f%%", float64(cached)/float64(input)*100)
 }
 
 // --- stats handler with window filtering ---
 func handleStats(c *gin.Context) {
-	// support both ?range and ?window, and bare from/to
-	rangeParam := c.Query("range")
-	if rangeParam == "" {
-		rangeParam = c.Query("window")
-	}
-	fromStr := c.Query("from")
-	toStr := c.Query("to")
-	// also handle page/limit
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	w, err := parseWindowQuery(rangeParam, fromStr, toStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	// also support legacy groupBy param
-	groupBy := c.Query("groupBy")
-	if groupBy == "conversation" {
-		// delegate to conversation handler but with window filtering simplified
+	if c.Query("groupBy") == "conversation" {
 		handleStatsConversations(c)
 		return
 	}
-	db, err := store.GetDB()
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ensureLegacyImported(db)
-	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id DESC`)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-	type row struct {
-		TS        sql.NullString
-		Provider  sql.NullString
-		Model     sql.NullString
-		Success   sql.NullInt64
-		PT        sql.NullInt64
-		CT        sql.NullInt64
-		Cached    sql.NullInt64
-		Reasoning sql.NullInt64
-		Cost      sql.NullFloat64
-		ConvID    sql.NullString
-		ConvName  sql.NullString
-		Latency   sql.NullInt64
-	}
-	var all []row
-	for rows.Next() {
-		var r row
-		_ = rows.Scan(&r.TS, &r.Provider, &r.Model, &r.Success, &r.PT, &r.CT, &r.Cached, &r.Reasoning, &r.Cost, &r.ConvID, &r.ConvName, &r.Latency)
-		if !inWindow(r.TS.String, w) {
-			continue
-		}
-		all = append(all, r)
-	}
-	// aggregates
-	totalRequests := len(all)
-	okRequests := 0
-	var totalMs int64
-	var latencyCount int64
-	var totalInput, totalOutput, totalCached, totalReasoning int64
-	var totalCost *float64
-	var costUnknown int64
-	byProvider := map[string]map[string]interface{}{}
-	byModel := map[string]map[string]interface{}{}
-	convAgg := map[string]*struct {
-		ID       string
-		Name     *string
-		Requests int
-		Input    int64
-		Output   int64
-		Cached   int64
-		Reas     int64
-		Cost     *float64
-		Last     *string
-	}{}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	source := cfg.Settings.ConversationSource
-	sessions := sessionScanCandidates(source)
-	_ = source
-	var recent []map[string]interface{}
-	for _, r := range all {
-		isOk := r.Success.Valid && r.Success.Int64 == 1
-		if isOk {
-			okRequests++
-		}
-		if r.Latency.Valid {
-			totalMs += r.Latency.Int64
-			latencyCount++
-		}
-		// countable: success and prompt+completion present
-		countable := isOk && r.PT.Valid && r.CT.Valid
-		if countable {
-			totalInput += r.PT.Int64
-			totalOutput += r.CT.Int64
-			if r.Cached.Valid {
-				totalCached += r.Cached.Int64
-			}
-			if r.Reasoning.Valid {
-				totalReasoning += r.Reasoning.Int64
-			}
-			if r.Cost.Valid {
-				if totalCost == nil {
-					v := r.Cost.Float64
-					totalCost = &v
-				} else {
-					*totalCost += r.Cost.Float64
-				}
-			} else {
-				costUnknown++
-			}
-		}
-		// byProvider
-		prov := "unknown"
-		if r.Provider.Valid && r.Provider.String != "" {
-			prov = r.Provider.String
-		}
-		if _, ok := byProvider[prov]; !ok {
-			byProvider[prov] = map[string]interface{}{"total": 0, "ok": 0, "failed": 0, "promptTokens": int64(0), "outputTokens": int64(0), "cachedTokens": int64(0), "reasoningTokens": int64(0), "cost": nil, "cacheRate": "-"}
-		}
-		bp := byProvider[prov]
-		bp["total"] = bp["total"].(int) + 1
-		if isOk {
-			bp["ok"] = bp["ok"].(int) + 1
-		} else {
-			bp["failed"] = bp["failed"].(int) + 1
-		}
-		if countable {
-			bp["promptTokens"] = bp["promptTokens"].(int64) + r.PT.Int64
-			bp["outputTokens"] = bp["outputTokens"].(int64) + r.CT.Int64
-			if r.Cached.Valid {
-				bp["cachedTokens"] = bp["cachedTokens"].(int64) + r.Cached.Int64
-			}
-			if r.Reasoning.Valid {
-				bp["reasoningTokens"] = bp["reasoningTokens"].(int64) + r.Reasoning.Int64
-			}
-			if r.Cost.Valid {
-				if bp["cost"] == nil {
-					v := r.Cost.Float64
-					bp["cost"] = v
-				} else {
-					bp["cost"] = bp["cost"].(float64) + r.Cost.Float64
-				}
-			}
-		}
-		// byModel
-		mod := "unknown"
-		if r.Model.Valid && r.Model.String != "" {
-			mod = r.Model.String
-		}
-		if _, ok := byModel[mod]; !ok {
-			byModel[mod] = map[string]interface{}{"total": 0, "ok": 0, "promptTokens": int64(0), "outputTokens": int64(0), "cachedTokens": int64(0), "reasoningTokens": int64(0), "cost": nil, "cacheRate": "-"}
-		}
-		bm := byModel[mod]
-		bm["total"] = bm["total"].(int) + 1
-		if isOk {
-			bm["ok"] = bm["ok"].(int) + 1
-		}
-		if countable {
-			bm["promptTokens"] = bm["promptTokens"].(int64) + r.PT.Int64
-			bm["outputTokens"] = bm["outputTokens"].(int64) + r.CT.Int64
-			if r.Cached.Valid {
-				bm["cachedTokens"] = bm["cachedTokens"].(int64) + r.Cached.Int64
-			}
-			if r.Reasoning.Valid {
-				bm["reasoningTokens"] = bm["reasoningTokens"].(int64) + r.Reasoning.Int64
-			}
-			if r.Cost.Valid {
-				if bm["cost"] == nil {
-					v := r.Cost.Float64
-					bm["cost"] = v
-				} else {
-					bm["cost"] = bm["cost"].(float64) + r.Cost.Float64
-				}
-			}
-		}
-		// byConversation (only if source != off, and need effective id)
-		effID, effName := "", ""
-		if source != "off" {
-			effID, effName = effectiveConversationID(r.ConvID, r.ConvName, r.Provider, r.Model, r.TS, source, sessions)
-			if effID == "" {
-				effID = "unlabeled"
-			}
-		}
-		if source != "off" {
-			agg, ok := convAgg[effID]
-			if !ok {
-				agg = &struct {
-					ID       string
-					Name     *string
-					Requests int
-					Input    int64
-					Output   int64
-					Cached   int64
-					Reas     int64
-					Cost     *float64
-					Last     *string
-				}{ID: effID}
-				if effName != "" {
-					n := effName
-					agg.Name = &n
-				}
-				convAgg[effID] = agg
-			}
-			agg.Requests++
-			if r.TS.Valid {
-				if agg.Last == nil || r.TS.String > *agg.Last {
-					s := r.TS.String
-					agg.Last = &s
-				}
-			}
-			if effName != "" {
-				n := effName
-				agg.Name = &n
-			} else if r.ConvName.Valid && r.ConvName.String != "" && agg.Name == nil {
-				n := r.ConvName.String
-				agg.Name = &n
-			}
-			if countable {
-				agg.Input += r.PT.Int64
-				agg.Output += r.CT.Int64
-				if r.Cached.Valid {
-					agg.Cached += r.Cached.Int64
-				}
-				if r.Reasoning.Valid {
-					agg.Reas += r.Reasoning.Int64
-				}
-				if r.Cost.Valid {
-					if agg.Cost == nil {
-						v := r.Cost.Float64
-						agg.Cost = &v
-					} else {
-						*agg.Cost += r.Cost.Float64
-					}
-				}
-			}
-		}
-		// recent detail
-		m := map[string]interface{}{
-			"ts": nil, "provider": nil, "model": nil, "ok": nil, "status": nil, "error": nil,
-			"promptTokens": nil, "completionTokens": nil, "cachedTokens": nil, "reasoningTokens": nil, "totalTokens": nil, "cacheRate": "-", "cost": nil,
-			"conversationId": nil, "conversationName": nil,
-			// legacy aliases
-			"prompt_tokens": nil, "completion_tokens": nil, "cached_tokens": nil, "reasoning_tokens": nil, "conversation_id": nil, "conversation_name": nil,
-			"success": nil,
-		}
-		if r.TS.Valid {
-			m["ts"] = r.TS.String
-		}
-		if r.Provider.Valid {
-			m["provider"] = r.Provider.String
-		}
-		if r.Model.Valid {
-			m["model"] = r.Model.String
-		}
-		if r.Success.Valid {
-			m["ok"] = r.Success.Int64 == 1
-			m["success"] = r.Success.Int64 == 1
-			if r.Success.Int64 == 1 {
-				m["status"] = 200
-			} else {
-				m["status"] = 500
-			}
-		}
-		if countable {
-			m["promptTokens"] = r.PT.Int64
-			m["completionTokens"] = r.CT.Int64
-			m["prompt_tokens"] = r.PT.Int64
-			m["completion_tokens"] = r.CT.Int64
-			if r.Cached.Valid {
-				m["cachedTokens"] = r.Cached.Int64
-				m["cached_tokens"] = r.Cached.Int64
-			} else {
-				m["cachedTokens"] = int64(0)
-				m["cached_tokens"] = int64(0)
-			}
-			if r.Reasoning.Valid {
-				m["reasoningTokens"] = r.Reasoning.Int64
-				m["reasoning_tokens"] = r.Reasoning.Int64
-			} else {
-				m["reasoningTokens"] = int64(0)
-				m["reasoning_tokens"] = int64(0)
-			}
-			// totalTokens
-			m["totalTokens"] = r.PT.Int64 + r.CT.Int64
-			m["cacheRate"] = cacheRateOf(r.PT.Int64, r.Cached.Int64)
-		}
-		if r.Cost.Valid {
-			m["cost"] = r.Cost.Float64
-			m["costTotal"] = r.Cost.Float64
-		}
-		if source != "off" {
-			m["conversationId"] = effID
-			m["conversation_id"] = effID
-			if effName != "" {
-				m["conversationName"] = effName
-				m["conversation_name"] = effName
-			}
-		} else if r.ConvID.Valid {
-			m["conversationId"] = r.ConvID.String
-			m["conversation_id"] = r.ConvID.String
-		}
-		if r.ConvName.Valid && r.ConvName.String != "" && (source == "off" || effName == "") {
-			m["conversationName"] = r.ConvName.String
-			m["conversation_name"] = r.ConvName.String
-		}
-		recent = append(recent, m)
-	}
-	// compute cache rate for byProvider/byModel
-	for _, bp := range byProvider {
-		pt := bp["promptTokens"].(int64)
-		ct := bp["cachedTokens"].(int64)
-		bp["cacheRate"] = cacheRateOf(pt, ct)
-	}
-	for _, bm := range byModel {
-		pt := bm["promptTokens"].(int64)
-		ct := bm["cachedTokens"].(int64)
-		bm["cacheRate"] = cacheRateOf(pt, ct)
-	}
-	// byConversation list
-	var byConvList []map[string]interface{}
-	for _, agg := range convAgg {
-		rate := cacheRateOf(agg.Input, agg.Cached)
-		m := map[string]interface{}{
-			"conversationId":  agg.ID,
-			"requests":        agg.Requests,
-			"inputTokens":     agg.Input,
-			"outputTokens":    agg.Output,
-			"cachedTokens":    agg.Cached,
-			"reasoningTokens": agg.Reas,
-			"cacheRate":       rate,
-			"lastActive":      agg.Last,
-		}
-		if agg.Name != nil {
-			m["name"] = *agg.Name
-		} else {
-			m["name"] = nil
-		}
-		if agg.Cost != nil {
-			m["cost"] = *agg.Cost
-		} else {
-			m["cost"] = nil
-		}
-		byConvList = append(byConvList, m)
-	}
-	if byConvList == nil {
-		byConvList = []map[string]interface{}{}
-	}
-	// sort by lastActive desc
-	// simple sort by string compare
-	for i := 0; i < len(byConvList)-1; i++ {
-		for j := i + 1; j < len(byConvList); j++ {
-			a := byConvList[i]["lastActive"]
-			b := byConvList[j]["lastActive"]
-			as, _ := a.(*string)
-			bs, _ := b.(*string)
-			av := ""
-			if as != nil {
-				av = *as
-			} else if s, ok := a.(string); ok {
-				av = s
-			}
-			bv := ""
-			if bs != nil {
-				bv = *bs
-			} else if s, ok := b.(string); ok {
-				bv = s
-			}
-			if bv > av {
-				byConvList[i], byConvList[j] = byConvList[j], byConvList[i]
-			}
-		}
-	}
-	failedRequests := totalRequests - okRequests
-	successRate := "0%"
-	if totalRequests > 0 {
-		successRate = fmt.Sprintf("%.1f%%", float64(okRequests)/float64(totalRequests)*100)
-	}
-	avgLatency := int64(0)
-	if latencyCount > 0 {
-		avgLatency = totalMs / latencyCount
-	}
-	totalTokens := map[string]interface{}{
-		"input": totalInput, "output": totalOutput, "total": totalInput + totalOutput, "cached": totalCached, "reasoning": totalReasoning,
-	}
-	cacheHitRate := "-"
-	if totalInput > 0 && totalCached > 0 {
-		cacheHitRate = fmt.Sprintf("%.1f%%", float64(totalCached)/float64(totalInput)*100)
-	} else if totalInput > 0 {
-		cacheHitRate = "0.0%"
-	}
-	// pagination for recent
-	totalRecent := len(recent)
-	start := page * limit
-	if start > len(recent) {
-		start = len(recent)
-	}
-	end := start + limit
-	if end > len(recent) {
-		end = len(recent)
-	}
-	paged := recent[start:end]
-	// legacy rows alias
-	c.JSON(200, gin.H{
-		"totalRequests":        totalRequests,
-		"okRequests":           okRequests,
-		"failedRequests":       failedRequests,
-		"successRate":          successRate,
-		"avgLatencyMs":         avgLatency,
-		"byProvider":           byProvider,
-		"byModel":              byModel,
-		"totalTokens":          totalTokens,
-		"cacheHitRate":         cacheHitRate,
-		"totalCost":            totalCost,
-		"costUnknown":          costUnknown,
-		"byConversation":       byConvList,
-		"recentRequests":       paged,
-		"recentRequestTotal":   totalRecent,
-		"rows":                 paged,
-		"recent_request_total": totalRecent,
-	})
-
-	_ = math.Ceil
-}
-
-func handleStatsConversations(c *gin.Context) {
-	rangeParam := c.Query("range")
-	if rangeParam == "" {
-		rangeParam = c.Query("window")
-	}
-	fromStr := c.Query("from")
-	toStr := c.Query("to")
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	if limit <= 0 {
-		limit = 50
-	}
-	w, err := parseWindowQuery(rangeParam, fromStr, toStr)
+	window, err := statsWindowFor(c)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	page, limit := statsPageLimit(c, 500)
 	db, err := store.GetDB()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	ensureLegacyImported(db)
-	rows, _ := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name FROM requests ORDER BY id DESC`)
-	if rows != nil {
-		defer rows.Close()
-		cfg, _, _ := config.LoadConfigAtPath(configPath())
-		source := cfg.Settings.ConversationSource
-		sessions := sessionScanCandidates(source)
-		if source == "off" {
-			c.JSON(200, gin.H{"conversations": []interface{}{}, "total": 0, "byConversation": []interface{}{}})
-			return
-		}
-		type agg struct {
-			ID       string
-			Name     *string
-			Requests int
-			Input    int64
-			Output   int64
-			Cached   int64
-			Reas     int64
-			Cost     *float64
-			Last     *string
-		}
-		m := map[string]*agg{}
-		for rows.Next() {
-			var ts, provider, model, convID, convName sql.NullString
-			var succ, pt, ct, cached, reasoning sql.NullInt64
-			var cost sql.NullFloat64
-			_ = rows.Scan(&ts, &provider, &model, &succ, &pt, &ct, &cached, &reasoning, &cost, &convID, &convName)
-			if !inWindow(ts.String, w) {
-				continue
-			}
-			effID, effName := effectiveConversationID(convID, convName, provider, model, ts, source, sessions)
-			if effID == "" {
-				effID = "unlabeled"
-			}
-			a, ok := m[effID]
-			if !ok {
-				a = &agg{ID: effID}
-				if effName != "" {
-					n := effName
-					a.Name = &n
-				}
-				m[effID] = a
-			}
-			a.Requests++
-			if ts.Valid {
-				if a.Last == nil || ts.String > *a.Last {
-					s := ts.String
-					a.Last = &s
-				}
-			}
-			if effName != "" {
-				n := effName
-				a.Name = &n
-			} else if convName.Valid && convName.String != "" && a.Name == nil {
-				n := convName.String
-				a.Name = &n
-			}
-			isOk := succ.Valid && succ.Int64 == 1
-			countable := isOk && pt.Valid && ct.Valid
-			if countable {
-				a.Input += pt.Int64
-				a.Output += ct.Int64
-				if cached.Valid {
-					a.Cached += cached.Int64
-				}
-				if reasoning.Valid {
-					a.Reas += reasoning.Int64
-				}
-				if cost.Valid {
-					if a.Cost == nil {
-						v := cost.Float64
-						a.Cost = &v
-					} else {
-						*a.Cost += cost.Float64
-					}
-				}
-			}
-		}
-		var list []map[string]interface{}
-		for _, a := range m {
-			rate := cacheRateOf(a.Input, a.Cached)
-			mm := map[string]interface{}{
-				"conversationId":  a.ID,
-				"requests":        a.Requests,
-				"inputTokens":     a.Input,
-				"outputTokens":    a.Output,
-				"cachedTokens":    a.Cached,
-				"reasoningTokens": a.Reas,
-				"cacheRate":       rate,
-				"lastActive":      a.Last,
-			}
-			if a.Name != nil {
-				mm["name"] = *a.Name
-			} else {
-				mm["name"] = nil
-			}
-			if a.Cost != nil {
-				mm["cost"] = *a.Cost
-			} else {
-				mm["cost"] = nil
-			}
-			list = append(list, mm)
-		}
-		if list == nil {
-			list = []map[string]interface{}{}
-		}
-		// sort desc by lastActive
-		for i := 0; i < len(list)-1; i++ {
-			for j := i + 1; j < len(list); j++ {
-				ai := list[i]["lastActive"]
-				bj := list[j]["lastActive"]
-				as, _ := ai.(*string)
-				bs, _ := bj.(*string)
-				av := ""
-				if as != nil {
-					av = *as
-				} else if s, ok := ai.(string); ok {
-					av = s
-				}
-				bv := ""
-				if bs != nil {
-					bv = *bs
-				} else if s, ok := bj.(string); ok {
-					bv = s
-				}
-				if bv > av {
-					list[i], list[j] = list[j], list[i]
-				}
-			}
-		}
-		total := len(list)
-		start := page * limit
-		if start > len(list) {
-			start = len(list)
-		}
-		end := start + limit
-		if end > len(list) {
-			end = len(list)
-		}
-		paged := list[start:end]
-		c.JSON(200, gin.H{"conversations": paged, "total": total, "byConversation": paged, "by_conversation": paged})
+	response, err := newStatsService(db).Stats(window, page, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"conversations": []interface{}{}, "total": 0, "byConversation": []interface{}{}, "by_conversation": []interface{}{}})
+	c.JSON(200, response)
+	return
+}
+
+func handleStatsConversations(c *gin.Context) {
+	window, err := statsWindowFor(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	page, limit := statsPageLimit(c, 0)
+	db, err := store.GetDB()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	conversations, total, err := newStatsService(db).Conversations(window, page, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"conversations":   conversations,
+		"total":           total,
+		"byConversation":  conversations,
+		"by_conversation": conversations,
+	})
+	return
 }
 
 func handleConversationRequests(c *gin.Context) {
@@ -2897,99 +2356,19 @@ func handleConversationRequests(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "conversation id must not be empty"})
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	if limit <= 0 {
-		limit = 50
-	}
+	page, limit := statsPageLimit(c, 0)
 	db, err := store.GetDB()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	ensureLegacyImported(db)
-	rows, _ := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id DESC`)
-	if rows != nil {
-		defer rows.Close()
-		cfg, _, _ := config.LoadConfigAtPath(configPath())
-		source := cfg.Settings.ConversationSource
-		sessions := sessionScanCandidates(source)
-		var matched []map[string]interface{}
-		for rows.Next() {
-			var ts, provider, model, convID, convName sql.NullString
-			var succ, pt, ct, cached, reasoning sql.NullInt64
-			var cost sql.NullFloat64
-			var latency sql.NullInt64
-			_ = rows.Scan(&ts, &provider, &model, &succ, &pt, &ct, &cached, &reasoning, &cost, &convID, &convName, &latency)
-			effID, _ := effectiveConversationID(convID, convName, provider, model, ts, source, sessions)
-			if effID != id {
-				continue
-			}
-			isOk := succ.Valid && succ.Int64 == 1
-			countable := isOk && pt.Valid && ct.Valid
-			m := map[string]interface{}{
-				"ts": nil, "provider": nil, "model": nil, "ok": nil, "status": nil, "error": nil,
-				"promptTokens": nil, "completionTokens": nil, "cachedTokens": nil, "reasoningTokens": nil, "totalTokens": nil, "cacheRate": "-", "cost": nil,
-				"conversationId": id, "conversationName": nil,
-			}
-			if ts.Valid {
-				m["ts"] = ts.String
-			}
-			if provider.Valid {
-				m["provider"] = provider.String
-			}
-			if model.Valid {
-				m["model"] = model.String
-			}
-			if succ.Valid {
-				m["ok"] = succ.Int64 == 1
-				if succ.Int64 == 1 {
-					m["status"] = 200
-				} else {
-					m["status"] = 500
-				}
-			}
-			if countable {
-				m["promptTokens"] = pt.Int64
-				m["completionTokens"] = ct.Int64
-				if cached.Valid {
-					m["cachedTokens"] = cached.Int64
-				} else {
-					m["cachedTokens"] = int64(0)
-				}
-				if reasoning.Valid {
-					m["reasoningTokens"] = reasoning.Int64
-				} else {
-					m["reasoningTokens"] = int64(0)
-				}
-				m["totalTokens"] = pt.Int64 + ct.Int64
-				m["cacheRate"] = cacheRateOf(pt.Int64, cached.Int64)
-			}
-			if cost.Valid {
-				m["cost"] = cost.Float64
-			}
-			if convName.Valid {
-				m["conversationName"] = convName.String
-			}
-			matched = append(matched, m)
-		}
-		total := len(matched)
-		start := page * limit
-		if start > len(matched) {
-			start = len(matched)
-		}
-		end := start + limit
-		if end > len(matched) {
-			end = len(matched)
-		}
-		paged := matched[start:end]
-		if paged == nil {
-			paged = []map[string]interface{}{}
-		}
-		c.JSON(200, gin.H{"requests": paged, "total": total})
+	requests, total, err := newStatsService(db).ConversationRequests(id, page, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"requests": []interface{}{}, "total": 0})
+	c.JSON(200, gin.H{"requests": requests, "total": total})
+	return
 }
 
 func handleLogsExport(c *gin.Context) {
@@ -3002,7 +2381,6 @@ func handleLogsExport(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	ensureLegacyImported(db)
 	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id ASC`)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -3317,107 +2695,32 @@ func contains(arr []string, s string) bool {
 }
 
 func conversationIDFrom(headers http.Header, body map[string]interface{}, source string) (string, string) {
-	if source == "off" {
-		return "unlabeled", ""
-	}
-	var id, name string
+	id := ""
 	if v := headers.Get("x-conversation-id"); v != "" {
 		id = v
 	} else if v := headers.Get("x-opencode-session"); v != "" {
 		id = v
-	} else if v, ok := body["conversation_id"].(string); ok && v != "" {
+	} else if v, ok := body["conversation_id"].(string); ok {
 		id = v
 	}
-	if v := headers.Get("x-conversation-name"); v != "" {
-		if dec, err := url.PathUnescape(v); err == nil {
-			if !utf8.ValidString(dec) {
-				name = v
-			} else {
-				name = strings.ReplaceAll(dec, "\r", " ")
-				name = strings.ReplaceAll(name, "\n", " ")
-				name = strings.ReplaceAll(name, "\t", " ")
-				name = strings.TrimSpace(name)
-			}
-		} else {
-			name = strings.ReplaceAll(v, "\r", " ")
-			name = strings.ReplaceAll(name, "\n", " ")
-			name = strings.ReplaceAll(name, "\t", " ")
-			name = strings.TrimSpace(name)
-		}
-	}
-	if id != "" {
-		return id, name
-	}
-	if source == "proxy" {
-		return "unlabeled", ""
-	}
-	sessions := scan.ScanCached()
 	model, _ := body["model"].(string)
-	nowStr := time.Now().Format(time.RFC3339)
-	nowMs := time.Now().UnixMilli()
-	entryTs := nowStr
-	entryModel := model
-	bestID := ""
-	bestTitle := ""
-	bestDiff := int64(999999999)
 	var promptHint *uint64
-	if pt, ok := body["prompt_tokens"].(float64); ok {
+	if pt, ok := body["prompt_tokens"].(float64); ok && pt >= 0 {
 		u := uint64(pt)
 		promptHint = &u
 	}
-	for _, sess := range sessions {
-		sessModel := ""
-		if sess.Model != nil {
-			sessModel = *sess.Model
-		}
-		if entryModel != "" && sessModel != "" && entryModel != sessModel {
-			continue
-		}
-		if entryModel == "" {
-			continue
-		}
-		if sess.LastActiveAt == nil {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, *sess.LastActiveAt)
-		if err != nil {
-			continue
-		}
-		sessMs := t.UnixMilli()
-		entryMs, _ := time.Parse(time.RFC3339, entryTs)
-		diff := entryMs.UnixMilli() - sessMs
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff > 2000 {
-			continue
-		}
-		if nowMs-sessMs > 5*60*1000 || sessMs > nowMs+2000 {
-			continue
-		}
-		var pdiff uint64 = 9999999
-		if promptHint != nil && sess.PromptTokensHint != nil {
-			if *promptHint > *sess.PromptTokensHint {
-				pdiff = *promptHint - *sess.PromptTokensHint
-			} else {
-				pdiff = *sess.PromptTokensHint - *promptHint
-			}
-		} else if promptHint != nil || sess.PromptTokensHint != nil {
-			pdiff = 5000
-		} else {
-			pdiff = 0
-		}
-		score := int64(pdiff)*10000 + diff
-		if score < bestDiff {
-			bestDiff = score
-			bestID = sess.ID
-			bestTitle = sess.Title
-		}
+	var candidates []conversation.Candidate
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(id) == conversation.UnlabeledID {
+		candidates = conversationCandidates(sessionScanCandidates(source))
 	}
-	if bestID != "" {
-		return bestID, bestTitle
-	}
-	return "unlabeled", ""
+	result := conversation.Match(conversation.Source(source), conversation.MatchInput{
+		ExplicitID:   id,
+		ExplicitName: conversation.SanitizeDisplayName(headers.Get("x-conversation-name")),
+		Model:        model,
+		Timestamp:    time.Now(),
+		PromptTokens: promptHint,
+	}, candidates)
+	return result.ID, result.Name
 }
 
 func findModelEntry(prof config.ProviderProfile, realModel string) *config.ModelEntry {
@@ -4178,75 +3481,48 @@ func sessionScanCandidates(source string) map[string]scan.PiSession {
 	return scan.ScanCached()
 }
 
-func effectiveConversationID(convID, convName sql.NullString, provider, model, ts sql.NullString, source string, sessions map[string]scan.PiSession) (string, string) {
-	if source == "off" {
-		return "unlabeled", ""
-	}
-	if convID.Valid && convID.String != "" && convID.String != "unlabeled" {
-		name := ""
-		if convName.Valid {
-			name = convName.String
-		}
-		return convID.String, name
-	}
-	if source == "proxy" {
-		return "unlabeled", ""
-	}
-	if sessions == nil {
-		sessions = sessionScanCandidates(source)
-	}
-	if !ts.Valid {
-		return "unlabeled", ""
-	}
-	entryTs, err := time.Parse(time.RFC3339, ts.String)
-	if err != nil {
-		return "unlabeled", ""
-	}
-	nowMs := time.Now().UnixMilli()
-	entryMs := entryTs.UnixMilli()
-	modelStr := ""
-	if model.Valid {
-		modelStr = model.String
-	}
-	bestID, bestTitle, bestScore := "", "", int64(1<<62)
-	for _, sess := range sessions {
-		sessModel := ""
-		if sess.Model != nil {
-			sessModel = *sess.Model
-		}
-		if modelStr != "" && sessModel != "" && modelStr != sessModel {
-			continue
-		}
-		if modelStr == "" {
-			continue
+func conversationCandidates(sessions map[string]scan.PiSession) []conversation.Candidate {
+	candidates := make([]conversation.Candidate, 0, len(sessions))
+	for id, sess := range sessions {
+		candidateID := sess.ID
+		if candidateID == "" {
+			candidateID = id
 		}
 		if sess.LastActiveAt == nil {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, *sess.LastActiveAt)
+		lastActive, err := time.Parse(time.RFC3339Nano, *sess.LastActiveAt)
 		if err != nil {
 			continue
 		}
-		sessMs := t.UnixMilli()
-		diff := entryMs - sessMs
-		if diff < 0 {
-			diff = -diff
+		model := ""
+		if sess.Model != nil {
+			model = *sess.Model
 		}
-		if diff > 2000 {
-			continue
-		}
-		if nowMs-sessMs > 5*60*1000 || sessMs > nowMs+2000 {
-			continue
-		}
-		score := diff
-		if score < bestScore {
-			bestScore = score
-			bestID = sess.ID
-			bestTitle = sess.Title
-		}
+		candidates = append(candidates, conversation.Candidate{
+			ID:               candidateID,
+			Name:             sess.Title,
+			Model:            model,
+			LastActiveAt:     lastActive,
+			PromptTokensHint: sess.PromptTokensHint,
+		})
 	}
-	if bestID != "" {
-		return bestID, bestTitle
+	return candidates
+}
+
+// effectiveConversationID is kept as a compatibility adapter for older
+// package-local callers; all attribution still runs through conversation.Match.
+func effectiveConversationID(convID, convName, provider, model, ts sql.NullString, source string, sessions map[string]scan.PiSession) (string, string) {
+	var timestamp time.Time
+	if ts.Valid {
+		timestamp, _ = time.Parse(time.RFC3339Nano, ts.String)
 	}
-	return "unlabeled", ""
+	result := conversation.Match(conversation.Source(source), conversation.MatchInput{
+		ExplicitID:   convID.String,
+		ExplicitName: convName.String,
+		Provider:     provider.String,
+		Model:        model.String,
+		Timestamp:    timestamp,
+	}, conversationCandidates(sessions))
+	return result.ID, result.Name
 }

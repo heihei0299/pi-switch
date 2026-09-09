@@ -90,7 +90,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
     try {
       const next = await api.getState();
       setState(next);
-      onConfigLang(next.settings?.language ?? null);
+      onConfigLang(next.settings.language ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -256,7 +256,11 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
 
           {state && (
             <>
-              {nav === "home" && <HomePanel state={state} refresh={refresh} onNavigate={handleNav} />}
+              {nav === "home" && (
+                <PanelErrorBoundary>
+                  <HomePanel state={state} refresh={refresh} onNavigate={handleNav} />
+                </PanelErrorBoundary>
+              )}
               {nav === "profiles" && (
                 <PanelErrorBoundary>
                   <ProfilesPanel state={state} refresh={refresh} />
@@ -267,12 +271,36 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
                   <GatewayPanel refresh={refresh} />
                 </PanelErrorBoundary>
               )}
-              {nav === "proxy" && <ProxyPanel state={state} refresh={refresh} />}
-              {nav === "packages" && <PackagesPanel refresh={refresh} />}
-              {nav === "stats" && <StatsPanel state={state} refresh={refresh} />}
-              {nav === "backups" && <BackupsPanel state={state} refresh={refresh} />}
-              {nav === "settings" && <SettingsPanel state={state} refresh={refresh} />}
-              {nav === "doctor" && <DoctorPanel state={state} refresh={refresh} />}
+              {nav === "proxy" && (
+                <PanelErrorBoundary>
+                  <ProxyPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "packages" && (
+                <PanelErrorBoundary>
+                  <PackagesPanel refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "stats" && (
+                <PanelErrorBoundary>
+                  <StatsPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "backups" && (
+                <PanelErrorBoundary>
+                  <BackupsPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "settings" && (
+                <PanelErrorBoundary>
+                  <SettingsPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
+              {nav === "doctor" && (
+                <PanelErrorBoundary>
+                  <DoctorPanel state={state} refresh={refresh} />
+                </PanelErrorBoundary>
+              )}
             </>
           )}
         </div>

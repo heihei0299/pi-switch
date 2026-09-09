@@ -48,6 +48,10 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Serialize short SQLite writer contention (startup migration, request
+	// logging, and concurrent explicit import triggers) instead of surfacing
+	// SQLITE_BUSY to an otherwise idempotent caller.
+	_, _ = db.Exec(`PRAGMA busy_timeout = 5000`)
 	if err := ensureTable(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -75,7 +79,7 @@ func ensureTable(db *sql.DB) error {
 		return err
 	}
 	// Migration for old DBs missing any of the newer columns
-	cols := []string{"reasoning_tokens", "cost", "conversation_name", "latency_ms"}
+	cols := []string{"reasoning_tokens", "cost", "conversation_name", "latency_ms", "legacy_source", "legacy_identity", "legacy_offset"}
 	for _, col := range cols {
 		has := false
 		rows, err := db.Query(`PRAGMA table_info(requests)`)
@@ -97,13 +101,16 @@ func ensureTable(db *sql.DB) error {
 			var typ string
 			if col == "cost" {
 				typ = "REAL"
-			} else if col == "conversation_name" || col == "conversation_id" || col == "ts" || col == "provider" || col == "model" {
+			} else if col == "conversation_name" || col == "conversation_id" || col == "ts" || col == "provider" || col == "model" || col == "legacy_source" || col == "legacy_identity" {
 				typ = "TEXT"
 			} else {
 				typ = "INTEGER"
 			}
 			_, _ = db.Exec(`ALTER TABLE requests ADD COLUMN ` + col + ` ` + typ)
 		}
+	}
+	if err := ensureLegacyMigrationSchema(db); err != nil {
+		return err
 	}
 	return nil
 }
@@ -228,5 +235,13 @@ func ResetForTest(path string) (*sql.DB, error) {
 	}
 	muDB.Unlock()
 	_ = os.Remove(path)
-	return Open(path)
+	db, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	muDB.Lock()
+	cachedDB = db
+	cachedPath = path
+	muDB.Unlock()
+	return db, nil
 }

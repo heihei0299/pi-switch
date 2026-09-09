@@ -37,6 +37,8 @@ function backendPreview(
     conflicts: [],
     pending_count: current === proposed ? 0 : 1,
     diff: { added: [], removed: [], changed: [] },
+    groups: [],
+    removed: [],
     ...extra,
   };
 }
@@ -420,6 +422,7 @@ describe("GatewayPanel unchecked persistence", () => {
     },
     conflicts: [],
     pending_count: 1,
+    diff: { added: [], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
       { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },

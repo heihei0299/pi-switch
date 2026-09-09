@@ -46,22 +46,18 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }), [canonicalDraft]);
 
   const applyPreview = (preview: GatewayPreview, checkedOverride?: Set<string>) => {
-    const cur = preview.current ?? {};
-    const prop = preview.proposed ?? {};
-    const groupsFromServer = preview.groups ?? [];
-    const removedArr = Array.isArray(preview.removed) ? preview.removed.map(String) : [];
+    const cur = preview.current;
+    const prop = preview.proposed;
+    const groupsFromServer = preview.groups;
+    const removedArr = preview.removed ?? [];
     setCurrent(cur);
     setCanonicalDraft(prop);
     setRawText(JSON.stringify({ providers: prop }, null, 2));
     setRawDraftDirty(false);
-    setConflicts(preview.conflicts ?? []);
-    const diff = preview.diff ?? { added: [], removed: [], changed: [] };
+    setConflicts(preview.conflicts);
+    const diff = preview.diff;
     setBackendDiff(diff);
-    setBackendPending(
-      typeof preview.pending_count === "number"
-        ? preview.pending_count
-        : diff.added.length + diff.removed.length + diff.changed.length,
-    );
+    setBackendPending(preview.pending_count);
     setGroups(groupsFromServer);
     setRemovedIds(removedArr);
 
@@ -200,7 +196,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       if (preview.conflicts.length > 0) {
         setConflicts(preview.conflicts);
         setBackendPending(preview.pending_count);
-        setBackendDiff(preview.diff ?? { added: [], removed: [], changed: [] });
+        setBackendDiff(preview.diff);
         throw new Error(preview.conflicts.join("; "));
       }
       applyPreview(preview);

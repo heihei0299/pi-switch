@@ -38,6 +38,8 @@ export interface Upstream {
   headers?: Record<string, string>;
   weight?: number;
   name?: string;
+  requestRetry?: number;
+  disableCooling?: boolean;
   /** 渠道分区模型池（与 Go Upstream.models 同步） */
   models?: ModelEntry[];
   /** 渠道分区暴露集（与 Go Upstream.exposedModels 同步） */
@@ -64,6 +66,9 @@ export interface ProviderProfile {
   updatedAt?: string;
   modelMap?: Record<string, unknown>;
   userAgent?: string;
+  requestRetry?: number;
+  disableCooling?: boolean;
+  requestScopedErrors?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 }
 
@@ -290,9 +295,9 @@ export interface GatewayPreview {
   conflicts: string[];
   diagnostics?: Array<Record<string, unknown>>;
   pending_count: number;
-  diff?: GatewayDiff;
-  groups?: PreviewGroup[];
-  removed?: string[];
+  diff: GatewayDiff;
+  groups: PreviewGroup[];
+  removed: string[];
   enrich?: PreviewEnrich;
 }
 

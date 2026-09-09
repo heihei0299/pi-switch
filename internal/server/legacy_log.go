@@ -2,12 +2,18 @@ package server
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -16,18 +22,12 @@ import (
 
 // Legacy request-log compatibility (旧版本请求日志兼容):
 // Go 重写前请求只追加到 requests.log（旧 camelCase 字段形状）；
-// 新版统计只读 SQLite。本文件在统计查询前把日志历史行幂等导入 SQLite，
+// 新版统计只读 SQLite。启动时在后台把日志历史行幂等导入 SQLite，
 // 新请求则由 logRequest 双写两处。requests.log 本身只读不写回。
 
-type legacyFingerprint struct {
-	size  int64
-	mtime int64
-}
+const legacyBatchSize = 500
 
-var (
-	legacyMu       sync.Mutex
-	legacyImported = map[string]legacyFingerprint{}
-)
+var legacyMu sync.Mutex
 
 // legacyLogPath resolves requests.log next to the active config file:
 // PI_SWITCH_CONFIG dir > ~/.pi-switch/requests.log.
@@ -35,203 +35,272 @@ func legacyLogPath() string {
 	return filepath.Join(filepath.Dir(configPath()), "requests.log")
 }
 
-// ensureLegacyImported imports missing requests.log lines into db.
-// Guarded by file size+mtime fingerprint; on change only the appended
-// tail is rescanned (the log is append-only; shrink triggers a full rescan).
-// Safe to call per query. Missing file or bad lines never fatal.
+// legacySourceIdentity uses the operating-system file identity when it is
+// available. It intentionally excludes size and mtime so appends keep the
+// same migration stream; a replaced file gets a new identity on normal filesystems.
+func legacySourceIdentity(fi os.FileInfo) string {
+	sys := fi.Sys()
+	if sys != nil {
+		value := reflect.ValueOf(sys)
+		if value.Kind() == reflect.Ptr && !value.IsNil() {
+			value = value.Elem()
+		}
+		if value.Kind() != reflect.Struct {
+			return fmt.Sprintf("%T", sys)
+		}
+		parts := make([]string, 0, 5)
+		for _, name := range []string{"Dev", "Ino", "VolumeSerialNumber", "FileIndexHigh", "FileIndexLow"} {
+			field := value.FieldByName(name)
+			if field.IsValid() && field.CanInterface() {
+				parts = append(parts, fmt.Sprintf("%s=%v", name, field.Interface()))
+			}
+		}
+		if len(parts) > 0 {
+			return fmt.Sprintf("%T:%s", sys, strings.Join(parts, ","))
+		}
+		return fmt.Sprintf("%T", sys)
+	}
+	return fmt.Sprintf("mtime:%d", fi.ModTime().UnixNano())
+}
+
+func legacyMigrationKey(path string, fi os.FileInfo) store.LegacyMigrationKey {
+	return store.LegacyMigrationKey{
+		Path:     path,
+		Identity: legacySourceIdentity(fi),
+		Version:  store.LegacyMigrationVersion,
+	}
+}
+
+func legacyFileHash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+// ensureLegacyImported is retained as the startup adapter. Stats and export
+// handlers must not call it: reads are SQLite-only after IMP-10.
 func ensureLegacyImported(db *sql.DB) {
-	path := legacyLogPath()
+	if _, _, err := importLegacyPath(db, legacyLogPath()); err != nil {
+		log.Printf("legacy requests.log import: %v", err)
+	}
+}
+
+// ImportLegacyNow runs the migration synchronously for an explicit command or
+// deterministic tests. It is separate from the asynchronous startup adapter.
+func ImportLegacyNow() error {
+	db, err := store.GetDB()
+	if err != nil {
+		return err
+	}
+	_, _, err = importLegacyPath(db, legacyLogPath())
+	return err
+}
+
+func importLegacyPath(db *sql.DB, path string) (imported, skipped int, err error) {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {
-		return
+		if os.IsNotExist(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
 	}
-	fp := legacyFingerprint{size: fi.Size(), mtime: fi.ModTime().UnixNano()}
-	// Keep the fingerprint check, import, and update in one critical section.
-	// Startup and Stats may call this concurrently; the query must wait for the
-	// in-flight import instead of racing a second SQLite writer and seeing zero rows.
+
+	// The process mutex prevents duplicate local work; the store CAS protects
+	// the same source when two processes share the database.
 	legacyMu.Lock()
 	defer legacyMu.Unlock()
-	if last, ok := legacyImported[path]; ok && last == fp {
-		return
+
+	key := legacyMigrationKey(path, fi)
+	hash, err := legacyFileHash(path)
+	if err != nil {
+		return 0, 0, err
 	}
-	offset := int64(0)
-	if last, ok := legacyImported[path]; ok && last.size < fp.size {
-		offset = last.size
+	state, err := store.EnsureLegacyMigration(db, key, fi.Size(), fi.ModTime().UnixNano(), hash)
+	if err != nil {
+		return 0, 0, err
 	}
-	imported, skipped, completed := importLegacyLog(db, path, offset)
-	if completed {
-		legacyImported[path] = fp
-		if imported+skipped > 0 {
-			log.Printf("legacy requests.log import: %d imported, %d skipped (%s)", imported, skipped, path)
+	if state.CommittedOffset > fi.Size() || state.Hash != "" && state.Hash != hash && state.Size == fi.Size() {
+		// The source was truncated or replaced in place. Preserve the old
+		// stream and start a new durable generation instead of silently
+		// reusing its committed offset.
+		key.Identity = fmt.Sprintf("%s:replaced:%s", key.Identity, hash)
+		state, err = store.EnsureLegacyMigration(db, key, fi.Size(), fi.ModTime().UnixNano(), hash)
+		if err != nil {
+			return 0, 0, err
 		}
 	}
+	if state.Completed && state.CommittedOffset >= fi.Size() {
+		return 0, 0, nil
+	}
+	imported, skipped, err = importLegacyLog(db, path, key, state, fi, hash)
+	if err != nil {
+		_ = store.MarkLegacyMigrationFailed(db, key, fi.Size(), fi.ModTime().UnixNano(), state.CommittedOffset)
+	}
+	return imported, skipped, err
 }
 
-// importLegacyLog scans path from offset and inserts absent rows.
-// Returns imported/skipped counts; completed=false on read error
-// (fingerprint must not advance, so the next call retries).
-// The write side is wrapped in a single transaction for 23k-line
-// imports so the daemon health window is not the bottleneck; when
-// called in the background (ImportLegacyOnStartup) the listener is
-// already up, but the transaction still avoids 23k autocommits.
-func importLegacyLog(db *sql.DB, path string, offset int64) (imported, skipped int, completed bool) {
+// importLegacyLog commits complete-line batches together with their durable
+// offsets. A final line without a newline is left uncommitted so a later append
+// can resume it without losing or duplicating data.
+func importLegacyLog(db *sql.DB, path string, key store.LegacyMigrationKey, state store.LegacyMigrationState, fi os.FileInfo, sourceHash string) (imported, skipped int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, err
 	}
 	defer f.Close()
-	if offset > 0 {
-		if _, err := f.Seek(offset, 0); err != nil {
-			offset = 0
-			if _, err := f.Seek(0, 0); err != nil {
-				return 0, 0, false
-			}
+	if state.CommittedOffset > 0 {
+		if _, err := f.Seek(state.CommittedOffset, io.SeekStart); err != nil {
+			return 0, 0, err
 		}
 	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	completed = true
-	tx, err := db.Begin()
-	if err != nil {
-		tx = nil
+
+	reader := bufio.NewReaderSize(f, 64*1024)
+	offset := state.CommittedOffset
+	batchStart := offset
+	batchLines := 0
+	badLines := int64(0)
+	batch := make([]store.LegacyRequest, 0, legacyBatchSize)
+
+	flush := func(completed bool) error {
+		if batchLines == 0 && !completed {
+			return nil
+		}
+		if err := store.CommitLegacyBatch(db, key, fi.Size(), fi.ModTime().UnixNano(), batchStart, offset, batch, badLines, completed, sourceHash); err != nil {
+			return err
+		}
+		imported += len(batch)
+		skipped += int(badLines)
+		batch = batch[:0]
+		badLines = 0
+		batchLines = 0
+		batchStart = offset
+		return nil
 	}
-	if tx != nil {
-		defer func() {
-			if completed {
-				_ = tx.Commit()
+
+	for {
+		lineStart := offset
+		raw, readErr := reader.ReadBytes('\n')
+		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return imported, skipped, readErr
+		}
+		if errors.Is(readErr, io.EOF) {
+			// A partial tail is deliberately not counted or advanced.
+			if err := flush(false); err != nil {
+				return imported, skipped, err
+			}
+			if offset < fi.Size() {
+				if err := store.CommitLegacyBatch(db, key, fi.Size(), fi.ModTime().UnixNano(), offset, offset, nil, 0, false, sourceHash); err != nil {
+					return imported, skipped, err
+				}
+			}
+			return imported, skipped, nil
+		}
+
+		offset += int64(len(raw))
+		batchLines++
+		line := strings.TrimSpace(string(bytes.TrimSuffix(raw, []byte{'\n'})))
+		if line != "" {
+			var value map[string]interface{}
+			if json.Unmarshal([]byte(line), &value) != nil {
+				badLines++
+			} else if row, ok := parseLegacyRequest(value, lineStart); ok {
+				batch = append(batch, row)
 			} else {
-				_ = tx.Rollback()
+				badLines++
 			}
-		}()
-	}
-	execDB := func(q string, args ...interface{}) (int64, error) {
-		var res sql.Result
-		var e error
-		if tx != nil {
-			res, e = tx.Exec(q, args...)
-		} else {
-			res, e = db.Exec(q, args...)
 		}
-		if e != nil {
-			return 0, e
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
-	}
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var v map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &v); err != nil {
-			skipped++
-			continue
-		}
-		ts := legacyStr(v, "ts")
-		if ts == "" {
-			skipped++
-			continue
-		}
-		b, hasSuccess := v["ok"].(bool)
-		if !hasSuccess {
-			skipped++
-			continue
-		}
-		provider := legacyStr(v, "provider")
-		model := legacyStr(v, "model")
-		pt := legacyInt(v, "promptTokens")
-		ct := legacyInt(v, "completionTokens")
-		cached := legacyInt(v, "cachedTokens")
-		reasoning := legacyInt(v, "reasoningTokens")
-		var costVal interface{}
-		if f, ok := v["costTotal"].(float64); ok {
-			costVal = f
-		}
-		convID := legacyStr(v, "conversationId")
-		convName := legacyStr(v, "conversationName")
-		succ := 0
-		if b {
-			succ = 1
-		}
-		n, err := execDB(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms)
-			SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (
-				SELECT 1 FROM requests WHERE ts=? AND provider=? AND model=? AND prompt_tokens=? AND completion_tokens=?
-			)`, ts, provider, model, succ, pt, ct, cached, reasoning, costVal, convID, convName, nil,
-			ts, provider, model, pt, ct)
-		if err != nil {
-			skipped++
-			continue
-		}
-		if n == 1 {
-			imported++
-		} else {
-			skipped++
+		if batchLines >= legacyBatchSize {
+			if err := flush(false); err != nil {
+				return imported, skipped, err
+			}
 		}
 	}
-	if err := sc.Err(); err != nil {
-		completed = false
+
+	if err := flush(true); err != nil {
+		return imported, skipped, err
 	}
-	return imported, skipped, completed
+	return imported, skipped, nil
 }
 
-func legacyStr(v map[string]interface{}, keys ...string) string {
-	for _, k := range keys {
-		if s, ok := v[k].(string); ok {
-			return s
+func parseLegacyRequest(value map[string]interface{}, offset int64) (store.LegacyRequest, bool) {
+	ts := legacyString(value, "ts")
+	success, ok := value["ok"].(bool)
+	if ts == "" || !ok {
+		return store.LegacyRequest{}, false
+	}
+	return store.LegacyRequest{
+		Offset:           offset,
+		TS:               ts,
+		Provider:         legacyString(value, "provider"),
+		Model:            legacyString(value, "model"),
+		Success:          success,
+		PromptTokens:     legacyIntPointer(value, "promptTokens", "prompt_tokens"),
+		CompletionTokens: legacyIntPointer(value, "completionTokens", "completion_tokens"),
+		CachedTokens:     legacyIntPointer(value, "cachedTokens", "cached_tokens"),
+		ReasoningTokens:  legacyIntPointer(value, "reasoningTokens", "reasoning_tokens"),
+		Cost:             legacyFloatPointer(value, "costTotal", "cost", "total_cost"),
+		ConversationID:   legacyOptionalString(value, "conversationId", "conversation_id"),
+		ConversationName: legacyOptionalString(value, "conversationName", "conversation_name"),
+		LatencyMs:        legacyIntPointer(value, "latencyMs", "latency_ms"),
+	}, true
+}
+
+func legacyString(value map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if text, ok := value[key].(string); ok {
+			return text
 		}
 	}
 	return ""
 }
 
-func legacyInt(v map[string]interface{}, keys ...string) int64 {
-	for _, k := range keys {
-		if f, ok := v[k].(float64); ok {
-			return int64(f)
-		}
+func legacyOptionalString(value map[string]interface{}, keys ...string) *string {
+	text := legacyString(value, keys...)
+	if text == "" {
+		return nil
 	}
-	return 0
+	return &text
 }
 
-// insertLegacyRow maps one old-shape log line into requests.
-// Returns (inserted, valid): valid=false for rows without the minimum
-// usable fields (ts + ok); inserted=false for natural-key duplicates.
-func insertLegacyRow(db *sql.DB, v map[string]interface{}) (inserted, valid bool) {
-	ts := legacyStr(v, "ts")
-	if ts == "" {
-		return false, false
+func legacyIntPointer(value map[string]interface{}, keys ...string) *int64 {
+	for _, key := range keys {
+		switch number := value[key].(type) {
+		case float64:
+			converted := int64(number)
+			return &converted
+		case json.Number:
+			converted, err := number.Int64()
+			if err == nil {
+				return &converted
+			}
+		}
 	}
-	b, hasSuccess := v["ok"].(bool)
-	success := b
-	if !hasSuccess {
-		return false, false
+	return nil
+}
+
+func legacyFloatPointer(value map[string]interface{}, keys ...string) *float64 {
+	for _, key := range keys {
+		switch number := value[key].(type) {
+		case float64:
+			return &number
+		case json.Number:
+			converted, err := number.Float64()
+			if err == nil {
+				return &converted
+			}
+		}
 	}
-	provider := legacyStr(v, "provider")
-	model := legacyStr(v, "model")
-	pt := legacyInt(v, "promptTokens")
-	ct := legacyInt(v, "completionTokens")
-	cached := legacyInt(v, "cachedTokens")
-	reasoning := legacyInt(v, "reasoningTokens")
-	var costVal interface{}
-	if f, ok := v["costTotal"].(float64); ok {
-		costVal = f
-	}
-	convID := legacyStr(v, "conversationId")
-	convName := legacyStr(v, "conversationName")
-	succ := 0
-	if success {
-		succ = 1
-	}
-	res, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms)
-		SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (
-			SELECT 1 FROM requests WHERE ts=? AND provider=? AND model=? AND prompt_tokens=? AND completion_tokens=?
-		)`, ts, provider, model, succ, pt, ct, cached, reasoning, costVal, convID, convName, nil,
-		ts, provider, model, pt, ct)
-	if err != nil {
-		return false, true
-	}
-	n, _ := res.RowsAffected()
-	return n == 1, true
+	return nil
 }
 
 // appendLegacyLog appends one old-shape JSON line to requests.log.
@@ -289,10 +358,8 @@ func requestURLOf(resp *http.Response) string {
 	return resp.Request.URL.String()
 }
 
-// ImportLegacyOnStartup imports requests.log history once at process start.
-// Runs in a background goroutine so it never blocks the HTTP listener
-// (23k lines with per-row INSERT would exceed the daemon health window).
-// Failures are swallowed so startup never breaks.
+// ImportLegacyOnStartup imports requests.log asynchronously. The listener is
+// allowed to become healthy before the migration completes.
 func ImportLegacyOnStartup() {
 	go func() {
 		db, err := store.GetDB()

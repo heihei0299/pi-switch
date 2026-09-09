@@ -68,7 +68,15 @@ describe("supplier-gateway frontend isolation (#03)", () => {
     // Preview returns current with extraKept and proposed without it; merge should preserve it but not override api
     const currentWithExtra = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1", custom: "keep" }], proxy: false, extraKept: 1 } as any;
     const proposed = { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "p/m1", input: ["text"] }], proxy: false } as any;
-    vi.spyOn(api, "previewGateway").mockResolvedValue({ current: currentWithExtra, proposed, conflicts: [], pending_count: 1 } as any);
+    vi.spyOn(api, "previewGateway").mockResolvedValue({
+      current: currentWithExtra,
+      proposed,
+      conflicts: [],
+      pending_count: 1,
+      diff: { added: [], removed: [], changed: [] },
+      groups: [],
+      removed: [],
+    } as any);
     render(
       <LanguageProvider configLang="en">
         <ToastProvider>

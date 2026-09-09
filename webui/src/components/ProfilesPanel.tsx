@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
-import { draftFromEntry, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
+import { draftFromEntry, entryFromDraft, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
+import { channelNames, exposedForChannel, materializeMainChannel, modelsForChannel, parseModelsDraft, useProfileDraft } from "../hooks/useProfileDraft";
 import { JsonEditor } from "./JsonEditor";
 import { api } from "../api";
 import { useI18n } from "../i18n";
@@ -41,8 +42,28 @@ const SPOOFS = [
   { value: "gemini", label: "gemini" },
 ];
 
-function defaultModel(id: string): ModelEntry {
-  return { id, input: ["text"], contextWindow: 128000, maxTokens: 16384 };
+type UpstreamForm = Omit<Upstream, "api" | "responsesMode" | "weight" | "name" | "headers" | "models" | "exposedModels"> & {
+  key: string;
+  api: string;
+  responsesMode: ResponsesMode;
+  weight: string;
+  name: string;
+  headers: Record<string, string>;
+  models: ModelEntry[];
+  exposedModels: string[];
+};
+
+function emptyProfile(): ProviderProfile {
+  return {
+    api: "openai-completions",
+    responsesMode: "auto",
+    baseUrl: "",
+    apiKey: "",
+    proxy: false,
+    headers: {},
+    compat: {},
+    upstreams: [],
+  };
 }
 
 export function ProfilesPanel({
@@ -222,75 +243,72 @@ function ProfileForm({
   const presets = usePresets();
 
   const [name, setName] = useState(original ?? "");
-  const [apiType, setApiType] = useState(existing?.api ?? "openai-completions");
-  const [responsesMode, setResponsesMode] = useState<ResponsesMode>(existing?.responsesMode ?? "auto");
-  const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? "");
-  const [apiKey, setApiKey] = useState(existing?.apiKey ?? "");
-  const [spoof, setSpoof] = useState(existing?.userAgent ?? "");
-  const [proxy, setProxy] = useState(existing?.proxy ?? false);
-  const [preset, setPreset] = useState(existing?.preset ?? "");
-  const [modelsDevProvider, setModelsDevProvider] = useState(existing?.modelsDevProvider ?? "");
-  const [headers, setHeaders] = useState<Record<string, string>>(() => {
-    const h = (existing as any)?.headers;
-    if (h && typeof h === "object" && !Array.isArray(h)) return h as Record<string, string>;
-    return {};
-  });
-  const [compat, setCompat] = useState<Record<string, unknown>>(() => {
-    const c = (existing as any)?.compat;
-    if (c && typeof c === "object" && !Array.isArray(c)) return c as Record<string, unknown>;
-    return {};
-  });
-  // Upstream 列表：基于 has_upstreams/resolved_upstreams 回退，单字段兼容
-  const [upstreams, setUpstreams] = useState<Array<{ key: string; baseUrl: string; apiKey: string; api: string; responsesMode: ResponsesMode; weight: string; name: string; headers: Record<string, string>; models: ModelEntry[]; exposedModels: string[] }>>(() => {
-    const existingUps = (existing as any)?.upstreams as Upstream[] | undefined;
-    if (existingUps && existingUps.length > 0) {
-      return existingUps.map((u, idx) => ({
-        key: `us-${idx}-${u.baseUrl.slice(0, 8)}`,
-        baseUrl: u.baseUrl ?? "",
-        apiKey: u.apiKey ?? "",
-        api: u.api ?? existing?.api ?? "openai-completions",
-        responsesMode: u.responsesMode ?? existing?.responsesMode ?? "auto",
-        weight: u.weight != null ? String(u.weight) : "",
-        name: u.name ?? "",
-        headers: (u.headers as Record<string, string>) ?? {},
-        models: u.models ?? [],
-        exposedModels: u.exposedModels ?? [],
-      }));
-    }
-    return [];
-  });
-  const [modelIds, setModelIds] = useState(
-    (existing?.upstreams?.[0]?.models ?? []).map((m) => m.id).join("\n"),
+  const draft = useProfileDraft(existing ?? emptyProfile());
+  const value = draft.state.value;
+  const apiType = value.api;
+  const responsesMode = value.responsesMode ?? "auto";
+  const baseUrl = value.baseUrl;
+  const apiKey = value.apiKey;
+  const spoof = value.userAgent ?? "";
+  const proxy = value.proxy;
+  const preset = value.preset ?? "";
+  const modelsDevProvider = value.modelsDevProvider ?? "";
+  const headers = value.headers ?? {};
+  const compat = value.compat ?? {};
+  const upstreams = useMemo<UpstreamForm[]>(
+    () => (value.upstreams ?? []).map((upstream, index) => ({
+      ...upstream,
+      key: `us-${index}`,
+      baseUrl: upstream.baseUrl ?? "",
+      apiKey: upstream.apiKey ?? "",
+      api: upstream.api ?? value.api,
+      responsesMode: upstream.responsesMode ?? value.responsesMode ?? "auto",
+      weight: upstream.weight != null ? String(upstream.weight) : "",
+      name: upstream.name ?? "",
+      headers: upstream.headers ?? {},
+      models: upstream.models ?? [],
+      exposedModels: upstream.exposedModels ?? [],
+    })),
+    [value.upstreams, value.api, value.responsesMode],
   );
+  const legacyModels = ((value as ProviderProfile & { models?: ModelEntry[] }).models ?? []).map((model) => model);
+  const modelIds = legacyModels.map((model) => model.id).join("\n");
+  const setField = (field: string, fieldValue: unknown) =>
+    draft.dispatch({ type: "setProfileField", field, value: fieldValue });
+  const setApiType = (next: string) => setField("api", next);
+  const setResponsesMode = (next: ResponsesMode) => setField("responsesMode", next);
+  const setBaseUrl = (next: string) => setField("baseUrl", next);
+  const setApiKey = (next: string) => setField("apiKey", next);
+  const setSpoof = (next: string) => setField("userAgent", next || undefined);
+  const setProxy = (next: boolean) => setField("proxy", next);
+  const setPreset = (next: string) => setField("preset", next || undefined);
+  const setModelsDevProvider = (next: string) => setField("modelsDevProvider", next || undefined);
+  const setHeaders = (next: Record<string, string>) => setField("headers", next);
+  const setCompat = (next: Record<string, unknown>) => setField("compat", next);
+  const setUpstreams = (next: UpstreamForm[] | ((prev: UpstreamForm[]) => UpstreamForm[])) => {
+    const resolved = typeof next === "function" ? next(upstreams) : next;
+    setField("upstreams", resolved.map(({ key: _key, weight, name: upstreamName, ...upstream }) => ({
+      ...upstream,
+      name: upstreamName.trim() || undefined,
+      weight: weight.trim() ? Number(weight) : undefined,
+      headers: Object.keys(upstream.headers ?? {}).length ? upstream.headers : undefined,
+    })));
+  };
+  const setModelIds = (next: string) => {
+    const ids = next.split(/[\n,]/).map((id) => id.trim()).filter(Boolean);
+    const existingById = new Map(legacyModels.map((model) => [model.id, model]));
+    setField("models", ids.map((id) => existingById.get(id) ?? ({ id } as ModelEntry)));
+  };
   const debouncedSpoof = useDebounce(spoof, 300);
   const debouncedHeaders = useDebounce(headers, 300);
-  const previewHeaders = useMemo(() => mergePreviewHeaders(debouncedHeaders, upstreams[0]?.headers as Record<string, string> | undefined), [debouncedHeaders, upstreams]);
+  const previewHeaders = useMemo(() => mergePreviewHeaders(debouncedHeaders, upstreams[0]?.headers), [debouncedHeaders, upstreams]);
   const previewUpstreamAggregated = useMemo(() => {
-    const ups = upstreams.length > 0 ? upstreams : [{ baseUrl, apiKey, headers } as any];
-    const firstHeaders = ups[0]?.headers as Record<string, string> | undefined;
+    const firstHeaders = upstreams[0]?.headers;
     return mergePreviewHeaders(headers, firstHeaders);
-  }, [headers, upstreams, baseUrl, apiKey]);
+  }, [headers, upstreams]);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
-  const [text, setText] = useState<string>(() => {
-    const preview: Record<string, unknown> = {
-      api: existing?.api ?? "openai-completions",
-      responsesMode: existing?.responsesMode ?? "auto",
-      baseUrl: existing?.baseUrl ?? "",
-      apiKey: existing?.apiKey ?? "",
-      ...(existing?.headers && Object.keys(existing.headers as any).length ? { headers: existing.headers } : {}),
-      ...(existing?.compat && Object.keys(existing.compat as any).length ? { compat: existing.compat } : {}),
-      ...(existing?.upstreams ? { upstreams: existing.upstreams } : {}),
-      ...(existing?.proxy ? { proxy: existing.proxy } : {}),
-      ...(existing?.preset ? { preset: existing.preset } : {}),
-      ...(existing?.modelsDevProvider ? { modelsDevProvider: existing.modelsDevProvider } : {}),
-      ...(existing?.userAgent ? { userAgent: existing.userAgent } : {}),
-    };
-    try {
-      return JSON.stringify(preview, null, 2);
-    } catch {
-      return "{}";
-    }
-  });
+  const text = draft.state.rawText;
+  const setText = (next: string) => draft.dispatch({ type: "setRawText", text: next });
   const jsonValidation = useMemo(() => validateProfileJson(text), [text]);
   const profileErrorLine = useMemo(() => {
     try {
@@ -308,43 +326,10 @@ function ProfileForm({
     }
   }, [text]);
   function switchToRaw() {
-    const preview: Record<string, unknown> = {
-      api: apiType,
-      responsesMode,
-      baseUrl: baseUrl.trim(),
-      apiKey: apiKey.trim(),
-      ...(Object.keys(headers).length ? { headers } : {}),
-      ...(Object.keys(compat).length ? { compat } : {}),
-      ...(upstreams.length ? { upstreams: upstreams.map((u) => ({ api: u.api || apiType, responsesMode: u.responsesMode || "auto", baseUrl: u.baseUrl.trim(), apiKey: u.apiKey.trim(), headers: Object.keys(u.headers).length ? u.headers : undefined, weight: u.weight.trim() ? Number(u.weight) : undefined, name: u.name.trim() || undefined, models: u.models, exposedModels: u.exposedModels })) } : {}),
-      ...(proxy ? { proxy } : {}),
-      ...(preset ? { preset } : {}),
-      ...(modelsDevProvider.trim() ? { modelsDevProvider: modelsDevProvider.trim() } : {}),
-      ...(spoof ? { userAgent: spoof } : {}),
-    };
-    try { setText(JSON.stringify(preview, null, 2)); } catch { setText("{}"); }
     setMode("raw");
   }
   function switchToStructured() {
     if (!jsonValidation.ok || !jsonValidation.value) return;
-    const v = jsonValidation.value as Record<string, unknown>;
-    if (typeof v.api === "string") setApiType(v.api);
-    if (typeof v.responsesMode === "string") setResponsesMode(v.responsesMode as ResponsesMode);
-    if (typeof v.baseUrl === "string") setBaseUrl(v.baseUrl);
-    if (typeof v.apiKey === "string") setApiKey(v.apiKey);
-    if (v.headers && typeof v.headers === "object" && !Array.isArray(v.headers)) setHeaders(v.headers as Record<string, string>);
-    else if (!v.headers) setHeaders({});
-    if (v.compat && typeof v.compat === "object" && !Array.isArray(v.compat)) setCompat(v.compat as Record<string, unknown>);
-    else if (!v.compat) setCompat({});
-    if (Array.isArray(v.upstreams)) {
-      setUpstreams((v.upstreams as Upstream[]).map((u, idx) => ({ key: `us-${idx}-${String(u.baseUrl).slice(0,8)}`, baseUrl: u.baseUrl ?? "", apiKey: u.apiKey ?? "", api: u.api ?? (v.api as string) ?? "openai-completions", responsesMode: u.responsesMode ?? (v.responsesMode as ResponsesMode) ?? "auto", weight: u.weight != null ? String(u.weight) : "", name: u.name ?? "", headers: u.headers ?? {}, models: u.models ?? [], exposedModels: u.exposedModels ?? [] })));
-    } else if (!v.upstreams) setUpstreams([]);
-    if (typeof v.proxy === "boolean") setProxy(v.proxy);
-    if (typeof v.preset === "string") setPreset(v.preset);
-    else if (!v.preset) setPreset("");
-    if (typeof v.modelsDevProvider === "string") setModelsDevProvider(v.modelsDevProvider);
-    else if (!v.modelsDevProvider) setModelsDevProvider("");
-    if (typeof v.userAgent === "string") setSpoof(v.userAgent);
-    else if (!v.userAgent) setSpoof("");
     setMode("structured");
   }
   function formatProfileJson() {
@@ -363,104 +348,45 @@ function ProfileForm({
   }
 
   function build(): ProviderProfile {
-    const ids = modelIds
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    // A new profile starts with one named channel; existing channel pools remain
-    // owned by their channel and are edited in the Models modal.
-    const prevById = new Map<string, ModelEntry>();
-    const models = ids.map((id) => prevById.get(id) ?? defaultModel(id));
-    const prevIds = new Set<string>();
-    const filteredOld: string[] = [];
-    const newIds = ids.filter((id) => !prevIds.has(id));
-    const exposedModels = [...new Set([...filteredOld, ...newIds])];
-    let upstreamPayload: Upstream[];
-    let effectiveBaseUrl = baseUrl.trim();
-    let effectiveApiKey = apiKey.trim();
-    let effectiveHeaders: Record<string, string> | undefined = Object.keys(headers).length ? headers : undefined;
-    if (upstreams.length > 0) {
-      upstreamPayload = upstreams.map((u) => ({
-        api: u.api || apiType,
-        responsesMode: u.responsesMode || "auto",
-        baseUrl: u.baseUrl.trim(),
-        apiKey: u.apiKey.trim(),
-        headers: Object.keys(u.headers).length ? u.headers : undefined,
-        weight: u.weight.trim() ? Number(u.weight) : undefined,
-        name: u.name.trim() || undefined,
-        models: u.models,
-        exposedModels: u.exposedModels,
-      } as Upstream)).filter((u) => u.baseUrl || u.apiKey);
-      if (upstreamPayload.length === 0) upstreamPayload = [];
-    } else {
-      upstreamPayload = [{ api: apiType, responsesMode, baseUrl: effectiveBaseUrl, apiKey: effectiveApiKey, headers: effectiveHeaders, name: "main", models, exposedModels }];
+    const next = JSON.parse(JSON.stringify(draft.state.value)) as ProviderProfile & {
+      models?: ModelEntry[];
+      exposedModels?: string[];
+    };
+    if (!next.upstreams || next.upstreams.length === 0) {
+      next.upstreams = [{
+        name: "main",
+        api: next.api,
+        responsesMode: next.responsesMode ?? "auto",
+        baseUrl: next.baseUrl.trim(),
+        apiKey: next.apiKey.trim(),
+        headers: next.headers,
+        models: next.models ?? [],
+        exposedModels: next.exposedModels ?? [],
+      }];
+      delete next.models;
+      delete next.exposedModels;
     }
-    return {
-      ...(existing ?? {}),
-      api: apiType,
-      responsesMode,
-      baseUrl: effectiveBaseUrl,
-      apiKey: effectiveApiKey,
-      upstreams: upstreamPayload,
-      proxy,
-      preset: preset || undefined,
-      modelsDevProvider: modelsDevProvider.trim() || undefined,
-      userAgent: spoof || undefined,
-      headers: effectiveHeaders,
-      compat: Object.keys(compat).length ? compat : undefined,
-      updatedAt: new Date().toISOString(),
-    } as unknown as ProviderProfile;
+    next.updatedAt = new Date().toISOString();
+    return next;
   }
 
   async function saveLocal() {
     const trimmed = name.trim();
     if (!trimmed) throw new Error(t("name required"));
-    if (mode === "raw") {
-      if (!jsonValidation.ok || !jsonValidation.value) throw new Error(jsonValidation.error ?? "Invalid JSON");
-      const v = jsonValidation.value as Record<string, unknown>;
-      const rawApi = v.api as string;
-      const rawMode = (v.responsesMode as ResponsesMode) ?? "auto";
-      const modeError2 = responsesModeError(rawApi, rawMode);
-      if (modeError2) throw new Error(t(modeError2));
-      const profile = {
-        ...(existing ?? {}),
-        api: rawApi,
-        responsesMode: rawMode,
-        baseUrl: v.baseUrl as string,
-        apiKey: (v.apiKey as string) ?? "",
-        upstreams: v.upstreams as Upstream[] | undefined,
-        headers: v.headers as Record<string, string> | undefined,
-        compat: v.compat as Record<string, unknown> | undefined,
-        proxy: (v.proxy as boolean) ?? false,
-        preset: v.preset as string | undefined,
-        modelsDevProvider: v.modelsDevProvider as string | undefined,
-        userAgent: v.userAgent as string | undefined,
-        updatedAt: new Date().toISOString(),
-      } as unknown as ProviderProfile;
-      if (original) {
-        await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
-      } else {
-        await api.addProfile(trimmed, profile);
-      }
-      try { await api.getState(); } catch {}
-      await mutateAfterProfilePut();
-      toast("ok", "已保存到本地，需到网关发布");
-      await onSaved();
-      return;
+    if (mode === "raw" && (!jsonValidation.ok || !jsonValidation.value)) {
+      throw new Error(jsonValidation.error ?? "Invalid JSON");
     }
-    const modeError = responsesModeError(apiType, responsesMode);
+    const modeError = responsesModeError(value.api, value.responsesMode ?? "auto");
     if (modeError) throw new Error(t(modeError));
     const profile = build();
     // 渠道名称前端先行校验：与后端 isValidChannelName 同口径，避免整单 400 才暴露问题。
-    {
-      const rule = /^[A-Za-z0-9-_]{1,32}$/;
-      const seenCh = new Set<string>();
-      for (const u of profile.upstreams ?? []) {
-        const n = (u.name ?? "").trim();
-        if (!rule.test(n)) throw new Error(`渠道名称必填且仅限字母数字/-/_（1-32字符），当前：${n || "(空)"}`);
-        if (seenCh.has(n)) throw new Error(`渠道名称重复：${n}`);
-        seenCh.add(n);
-      }
+    const rule = /^[A-Za-z0-9-_]{1,32}$/;
+    const seenCh = new Set<string>();
+    for (const u of profile.upstreams ?? []) {
+      const n = (u.name ?? "").trim();
+      if (!rule.test(n)) throw new Error(`渠道名称必填且仅限字母数字/-/_（1-32字符），当前：${n || "(空)"}`);
+      if (seenCh.has(n)) throw new Error(`渠道名称重复：${n}`);
+      seenCh.add(n);
     }
     if (original) {
       await api.updateProfile(trimmed, profile, original !== trimmed ? original : undefined);
@@ -702,59 +628,24 @@ function ModelsModal({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
-  // 正常配置按具名 channel 编辑；旧单渠道配置临时映射到 main，保存时由后端完成迁移。
-  const legacySingleChannel = useMemo(() => {
-    const ups = profile.upstreams ?? [];
-    return ups.length === 0 || (ups.length === 1 && !(ups[0].name ?? "").trim());
-  }, [profile]);
-  const channelNames = useMemo(() => {
-    const ups = profile.upstreams ?? [];
-    if (legacySingleChannel) return ["main"];
-    const names = ups.map((u) => (u.name ?? "").trim());
-    if (names.some((n) => !n)) return [];
-    return names;
-  }, [profile, legacySingleChannel]);
-  const [activeChannel, setActiveChannel] = useState<string>(() => "");
-  const [pools, setPools] = useState<Record<string, { drafts: ModelDraft[]; exposed: Set<string> }>>(() => {
-    const init: Record<string, { drafts: ModelDraft[]; exposed: Set<string> }> = {};
-    const ups = profile.upstreams ?? [];
-    if (legacySingleChannel) {
-      const u = ups[0];
-      const models = u?.models ?? ((profile as any).models ?? []);
-      const exposedModels = u?.exposedModels ?? ((profile as any).exposedModels ?? []);
-      init.main = {
-        drafts: models.map((m: ModelEntry) => draftFromEntry(m)),
-        exposed: new Set(exposedModels),
-      };
-    }
-    for (const u of ups) {
-      const n = (u.name ?? "").trim();
-      if (!n || legacySingleChannel) continue;
-      init[n] = {
-        drafts: (u.models ?? []).map((m) => draftFromEntry(m as ModelEntry)),
-        exposed: new Set(u.exposedModels ?? []),
-      };
-    }
-    return init;
-  });
-  const poolKey = activeChannel || channelNames[0] || "";
-  const drafts = pools[poolKey]?.drafts ?? [];
-  const exposed = pools[poolKey]?.exposed ?? new Set<string>();
-  function setDrafts(next: ModelDraft[] | ((prev: ModelDraft[]) => ModelDraft[])) {
-    setPools((prevPools) => {
-      const cur = prevPools[poolKey] ?? { drafts: [], exposed: new Set<string>() };
-      const drafts = typeof next === "function" ? (next as (p: ModelDraft[]) => ModelDraft[])(cur.drafts) : next;
-      return { ...prevPools, [poolKey]: { ...cur, drafts } };
-    });
-  }
-  function setExposed(next: Set<string> | ((prev: Set<string>) => Set<string>)) {
-    setPools((prevPools) => {
-      const cur = prevPools[poolKey] ?? { drafts: [], exposed: new Set<string>() };
-      const exposed = typeof next === "function" ? (next as (p: Set<string>) => Set<string>)(cur.exposed) : next;
-      return { ...prevPools, [poolKey]: { ...cur, exposed } };
-    });
-  }
+  // The reducer owns the profile value. ModelCard receives only a derived
+  // string-friendly row projection and dispatches changes back to that value.
+  const draft = useProfileDraft(materializeMainChannel(profile));
+  const [activeChannel, setActiveChannel] = useState<string>("");
+  const channels = channelNames(draft.state.value);
+  const poolKey = activeChannel || channels[0] || "";
+  const rows = draft.state.rows[poolKey] ?? [];
+  const drafts = rows.map((row) => ({ ...draftFromEntry(row.model, row.key) }));
+  const exposed = exposedForChannel(draft.state.value, poolKey);
   const activeChannelParam = poolKey || undefined;
+  const setDrafts = (next: ModelDraft[] | ((prev: ModelDraft[]) => ModelDraft[])) => {
+    const nextDrafts = typeof next === "function" ? next(drafts) : next;
+    draft.dispatch({ type: "setChannelModels", channel: poolKey, models: nextDrafts.map(entryFromDraft) });
+  };
+  const setExposed = (next: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    const nextExposed = typeof next === "function" ? next(exposed) : next;
+    draft.dispatch({ type: "setExposedSet", channel: poolKey, ids: [...nextExposed] });
+  };
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -775,6 +666,14 @@ function ModelsModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolKey]);
+  useEffect(() => {
+    if (mode !== "structured") return;
+    try {
+      setText(JSON.stringify(drafts.map((d) => modelPreview(d)), null, 2));
+    } catch {
+      setText("[]");
+    }
+  }, [draft.state.value, drafts, mode]);
   const jsonValidation = useMemo(() => validateModelsJson(text), [text]);
   const modelsErrorLine = useMemo(() => {
     try {
@@ -801,25 +700,7 @@ function ModelsModal({
   }
 
   function updateDraft(key: string, next: ModelDraft) {
-    setDrafts((prev) => {
-      const old = prev.find((d) => d.key === key);
-      // If id changed and old id was exposed, move exposure
-      if (old && old.id !== next.id) {
-        const oldId = old.id;
-        const newId = next.id;
-        if (exposed.has(oldId) && newId.trim()) {
-          setExposed((s) => {
-            const ns = new Set(s);
-            ns.delete(oldId);
-            ns.add(newId);
-            return ns;
-          });
-        }
-        // 新模型默认不暴露：此处不自动勾选暴露，需用户显式暴露
-        //（与后端“空 exposed = 不暴露”一致）。
-      }
-      return prev.map((d) => (d.key === key ? next : d));
-    });
+    draft.dispatch({ type: "setModel", channel: poolKey, key, model: entryFromDraft(next) });
   }
 
 
@@ -834,23 +715,31 @@ function ModelsModal({
 
   function switchToStructured() {
     if (!jsonValidation.ok || !jsonValidation.value) return;
-    const prevById = new Map(drafts.map((d) => [d.id, d.key]));
-    const nextDrafts = (jsonValidation.value as unknown as ModelEntry[]).map((m) => {
-      const id = (m as any).id as string || "";
-      const key = prevById.get(id);
-      return draftFromEntry(m as ModelEntry, key);
-    });
-    setDrafts(nextDrafts);
-    setExposed((prev) => {
-      const validIds = new Set(nextDrafts.map((d) => d.id));
-      return new Set([...prev].filter((id) => validIds.has(id)));
+    const nextModels = jsonValidation.value as unknown as ModelEntry[];
+    draft.dispatch({ type: "setChannelModels", channel: poolKey, models: nextModels });
+    const validIds = new Set(nextModels.map((model) => model.id));
+    draft.dispatch({
+      type: "setExposedSet",
+      channel: poolKey,
+      ids: [...exposed].filter((id) => validIds.has(id)),
     });
     setMode("structured");
   }
   function formatModelsJson() {
     try {
-      setText(JSON.stringify(JSON.parse(text), null, 2));
+      const formatted = JSON.stringify(JSON.parse(text), null, 2);
+      setText(formatted);
+      const parsed = parseModelsDraft(formatted);
+      if (parsed.ok) draft.dispatch({ type: "setChannelModels", channel: poolKey, models: parsed.models });
     } catch {}
+  }
+  function updateModelsText(nextText: string) {
+    setText(nextText);
+    const parsed = parseModelsDraft(nextText);
+    if (parsed.ok) {
+      draft.dispatch({ type: "setChannelModels", channel: poolKey, models: parsed.models });
+      setValidationError(null);
+    }
   }
   function addModel() {
     // 如果已存在空 ID 的模型，聚焦该行而非新增，避免连续点击产生大量空行
@@ -869,7 +758,7 @@ function ModelsModal({
       return;
     }
     const d = newModelDraft();
-    setDrafts((prev) => [...prev, d]);
+    draft.dispatch({ type: "appendModel", channel: poolKey, key: d.key, model: entryFromDraft(d) });
     setExpandedKeys((s) => {
       const ns = new Set(s);
       ns.add(d.key);
@@ -882,20 +771,12 @@ function ModelsModal({
   }
 
   function removeDraft(key: string) {
-    const removed = drafts.find((d) => d.key === key);
-    setDrafts((prev) => prev.filter((d) => d.key !== key));
+    draft.dispatch({ type: "removeModel", channel: poolKey, key });
     setExpandedKeys((s) => {
       const ns = new Set(s);
       ns.delete(key);
       return ns;
     });
-    if (removed) {
-      setExposed((s) => {
-        const ns = new Set(s);
-        ns.delete(removed.id);
-        return ns;
-      });
-    }
   }
 
   function toggleExpanded(key: string) {
@@ -969,9 +850,6 @@ function ModelsModal({
     }
   })();
 
-  // 实时校验仅用于保存时阻断与行内高亮，不再全局黄条常驻（避免空行误导）
-  const validationMsg = null as unknown as string | null; // 保留变量名以兼容后续引用，但置空
-
   async function saveLocal() {
     let models: ModelEntry[];
     if (mode === "raw") {
@@ -981,12 +859,8 @@ function ModelsModal({
         toast("err", msg);
         return;
       }
-      models = (jsonValidation.value as unknown as ModelEntry[]).map((p) => {
-        if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
-        if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
-        if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
-        return p as ModelEntry;
-      });
+      models = jsonValidation.value as unknown as ModelEntry[];
+      draft.dispatch({ type: "setChannelModels", channel: poolKey, models });
       setValidationError(null);
     } else {
       const err = validate();
@@ -1001,17 +875,11 @@ function ModelsModal({
         return;
       }
       setValidationError(null);
-      models = drafts.map((d) => {
-        const p = modelPreview(d) as unknown as ModelEntry;
-        if (!p.contextWindow || typeof p.contextWindow !== "number") (p as any).contextWindow = 128000;
-        if (!p.maxTokens || typeof p.maxTokens !== "number") (p as any).maxTokens = 16384;
-        if (!p.input || (Array.isArray(p.input) && p.input.length === 0)) (p as any).input = ["text"];
-        return p;
-      });
+      models = modelsForChannel(draft.state.value, poolKey);
     }
     const res = await api.updateModels(name, models, activeChannelParam);
-    if ((res as any).enrich) {
-      const e = (res as any).enrich;
+    if (res.enrich) {
+      const e = res.enrich;
       const isZh = (lang as string) === "zh";
       const enrichMsg =
         e.failed > 0
@@ -1050,10 +918,10 @@ function ModelsModal({
             )}
           </div>
         </div>
-        {channelNames.length > 0 && (
+        {channels.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="渠道">
-            {channelNames.map((c) => {
-              const n = pools[c]?.drafts.length ?? 0;
+            {channels.map((c) => {
+              const n = modelsForChannel(draft.state.value, c).length;
               const active = poolKey === c;
               return (
                 <button
@@ -1127,7 +995,7 @@ function ModelsModal({
           </>
         ) : (
           <div className="space-y-2">
-            <JsonEditor value={text} onChange={setText} label="models json" className="h-64 sm:h-80" errorLine={modelsErrorLine} />
+            <JsonEditor value={text} onChange={updateModelsText} label="models json" className="h-64 sm:h-80" errorLine={modelsErrorLine} />
             {!jsonValidation.ok && (
               <div className="rounded border border-red-500/30 bg-red-950/40 px-2 py-1 text-xs text-red-200">Invalid JSON: {jsonValidation.error}</div>
             )}

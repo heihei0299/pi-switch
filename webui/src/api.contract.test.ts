@@ -1,0 +1,82 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
+import { ContractError } from "./apiSchema";
+
+function okResponse(body: string) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    text: async () => body,
+  } as Response;
+}
+
+describe("API runtime contract boundary", () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reports the response path when a required state field is missing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      profiles: {},
+      settings: {
+        proxy: { host: "127.0.0.1", port: 43112 },
+        web: { host: "127.0.0.1", port: 43110 },
+      },
+    })));
+
+    await expect(api.getState()).rejects.toMatchObject({
+      path: "state.settings.writeMode",
+      expected: "required string",
+    });
+  });
+
+  it("wraps malformed successful JSON as a contract error at the root", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse("not-json"));
+
+    await expect(api.getState()).rejects.toEqual(new ContractError("$", "valid JSON response"));
+  });
+
+  it("decodes the same build identity exposed by the management API", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      version: "20260908.0.2",
+      buildTime: "2026-09-10T00:00:00Z",
+      commit: "abc123",
+      target: "linux/amd64",
+      dirty: "false",
+      webui: { embedded: true },
+    })));
+
+    const result = await api.buildInfo();
+    expect(result).toMatchObject({ version: "20260908.0.2", commit: "abc123", target: "linux/amd64", dirty: "false" });
+  });
+
+  it("normalizes legacy snake_case stats aliases at the API boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      total_requests: 1,
+      ok_requests: 1,
+      failed_requests: 0,
+      success_rate: "100.0%",
+      by_provider: {
+        demo: {
+          total: 1,
+          ok: 1,
+          failed: 0,
+          prompt_tokens: 12,
+          output_tokens: 4,
+          cached_tokens: 2,
+          reasoning_tokens: 1,
+          cache_rate: "16.7%",
+        },
+      },
+      total_tokens: { input: 12, output: 4, total: 16, cached: 2, reasoning: 1 },
+      recent_requests: [],
+      recent_request_total: 0,
+    })));
+
+    const result = await api.stats("today", 1, 2);
+    expect(result.totalRequests).toBe(1);
+    expect(result.byProvider.demo.promptTokens).toBe(12);
+    expect(result.byProvider.demo.cachedTokens).toBe(2);
+    expect(result.recentRequestTotal).toBe(0);
+  });
+});

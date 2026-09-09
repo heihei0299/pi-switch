@@ -106,5 +106,9 @@ describe("piModel validation — ModelEntry 1:1 with pi models.json", () => {
       const res = validateProfileJson(JSON.stringify({ api: "openai-completions", baseUrl: "https://a/v1", upstreams: [{ baseUrl: "https://b/v1", apiKey: "k" }] }));
       expect(res.ok).toBe(true);
     });
+    it("accepts an upstream-only profile without fabricating a root baseUrl", () => {
+      const res = validateProfileJson(JSON.stringify({ api: "openai-completions", upstreams: [{ baseUrl: "https://b/v1", apiKey: "k" }] }));
+      expect(res.ok).toBe(true);
+    });
   });
 });

@@ -221,13 +221,17 @@ export function validateProfileJson(text: string): ValidateProfileResult {
   if (!(SUPPORTED_APIS as readonly string[]).includes(api)) {
     return { ok: false, error: `profile.api is not supported: ${api}` };
   }
-  // baseUrl is required if not using upstreams? For simplicity require baseUrl always as before, but allow upstreams to supplement
   const baseUrl = obj.baseUrl;
-  if (typeof baseUrl !== "string" || !baseUrl) {
-    return { ok: false, error: "profile.baseUrl is required" };
+  const rawUpstreams = obj.upstreams;
+  const hasNamedUpstreams = Array.isArray(rawUpstreams) && rawUpstreams.length > 0;
+  if (baseUrl !== undefined && (typeof baseUrl !== "string" || !baseUrl)) {
+    return { ok: false, error: "profile.baseUrl is required when present" };
   }
-  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+  if (typeof baseUrl === "string" && baseUrl && !baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     return { ok: false, error: "profile.baseUrl must start with http:// or https://" };
+  }
+  if (!hasNamedUpstreams && typeof baseUrl !== "string") {
+    return { ok: false, error: "profile.baseUrl is required without upstreams" };
   }
   if (hasOwn(obj, "upstreams") && obj.upstreams !== undefined) {
     if (!Array.isArray(obj.upstreams)) return { ok: false, error: "profile.upstreams must be an array" };

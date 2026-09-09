@@ -47,12 +47,35 @@ jobs:
 
       - name: Test Go
         run: go test ./...
+        env:
+          PI_SWITCH_DB: ${{ runner.temp }}/pi-switch-requests.db
+
+      - name: Typecheck WebUI
+        run: npm --prefix webui run typecheck
 
       - name: Test WebUI
         run: npm run test:webui
 
+      - name: Install Playwright Chromium
+        run: cd webui && npx playwright install --with-deps chromium
+
+      - name: Test WebUI responsive baseline
+        run: npm --prefix webui run test:e2e
+
+      - name: Secret scan
+        run: bash scripts/check-secrets.sh
+
       - name: Build Go (current platform)
-        run: go build -o /tmp/pi-switch ./cmd/pi-switch && /tmp/pi-switch --help || true
+        run: npm run build:go
+
+      - name: Verify build identity
+        run: |
+          info=$(bin/pi-switch --build-info)
+          node -e 'const info=JSON.parse(process.argv[1]); const target=process.argv[2]; if (info.commit === "unknown" || info.buildTime === "unknown" || info.target !== target || !["true","false"].includes(info.dirty)) { console.error(info); process.exit(1); }' "$info" "$(go env GOOS)/$(go env GOARCH)"
+          bin/pi-switch --help >/dev/null
+
+      - name: Deterministic functional smoke
+        run: bash scripts/functional-check.sh bin/pi-switch
 
   build:
     strategy:
@@ -106,8 +129,7 @@ jobs:
         run: |
           ext=""
           if [[ "${{ matrix.goos }}" == "windows" ]]; then ext=".exe"; fi
-          ver=$(node -p "require('./package.json').version")
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "-s -w -X main.version=$ver -X github.com/heihei0299/pi-switch/internal/server.Version=$ver" -o "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/pi-switch
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} bash scripts/build-go.sh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
           ls -lh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
 
       - name: Upload artifact

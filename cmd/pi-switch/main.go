@@ -15,15 +15,21 @@ import (
 
 var (
 	// Version is the single source of truth in package.json and is injected
-	// at build time via ldflags (-X main.version=...); "dev" means a plain
-	// `go build` without the npm build scripts.
-	version   = "dev"
-	buildTime = "unknown"
+	// at build time via ldflags. The remaining fields make a binary auditable
+	// without relying on a package manager or an external build manifest.
+	version     = "dev"
+	buildTime   = "unknown"
+	buildCommit = "unknown"
+	buildTarget = "unknown"
+	buildDirty  = "unknown"
 )
 
 func init() {
 	server.Version = version
 	server.BuildTime = buildTime
+	server.BuildCommit = buildCommit
+	server.BuildTarget = buildTarget
+	server.BuildDirty = buildDirty
 }
 
 func printHelp() {
@@ -44,11 +50,13 @@ Commands:
   stats     Show stats brief — stats
   config    Config — config show | config validate | config path
   doctor    Run diagnostics
+  build-info Show embedded build identity as JSON
   help      Show help
 
 Options:
   -h, --help     Show help
   -v, --version  Show version
+  --build-info   Show embedded build identity
   --host <host>  Host to bind (proxy/webui)
   --port <port>  Port to bind
 
@@ -62,6 +70,22 @@ Examples:
   pi-switch doctor
 
 `, version)
+}
+
+func printBuildInfo() {
+	payload := map[string]string{
+		"version":   version,
+		"buildTime": buildTime,
+		"commit":    buildCommit,
+		"target":    buildTarget,
+		"dirty":     buildDirty,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "build-info: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(encoded))
 }
 
 func main() {
@@ -106,6 +130,8 @@ func main() {
 		handleConfigCLI(args[1:])
 	case "doctor":
 		handleDoctor()
+	case "--build-info", "build-info":
+		printBuildInfo()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", args[0])
 		printHelp()

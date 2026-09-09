@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatsPanel } from "./StatsPanel";
-import type { ConversationRequestsPage, ConversationStats, ConversationsPage, RecentRequest, UsageStats } from "../types";
+import type { AppState, ConversationRequestsPage, ConversationStats, ConversationsPage, RecentRequest, UsageStats } from "../types";
 
 const statsMock = vi.fn();
 const convMock = vi.fn();
@@ -17,6 +17,21 @@ vi.mock("../api", () => ({
 }));
 
 const FIXED_NOW = new Date(2026, 7, 2, 15, 30, 0).getTime();
+
+const statsState: AppState = {
+  current: null,
+  profiles: {},
+  settings: {
+    writeMode: "gateway",
+    conversationSource: "sessionScan",
+    proxy: {
+      host: "127.0.0.1",
+      port: 43112,
+      circuitBreaker: { enabled: true, failureThreshold: 3, cooldownSeconds: 60 },
+    },
+    web: { host: "127.0.0.1", port: 43110 },
+  },
+};
 
 /** Local "YYYY-MM-DD HH:MM:SS" rendering, mirroring formatRequestTime. */
 function fullTime(ts: string): string {
@@ -138,14 +153,14 @@ describe("StatsPanel", () => {
       totalTokens: { input: 0, output: 0, total: 0 },
       cacheHitRate: "-",
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     expect(await screen.findByText(/No request data yet/)).toBeInTheDocument();
     expect(screen.queryByText(/By conversation/)).not.toBeInTheDocument();
   });
 
   it("loads conversation stats only after expanding the conversation section", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     expect(statsMock).toHaveBeenCalledTimes(1);
     expect(statsMock).toHaveBeenLastCalledWith("today", expect.any(Number), expect.any(Number), 0, 50);
@@ -158,7 +173,7 @@ describe("StatsPanel", () => {
 
   it("renders the total cost card with an unknown hint", async () => {
     statsMock.mockResolvedValue({ ...fullStats(), totalCost: 12.34, costUnknown: 2 });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("$12.34")).toBeInTheDocument();
     expect(screen.getAllByText("Cost").length).toBeGreaterThanOrEqual(1);
@@ -167,7 +182,7 @@ describe("StatsPanel", () => {
 
   it("renders a dash for the cost card when the total cost is unknown", async () => {
     statsMock.mockResolvedValue({ ...fullStats(), totalCost: null, costUnknown: 10 });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect((await screen.findAllByText("Cost")).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
@@ -184,7 +199,7 @@ describe("StatsPanel", () => {
       totalTokens: { input: 0, output: 0, total: 0 },
       cacheHitRate: "-",
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     expect(await screen.findByText(/No request data yet/)).toBeInTheDocument();
     expect(screen.queryByText("Cost")).not.toBeInTheDocument();
   });
@@ -197,7 +212,7 @@ describe("StatsPanel", () => {
         { conversationId: "unlabeled", requests: 3, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0, lastActive: "2026-08-02T10:05:00Z" },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("363.5K")).toBeInTheDocument();
     expect(screen.getAllByText("Input").length).toBeGreaterThanOrEqual(1);
@@ -218,7 +233,7 @@ describe("StatsPanel", () => {
 
   it("renders input/output/cached/total/cache-rate/cost columns per provider", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     const table = screen.getByRole("table", { name: "By provider" });
 
@@ -266,7 +281,7 @@ describe("StatsPanel", () => {
         },
       },
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     const table = screen.getByRole("table", { name: "By model" });
 
@@ -288,7 +303,7 @@ describe("StatsPanel", () => {
   });
   it("renders dashes for token metrics when only legacy data exists", async () => {
     statsMock.mockResolvedValue(legacyStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect((await screen.findAllByText("Input")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("-").length).toBeGreaterThanOrEqual(3);
@@ -360,7 +375,7 @@ describe("StatsPanel", () => {
         },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     await screen.findByText("363.5K");
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -397,7 +412,7 @@ describe("StatsPanel", () => {
         },
       },
     } as never);
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect((await screen.findAllByText("2")).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("-").length).toBeGreaterThanOrEqual(2);
@@ -407,7 +422,7 @@ describe("StatsPanel", () => {
 
   it("renders five token cards with subset badges", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("312.3K")).toBeInTheDocument();
     expect(screen.getByText("51.2K")).toBeInTheDocument();
@@ -427,7 +442,7 @@ describe("StatsPanel", () => {
         { conversationId: "unlabeled", requests: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0 },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
     const table = await screen.findByRole("table", { name: "By conversation" });
@@ -470,7 +485,7 @@ describe("StatsPanel", () => {
         { conversationId: "conv-old", requests: 1, inputTokens: 1_000, outputTokens: 500, cachedTokens: 0, reasoningTokens: 0 },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect((await screen.findAllByText("1.5K")).length).toBeGreaterThanOrEqual(1);
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -483,7 +498,7 @@ describe("StatsPanel", () => {
 
   it("keeps the existing request metrics and export actions", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("10")).toBeInTheDocument();
     expect(screen.getByText("90.0%")).toBeInTheDocument();
@@ -512,7 +527,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("Request details")).toBeInTheDocument();
     const reqTable = screen.getByRole("table", { name: "Request details" });
@@ -579,7 +594,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("Request details")).toBeInTheDocument();
     expect(screen.getByText("429 rate limited by provider")).toBeInTheDocument();
@@ -595,13 +610,13 @@ describe("StatsPanel", () => {
 
   it("does not render the request details card when recentRequests is empty or absent", async () => {
     statsMock.mockResolvedValue({ ...fullStats(), recentRequests: [] });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     expect(screen.queryByText("Request details")).not.toBeInTheDocument();
 
     cleanup();
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     expect(screen.queryByText("Request details")).not.toBeInTheDocument();
   });
@@ -620,7 +635,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("Request details");
 
     const details = screen.getByText("Request details");
@@ -644,7 +659,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     const header = await screen.findByRole("button", { name: /Request details/ });
     expect(header).toHaveAttribute("aria-expanded", "true");
@@ -662,7 +677,7 @@ describe("StatsPanel", () => {
   it("collapses conversations by default and toggles on header click", async () => {
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValue(convPage([{ conversationId: "unlabeled", requests: 3, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0 }]));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     expect(screen.queryByRole("table", { name: "By conversation" })).not.toBeInTheDocument();
@@ -707,7 +722,7 @@ describe("StatsPanel", () => {
         },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
     const table = await screen.findByRole("table", { name: "By conversation" });
@@ -721,7 +736,7 @@ describe("StatsPanel", () => {
 
   it("renders the four window presets with today selected by default", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("363.5K")).toBeInTheDocument();
     const today = screen.getByRole("button", { name: "Today" });
@@ -735,7 +750,7 @@ describe("StatsPanel", () => {
 
   it("reveals the custom date inputs only in custom mode", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     await screen.findByText("363.5K");
     expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
@@ -752,7 +767,7 @@ describe("StatsPanel", () => {
   it("sends local window bounds with the initial load and each preset switch", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     await screen.findByText("363.5K");
     expect(statsMock).toHaveBeenLastCalledWith(
@@ -789,7 +804,7 @@ describe("StatsPanel", () => {
   it("custom defaults to today and re-requests when a date changes", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -833,7 +848,7 @@ describe("StatsPanel", () => {
   it("re-renders with the data of the selected window", async () => {
     statsMock.mockResolvedValueOnce(fullStats());
     statsMock.mockResolvedValueOnce({ ...fullStats(), totalRequests: 3 });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: "24h" }));
@@ -843,7 +858,7 @@ describe("StatsPanel", () => {
   it("does not request and shows a hint when the custom end precedes the start", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -876,7 +891,7 @@ describe("StatsPanel", () => {
   it("does not request a stale invalid custom window when re-entering custom mode", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -904,7 +919,7 @@ describe("StatsPanel", () => {
   it("prompts for both dates and skips the request when a custom date is cleared", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -921,7 +936,7 @@ describe("StatsPanel", () => {
 
   it("offers the four auto-refresh tiers with Off selected by default", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     const select = screen.getByLabelText(/Auto-refresh/) as HTMLSelectElement;
@@ -933,7 +948,7 @@ describe("StatsPanel", () => {
   it("auto-refreshes on the selected interval reusing the current window", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     vi.useFakeTimers();
@@ -957,7 +972,7 @@ describe("StatsPanel", () => {
   it("auto-refresh also refreshes the conversation window with its own bounds", async () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -983,7 +998,7 @@ describe("StatsPanel", () => {
 
   it("stops polling when switched back to Off", async () => {
     statsMock.mockResolvedValue(fullStats());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     vi.useFakeTimers();
@@ -1001,7 +1016,7 @@ describe("StatsPanel", () => {
   it("keeps the current data when an auto-refresh fails", async () => {
     statsMock.mockResolvedValueOnce(fullStats());
     statsMock.mockRejectedValueOnce(new Error("boom"));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     vi.useFakeTimers();
@@ -1015,7 +1030,7 @@ describe("StatsPanel", () => {
 
   it("clears the timer on unmount", async () => {
     statsMock.mockResolvedValue(fullStats());
-    const { unmount } = render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    const { unmount } = render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     vi.useFakeTimers();
@@ -1038,7 +1053,7 @@ describe("StatsPanel", () => {
       error: null,
     }));
     statsMock.mockResolvedValue({ ...fullStats(), recentRequestTotal: 250, recentRequests: rows });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("Request details")).toBeInTheDocument();
     expect(screen.getByText("250 rows")).toBeInTheDocument();
@@ -1064,7 +1079,7 @@ describe("StatsPanel", () => {
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows("m-p0") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows("m-p1") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows("m-p4") });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("m-p0-0")).toBeInTheDocument();
     expect(statsMock).toHaveBeenLastCalledWith("today", expect.any(Number), expect.any(Number), 0, 50);
@@ -1094,7 +1109,7 @@ describe("StatsPanel", () => {
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows(50, "a") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows(50, "b") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows(100, "c") });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("a-0")).toBeInTheDocument();
     expect(screen.getByLabelText("Rows per page")).toHaveValue("50");
@@ -1131,7 +1146,7 @@ describe("StatsPanel", () => {
       .mockResolvedValueOnce(paged("c"))
       .mockResolvedValueOnce(paged("d"))
       .mockResolvedValueOnce(paged("e"));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("a-0")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "3" }));
@@ -1192,7 +1207,7 @@ describe("StatsPanel", () => {
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 250, recentRequests: makeRows("b") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 120, recentRequests: makeRows("c") })
       .mockResolvedValueOnce({ ...fullStats(), recentRequestTotal: 120, recentRequests: makeRows("d") });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     expect(await screen.findByText("a-0")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "5" }));
@@ -1218,7 +1233,7 @@ describe("StatsPanel", () => {
       totalTokens: { input: 0, output: 0, total: 0 },
       cacheHitRate: "-",
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText(/No request data yet/);
     expect(screen.queryByText(/rows/)).not.toBeInTheDocument();
 
@@ -1236,7 +1251,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("Request details");
     expect(screen.queryByText(/rows/)).not.toBeInTheDocument();
   });
@@ -1244,7 +1259,7 @@ describe("StatsPanel", () => {
   it("shows the empty hint when the conversation window has no data", async () => {
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValue(convPage());
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1256,7 +1271,7 @@ describe("StatsPanel", () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValue(convPage([{ conversationId: "c1", requests: 1, inputTokens: 10, outputTokens: 1, cachedTokens: 0, reasoningTokens: 0 }]));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1290,7 +1305,7 @@ describe("StatsPanel", () => {
   it("All-time omits the window params and pages the full history", async () => {
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValue(convPage([{ conversationId: "c1", requests: 1, inputTokens: 10, outputTokens: 1, cachedTokens: 0, reasoningTokens: 0 }]));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1316,7 +1331,7 @@ describe("StatsPanel", () => {
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValueOnce({ conversations: makeConv(50), total: 120 });
     convMock.mockResolvedValueOnce({ conversations: makeConv(50), total: 120 });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1336,7 +1351,7 @@ describe("StatsPanel", () => {
     vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     statsMock.mockResolvedValue(fullStats());
     convMock.mockResolvedValue(convPage([{ conversationId: "c1", requests: 1, inputTokens: 10, outputTokens: 1, cachedTokens: 0, reasoningTokens: 0 }]));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1416,7 +1431,7 @@ describe("StatsPanel", () => {
         },
       ],
     });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
 
     const table = await screen.findByRole("table", { name: "Request details" });
     const rows = within(table).getAllByRole("row");
@@ -1439,7 +1454,7 @@ describe("StatsPanel", () => {
         { ts: "2026-08-02T10:00:01Z", provider: "hyb", model: "m2", ok: false, status: 429, error: "rate limited", conversationId: "conv-a" },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1477,7 +1492,7 @@ describe("StatsPanel", () => {
       .mockResolvedValueOnce({ requests: makeReq("a"), total: 120 })
       .mockResolvedValueOnce({ requests: makeReq("b"), total: 2 })
       .mockResolvedValueOnce({ requests: makeReq("a2"), total: 120 });
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1505,7 +1520,7 @@ describe("StatsPanel", () => {
       convPage([{ conversationId: "conv-a", requests: 1, inputTokens: 10, outputTokens: 1, cachedTokens: 0, reasoningTokens: 0, lastActive: "2026-08-02T10:00:00Z" }]),
     );
     convReqMock.mockRejectedValue(new Error("boom"));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("363.5K");
 
     fireEvent.click(screen.getByRole("button", { name: /By conversation/ }));
@@ -1557,7 +1572,7 @@ describe("StatsPanel", () => {
         { conversationId: "conv-high", requests: 1, inputTokens: 200, outputTokens: 50, cachedTokens: 180, reasoningTokens: 0, lastActive: "2026-08-02T11:00:00Z", cacheRate: "90.0%" },
       ]),
     );
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("Request details");
     const reqTable = screen.getByRole("table", { name: "Request details" });
     const lowRow = within(reqTable).getByText("30.0%");
@@ -1596,7 +1611,7 @@ describe("StatsPanel", () => {
       ],
     });
     convMock.mockResolvedValue(convPage([]));
-    render(<StatsPanel state={{} as never} refresh={async () => {}} />);
+    render(<StatsPanel state={statsState} refresh={async () => {}} />);
     await screen.findByText("Request details");
     fireEvent.click(screen.getByRole("button", { name: /Copy conversation conv-abc-123/ }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("conv-abc-123"));
