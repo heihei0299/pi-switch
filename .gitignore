@@ -29,7 +29,15 @@ opencode.jsonc
 .cortexkit/
 .agents/
 .pi/
-.scratch/
+# Scratch issue tracker: keep canonical records versioned while ignoring
+# local audits, logs, patches, screenshots and other generated artifacts.
+.scratch/**
+!.scratch/
+!.scratch/*/
+!.scratch/*/spec.md
+!.scratch/*/issues/
+!.scratch/*/issues/*.md
+!.scratch/*/map.md
 .gocache/
 # template-sync backups (e.g. AGENTS.md.bak)
 *.bak
