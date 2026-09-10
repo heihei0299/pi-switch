@@ -557,13 +557,13 @@ function decodeConversationStatsAt(value: unknown, path: string) {
   return {
     ...raw,
     conversationId: requiredString(raw, "conversationId", path),
-    name: optionalString(raw, "name", path),
+    name: nullableString(raw, "name", path),
     requests: defaultNumber(raw, "requests", path, 0),
     inputTokens: defaultNumber(raw, "inputTokens", path, 0),
     outputTokens: defaultNumber(raw, "outputTokens", path, 0),
     cachedTokens: defaultNumber(raw, "cachedTokens", path, 0),
     reasoningTokens: defaultNumber(raw, "reasoningTokens", path, 0),
-    lastActive: optionalString(raw, "lastActive", path),
+    lastActive: nullableString(raw, "lastActive", path),
     cacheRate: optionalString(raw, "cacheRate", path),
     cost: nullableNumber(raw, "cost", path),
   };

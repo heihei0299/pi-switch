@@ -195,13 +195,13 @@ export interface ProviderStats {
 
 export interface ConversationStats {
   conversationId: string;
-  name?: string;
+  name?: string | null;
   requests: number;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
-  lastActive?: string;
+  lastActive?: string | null;
   cacheRate?: string;
   cost?: number | null;
 }

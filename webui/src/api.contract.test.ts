@@ -62,6 +62,33 @@ describe("API runtime contract boundary", () => {
     expect(result.backup).toBeNull();
   });
 
+  it("accepts null conversation metadata for unnamed summaries", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      totalRequests: 1,
+      okRequests: 1,
+      failedRequests: 0,
+      successRate: "100.0%",
+      byProvider: {},
+      byConversation: [{
+        conversationId: "unlabeled",
+        name: null,
+        requests: 1,
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedTokens: 0,
+        reasoningTokens: 0,
+        lastActive: null,
+        cacheRate: "0.0%",
+        cost: null,
+      }],
+    })));
+
+    const result = await api.stats("today", 1, 2);
+    expect(result.byConversation?.[0]).toMatchObject({ conversationId: "unlabeled", requests: 1 });
+    expect(result.byConversation?.[0]?.name).toBeNull();
+    expect(result.byConversation?.[0]?.lastActive).toBeNull();
+  });
+
   it("decodes package import status and warnings", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
       ok: true,
