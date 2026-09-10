@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Button, Card, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
-import { useAction, useToast } from "./ui";
+import { useToast } from "./ui";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, type ModelDraft } from "../lib/piModel";
 import { validateGatewayJson } from "../lib/gatewayDiff";
@@ -19,7 +19,6 @@ const LAST_PUBLISH_KEY = "pi-switch-gateway-last-publish";
 export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const { t } = useI18n() as any;
   const toast = useToast();
-  const run = useAction();
   const [current, setCurrent] = useState<Record<string, unknown> | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [backendDiff, setBackendDiff] = useState<GatewayDiff>({ added: [], removed: [], changed: [] });
@@ -86,10 +85,16 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     for (const id of persistedUnchecked) skipAutoCheck.current.add(id);
   };
 
-  const load = async () => {
+  const load = async (selection?: Set<string>) => {
     setLoading(true);
     try {
-      applyPreview(await api.previewGateway());
+      const preview = selection === undefined
+        ? await api.previewGateway()
+        : await api.previewGateway({
+            selected: selectedGatewayModels(selection),
+            draft: rawValidation.ok && rawValidation.value ? rawValidation.value : undefined,
+          });
+      applyPreview(preview, selection);
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     } finally {
@@ -189,9 +194,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       if (!rawValidation.ok || !rawValidation.value) {
         throw new Error(rawValidation.error ?? "Invalid JSON");
       }
-      const previewInput = !rawDraftDirty && groups.length > 0
-        ? { selected: selectedGatewayModels(checked), draft: rawValidation.value }
-        : { draft: rawValidation.value };
+      const selection = !rawDraftDirty && groups.length > 0 ? checked : undefined;
+      const previewInput = selection === undefined
+        ? { draft: rawValidation.value }
+        : { selected: selectedGatewayModels(selection), draft: rawValidation.value };
       const preview = await api.previewGateway(previewInput);
       if (preview.conflicts.length > 0) {
         setConflicts(preview.conflicts);
@@ -206,7 +212,9 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setLastPublishAt(now);
       toast("ok", t("Saved") || "Saved");
       await mutateAfterGatewayPublish();
-      await load();
+      // GET preview intentionally rebuilds every exposed candidate; preserve the
+      // transient subset for the post-publish view instead of widening it again.
+      await load(selection);
       await refresh();
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
@@ -359,7 +367,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
               <Button
                 variant="primary"
                 disabled={!rawValidation.ok}
-                onClick={() => void run(() => handleApplyToPi(), t("Saved") || "Saved")}
+                onClick={() => void handleApplyToPi()}
               >
                 应用到 Pi
               </Button>

@@ -591,3 +591,68 @@ vi.spyOn(api, "getState").mockResolvedValue({ settings: { proxy: { host: "127.0.
     expect(providers["oc/responses"]).toBeUndefined();
   });
 });
+
+describe("GatewayPanel post-publish selection", () => {
+  beforeEach(() => {
+    window.localStorage?.clear();
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.localStorage?.clear();
+  });
+
+  it("keeps the selected subset in the post-publish draft and shows one success toast", async () => {
+    const gateway = (ids: string[]) => ({
+      "pi-switch-chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        apiKey: "pi-switch-proxy",
+        models: ids.map((id) => ({ id })),
+        proxy: false,
+      },
+    });
+    const full = gateway(["model-a", "model-b"]);
+    const selected = gateway(["model-a"]);
+    const candidateGroup = {
+      supplier: "sup",
+      channel: "main",
+      gatewayProvider: "pi-switch-chat",
+      models: ["model-a", "model-b"].map((id) => ({ id, status: "pending" })),
+    };
+    const response = (
+      current: Record<string, unknown>,
+      proposed: Record<string, unknown>,
+      pending_count: number,
+      statuses: string[],
+    ) => backendPreview(current, proposed, {
+      pending_count,
+      groups: [{
+        ...candidateGroup,
+        models: ["model-a", "model-b"].map((id, i) => ({ id, status: statuses[i] })),
+      }],
+    }) as any;
+    const preview = vi.spyOn(api, "previewGateway")
+      .mockResolvedValueOnce(response({}, full, 2, ["pending", "pending"]))
+      .mockResolvedValueOnce(response({}, selected, 1, ["pending", "pending"]))
+      .mockResolvedValueOnce(response({}, selected, 1, ["pending", "pending"]))
+      .mockImplementation(async (input) => input?.selected !== undefined
+        ? response(selected, selected, 0, ["published", "pending"])
+        : response(selected, full, 1, ["published", "pending"]));
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+
+    renderGateway();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "sup/main/model-a" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: "sup/main/model-a" }));
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith({ providers: selected }));
+    await waitFor(() => {
+      const value = JSON.parse((screen.getByLabelText("gateway json") as HTMLTextAreaElement).value);
+      expect(value.providers["pi-switch-chat"].models.map((model: { id: string }) => model.id)).toEqual(["model-a"]);
+    });
+    expect(screen.getAllByText("Saved")).toHaveLength(1);
+  });
+});
