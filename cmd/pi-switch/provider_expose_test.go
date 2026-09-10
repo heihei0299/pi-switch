@@ -1,10 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -12,40 +8,16 @@ import (
 // Ticket provider-cli 05: `provider expose` was documented in both READMEs but
 // answered "unknown provider subcommand". The server implements it
 // (PUT /api/profiles/:name/expose); the CLI is now wired to the same core.
+//
+// The fixtures live in provider_cli_helpers_test.go. They used to build a mock
+// upstream that the expose path never contacted (the channel's models came from
+// --models), so the mock only donated a URL — a helper asserting nothing.
 
-func mockModelListServer(t *testing.T, ids ...string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data := make([]map[string]string, 0, len(ids))
-		for _, id := range ids {
-			data = append(data, map[string]string{"id": id})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// setupSingleChannelProfile creates a one-channel profile carrying `ids` as
-// models, by fetching them from a mock upstream (the honest path the CLI offers).
-func setupSingleChannelProfile(t *testing.T, name string, ids ...string) string {
-	t.Helper()
-	isolateCLI(t)
-	cfgPath := os.Getenv("PI_SWITCH_CONFIG")
-	srv := mockModelListServer(t, ids...)
-	_ = srv
-	if code, _, errOut := runCLIStreams(t, func() int {
-		return handleProvider([]string{"add", name, "--base-url", srv.URL + "/v1", "--api", "openai-responses", "--models", strings.Join(ids, ",")})
-	}); code != 0 {
-		t.Fatalf("setup add failed: %d %q", code, errOut)
-	}
-	return cfgPath
-}
-
-// B1: exposing a model the channel carries is recorded in the config.
+// B1: exposing a model the channel carries is recorded in the config, as the CLI
+// itself reports it.
 func TestHandleProvider_ExposeRecordsSelection(t *testing.T) {
-	cfgPath := setupSingleChannelProfile(t, "exp", "m1", "m2")
+	isolateCLI(t)
+	createOneChannelProfile(t, "exp")
 
 	code, out, errOut := runCLIStreams(t, func() int {
 		return handleProvider([]string{"expose", "exp", "m1"})
@@ -53,23 +25,16 @@ func TestHandleProvider_ExposeRecordsSelection(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("provider expose exit = %d (stdout=%q stderr=%q)", code, out, errOut)
 	}
-	profiles := readProfiles(t, cfgPath)
-	prof, _ := profiles["exp"].(map[string]any)
-	upstreams, _ := prof["upstreams"].([]any)
-	if len(upstreams) == 0 {
-		t.Fatalf("profile has no upstreams: %v", prof)
-	}
-	first, _ := upstreams[0].(map[string]any)
-	exposed, _ := first["exposedModels"].([]any)
-	if len(exposed) != 1 || exposed[0] != "m1" {
-		t.Fatalf("exposedModels = %v, want [m1]", first["exposedModels"])
+	if exposed := shownChannelExposed(t, "exp", "main"); len(exposed) != 1 || exposed[0] != "m1" {
+		t.Fatalf("exposedModels = %v, want [m1]", exposed)
 	}
 }
 
 // B2: exposing an id the channel does not carry is refused — otherwise routing
 // would advertise a model nothing can serve.
 func TestHandleProvider_ExposeRefusesUnknownModel(t *testing.T) {
-	setupSingleChannelProfile(t, "exp", "m1")
+	isolateCLI(t)
+	createOneChannelProfile(t, "exp")
 
 	code, out, errOut := runCLIStreams(t, func() int {
 		return handleProvider([]string{"expose", "exp", "nope"})

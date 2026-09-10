@@ -297,7 +297,7 @@ WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心�
 
 要添加更多模型，在 WebUI 中暴露（`Profiles → 选择 provider → Models`）或使用 CLI：
 ```bash
-pi-switch provider expose <名称> <model-id>... --channel <渠道> --channel main
+pi-switch provider expose <名称> <model-id>... --channel <渠道>
 ```
 
 </details>

@@ -45,7 +45,7 @@ Commands:
   proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
-  provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] | use <name> | delete <name>
+  provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] [--models M1,M2] | duplicate <name> --as <new> | test <name> | fetch-models <name> [--channel C] | expose <name> <model-id>... [--channel C] | use <name> | delete <name> (aliases: ls, rm, remove)
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
@@ -335,6 +335,41 @@ func modelEntries(ids []string) []config.ModelEntry {
 	return out
 }
 
+// scanSubcommandFlags splits one provider subcommand's arguments into positional
+// values and `--flag value` pairs.
+//
+// Unknown flags, flags without a value and repeated flags are all refused: the
+// three subcommands that need this used to hand-roll the loop with three
+// different levels of strictness, so a typo could become a model id or be
+// dropped without a word.
+func scanSubcommandFlags(sub string, args []string, allowed ...string) ([]string, map[string]string, error) {
+	known := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		known[a] = true
+	}
+	var positional []string
+	flags := map[string]string{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+			continue
+		}
+		if !known[a] {
+			return nil, nil, fmt.Errorf("%s: unknown flag %q", sub, a)
+		}
+		if i+1 >= len(args) {
+			return nil, nil, fmt.Errorf("%s: %s requires a value", sub, a)
+		}
+		if _, dup := flags[a]; dup {
+			return nil, nil, fmt.Errorf("%s: %s given more than once", sub, a)
+		}
+		flags[a] = args[i+1]
+		i++
+	}
+	return positional, flags, nil
+}
+
 // parseProviderAddArgs expects exactly one positional name; unknown flags are
 // rejected rather than ignored, so a typo cannot create an unintended profile.
 func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
@@ -402,7 +437,15 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|fetch-models|expose|use|delete> [name]")
+		fmt.Print(`Usage: pi-switch provider <list|show|add|duplicate|test|fetch-models|expose|use|delete> [name]
+  aliases        ls = list, rm = remove = delete
+  add            <name> [--preset P] [--api-key K] [--base-url U] [--api M] [--models M1,M2]
+  duplicate      <name> --as <new>
+  test           <name>
+  fetch-models   <name> [--channel C]   (with --channel: enrich and merge into that channel)
+  expose         <name> <model-id>... [--channel C]   (--channel required for a multi-channel profile)
+
+`)
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -451,25 +494,21 @@ func handleProvider(args []string) int {
 		}
 		fmt.Printf("Added %s\n", name)
 	case "duplicate":
-		if len(args) < 2 {
+		positional, flags, err := scanSubcommandFlags("provider duplicate", args[1:], "--as")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		if len(positional) != 1 || flags["--as"] == "" {
 			fmt.Fprintln(os.Stderr, "provider duplicate <name> --as <new> required")
 			return 1
 		}
-		as := ""
-		for i := 2; i < len(args); i++ {
-			if args[i] == "--as" && i+1 < len(args) {
-				as = args[i+1]
-				i++
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "provider duplicate: unknown argument %q\n", args[i])
-			return 1
-		}
-		if err := server.DuplicateProfile(args[1], as); err != nil {
+		src, as := positional[0], flags["--as"]
+		if err := server.DuplicateProfile(src, as); err != nil {
 			fmt.Fprintf(os.Stderr, "provider duplicate failed: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Duplicated %s as %s\n", args[1], as)
+		fmt.Printf("Duplicated %s as %s\n", src, as)
 	case "test":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider test <name> required")
@@ -487,57 +526,81 @@ func handleProvider(args []string) int {
 		}
 		fmt.Printf("%s: %s (%dms)\n", args[1], message, ms)
 	case "fetch-models":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "provider fetch-models <name> required")
+		positional, flags, err := scanSubcommandFlags("provider fetch-models", args[1:], "--channel")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
 		}
-		prof, ok := cfg.Profiles[args[1]]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
+		if len(positional) != 1 {
+			fmt.Fprintln(os.Stderr, "provider fetch-models <name> [--channel <channel>] required")
 			return 1
+		}
+		name := positional[0]
+		prof, ok := cfg.Profiles[name]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown profile %q\n", name)
+			return 1
+		}
+		// --channel 走渠道定向拉取（enrich 后合并入该渠道并落盘），与 handler 同一实现；
+		// 不给渠道时保持只读列出，不写盘。
+		if channel := flags["--channel"]; channel != "" {
+			ids, counts, err := server.FetchChannelModels(name, channel)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "provider fetch-models %s: %v\n", name, err)
+				return 1
+			}
+			b, _ := json.Marshal(map[string]interface{}{
+				"models": ids,
+				"enrich": map[string]interface{}{"enriched": counts.Enriched, "skipped": counts.Skipped, "failed": counts.Failed},
+			})
+			fmt.Println(string(b))
+			return 0
 		}
 		ids, lastErr := server.FetchUpstreamModelIDs(prof)
 		if lastErr != "" {
-			fmt.Fprintf(os.Stderr, "provider fetch-models %s: %s\n", args[1], lastErr)
+			fmt.Fprintf(os.Stderr, "provider fetch-models %s: %s\n", name, lastErr)
 			return 1
 		}
 		b, _ := json.Marshal(map[string]interface{}{"models": ids})
 		fmt.Println(string(b))
 	case "expose":
-		// README 一直写着 `provider expose <name> <model-id>...`，此处按该形态接线；
-		// 服务端要求渠道显式指定，故新增 --channel（默认取第一个渠道的语义见下）。
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "provider expose <name> <model-id>... --channel <channel> required")
+		positional, flags, err := scanSubcommandFlags("provider expose", args[1:], "--channel")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
 		}
-		channel := ""
-		var ids []string
-		for i := 2; i < len(args); i++ {
-			if args[i] == "--channel" && i+1 < len(args) {
-				channel = args[i+1]
-				i++
-				continue
-			}
-			ids = append(ids, args[i])
+		// 至少一个 model id：`expose <name>` 曾把该渠道的 exposedModels 清空却报成功。
+		if len(positional) < 2 {
+			fmt.Fprintln(os.Stderr, "provider expose <name> <model-id>... [--channel <channel>] required")
+			return 1
 		}
-		prof, ok := cfg.Profiles[args[1]]
+		name, ids := positional[0], positional[1:]
+		channel := flags["--channel"]
+		prof, ok := cfg.Profiles[name]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
+			fmt.Fprintf(os.Stderr, "unknown profile %q\n", name)
 			return 1
 		}
-		if channel == "" && len(prof.Upstreams) == 1 {
-			// 单渠道 profile 无需显式指定，按唯一渠道推断；多渠道时要求显式。
+		switch {
+		case channel != "":
+			// 显式指定，交给核心校验渠道是否存在。
+		case len(prof.Upstreams) == 1:
+			// 单渠道 profile 无需显式指定，按唯一渠道推断。
 			channel = prof.ChannelName(0)
-		}
-		if channel == "" {
+		case len(prof.Upstreams) == 0:
+			// 顶层 baseUrl 不构成渠道；旧形状的 profile 一个渠道都没有，
+			// 不能告诉用户"渠道太多"。
+			fmt.Fprintf(os.Stderr, "provider expose: profile %q has no channels; add one with a baseUrl before exposing\n", name)
+			return 1
+		default:
 			fmt.Fprintln(os.Stderr, "provider expose: --channel <channel> required (profile has multiple channels)")
 			return 1
 		}
-		if err := server.SetExposedModels(args[1], channel, ids); err != nil {
+		if err := server.SetExposedModels(name, channel, ids); err != nil {
 			fmt.Fprintf(os.Stderr, "provider expose failed: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Exposed %d model(s) on %s/%s\n", len(ids), args[1], channel)
+		fmt.Printf("Exposed %d model(s) on %s/%s\n", len(ids), name, channel)
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")

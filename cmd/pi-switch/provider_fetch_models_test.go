@@ -89,6 +89,68 @@ func TestHandleProvider_FetchModelsReportsUpstreamFailure(t *testing.T) {
 	}
 }
 
+// B4: with --channel the fetch is channel-directed: the new ids are merged into
+// that channel's pool and persisted, so the next command sees them.
+//
+// The effect is asserted through `provider show` (the CLI's own view of the
+// profile) rather than by decoding config.json, so the test states the
+// user-visible outcome instead of a storage detail. The sibling batch's ticket 04
+// promised this merge and shipped a read-only listing that silently ignored the
+// flag.
+func TestHandleProvider_FetchModelsChannelMergesIntoChannel(t *testing.T) {
+	isolateCLI(t)
+	srv := mockModelsServer(t, http.StatusOK, "alpha", "beta")
+
+	if code, _, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"add", "mock", "--base-url", srv.URL + "/v1"})
+	}); code != 0 {
+		t.Fatalf("setup add failed: %d %q", code, errOut)
+	}
+
+	code, out, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"fetch-models", "mock", "--channel", "main"})
+	})
+	if code != 0 {
+		t.Fatalf("channel fetch exit = %d (stdout=%q stderr=%q)", code, out, errOut)
+	}
+
+	code, shown, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"show", "mock"})
+	})
+	if code != 0 {
+		t.Fatalf("provider show exit = %d (%q)", code, errOut)
+	}
+	for _, id := range []string{"alpha", "beta"} {
+		if !strings.Contains(shown, `"`+id+`"`) {
+			t.Fatalf("model %q was not merged into the channel; profile is now:\n%s", id, shown)
+		}
+	}
+}
+
+// B5: a channel that does not exist is a failure. Silently printing models while
+// ignoring --channel is the false-success class this command must not join.
+func TestHandleProvider_FetchModelsChannelRejectsUnknownChannel(t *testing.T) {
+	isolateCLI(t)
+	srv := mockModelsServer(t, http.StatusOK, "alpha")
+
+	if code, _, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"add", "mock", "--base-url", srv.URL + "/v1"})
+	}); code != 0 {
+		t.Fatalf("setup add failed: %d %q", code, errOut)
+	}
+
+	code, out, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"fetch-models", "mock", "--channel", "nope"})
+	})
+
+	if code == 0 {
+		t.Fatalf("an unknown channel exit = 0 (stdout=%q)", out)
+	}
+	if !strings.Contains(errOut, "unknown channel") {
+		t.Fatalf("the reason was not reported: %q", errOut)
+	}
+}
+
 // B3: an unknown profile is refused before any network attempt.
 func TestHandleProvider_FetchModelsRejectsUnknownProfile(t *testing.T) {
 	isolateCLI(t)

@@ -332,7 +332,7 @@ The proxy publishes two fixed providers: `pi-switch-res` for Responses models an
 ```bash
 # 1. Expose models (per channel)
 pi-switch provider expose provider-a gpt-5.4 --channel main
-pi-switch provider expose provider-b gpt-5.4
+pi-switch provider expose provider-b gpt-5.4 --channel main
 
 # 2. Start proxy daemon
 pi-switch proxy start --daemon

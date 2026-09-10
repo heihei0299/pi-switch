@@ -107,19 +107,69 @@ func validateProfileResponsesMode(api, mode string) error {
 	return nil
 }
 
+// Profile-domain outcomes callers must tell apart: the HTTP handlers map them to
+// status codes and the CLI to exit codes. They exist because classification by
+// message text cannot work — a persist failure whose path happened to contain
+// "not found" was answered 404 instead of 500. The package domain set the
+// precedent (package_handlers.go's ErrPackageNotFound, matched with errors.Is).
+var (
+	ErrProfileNotFound     = errors.New("profile not found")
+	ErrProfileExists       = errors.New("profile already exists")
+	ErrTargetNameRequired  = errors.New("as required")
+	ErrUnknownChannel      = errors.New("unknown channel")
+	ErrUpstreamFetchFailed = errors.New("upstream fetch failed")
+	ErrPersistFailed       = errors.New("failed to persist config")
+)
+
+// profileError carries one of the kinds above together with the message its
+// surface should print. Keeping message and kind apart is what let the kinds be
+// introduced without touching a single response body: every handler still prints
+// err.Error() exactly as before.
+type profileError struct {
+	kind error
+	msg  string
+}
+
+func (e profileError) Error() string { return e.msg }
+func (e profileError) Unwrap() error { return e.kind }
+
+func profileErr(kind error, format string, args ...any) error {
+	return profileError{kind: kind, msg: fmt.Sprintf(format, args...)}
+}
+
+// persistProfileConfig writes the config and tags a failure with ErrPersistFailed.
+// prefix is what the caller used to print in front of the raw error ("failed to
+// save config: " for most endpoints, "" for the one that answered raw), so the
+// kind is added without rewriting any 500 body.
+func persistProfileConfig(cfg config.PiSwitchConfig, prefix string) error {
+	if err := saveConfig(cfg); err != nil {
+		return profileErr(ErrPersistFailed, "%s%s", prefix, err.Error())
+	}
+	return nil
+}
+
 // isPersistError distinguishes a failed write from a rejected input, so the
-// handler can keep answering 400 for validation and 500 for storage.
+// handler can keep answering 400 for validation and 500 for storage. It matches
+// the kind rather than the syscall error types, so a wrapped or future persist
+// error cannot silently downgrade 500 to 400.
 func isPersistError(err error) bool {
-	if err == nil {
-		return false
+	return errors.Is(err, ErrPersistFailed)
+}
+
+// respondProfileError maps a profile-domain error onto the status codes these
+// endpoints already answered. Every arm matches by kind, so the order of the arms
+// cannot misread a storage failure as a missing profile.
+func respondProfileError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrProfileNotFound):
+		c.JSON(404, gin.H{"error": "not found"})
+	case errors.Is(err, ErrProfileExists):
+		c.JSON(400, gin.H{"error": "target exists"})
+	case errors.Is(err, ErrPersistFailed), errors.Is(err, ErrUpstreamFetchFailed):
+		c.JSON(500, gin.H{"error": err.Error()})
+	default:
+		c.JSON(400, gin.H{"error": err.Error()})
 	}
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		return true
-	}
-	// Rename failures come back as *os.LinkError, not *os.PathError.
-	var linkErr *os.LinkError
-	return errors.As(err, &linkErr)
 }
 
 // CreateProfile is the single implementation behind POST /api/profiles and
@@ -151,7 +201,7 @@ func CreateProfile(name string, prof config.ProviderProfile) error {
 	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
 	// 与"空 exposed = 不暴露"一致。
 	cfg.Profiles[name] = prof
-	return saveConfig(cfg)
+	return persistProfileConfig(cfg, "")
 }
 
 func handlePostProfile(c *gin.Context) {
@@ -341,18 +391,20 @@ func handleDeleteProfile(c *gin.Context) {
 func DuplicateProfile(src, as string) error {
 	as = strings.TrimSpace(as)
 	if as == "" {
-		return errors.New("--as <new> required")
+		// 服务端文案，不是 CLI 措辞：`--as <new>` 的提示由 CLI 自己给，
+		// 核心函数不知道调用方是 HTTP 还是命令行。
+		return ErrTargetNameRequired
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	prof, ok := cfg.Profiles[src]
 	if !ok {
-		return fmt.Errorf("profile %q not found", src)
+		return profileErr(ErrProfileNotFound, "profile %q not found", src)
 	}
 	if _, exists := cfg.Profiles[as]; exists {
-		return fmt.Errorf("target %q already exists", as)
+		return profileErr(ErrProfileExists, "target %q already exists", as)
 	}
 	cfg.Profiles[as] = prof
-	return saveConfig(cfg)
+	return persistProfileConfig(cfg, "failed to save config: ")
 }
 
 func handleDuplicateProfile(c *gin.Context) {
@@ -363,16 +415,7 @@ func handleDuplicateProfile(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
 	if err := DuplicateProfile(name, body.As); err != nil {
-		switch {
-		case strings.Contains(err.Error(), "not found"):
-			c.JSON(404, gin.H{"error": "not found"})
-		case strings.Contains(err.Error(), "already exists"):
-			c.JSON(400, gin.H{"error": "target exists"})
-		case isPersistError(err):
-			c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
-		default:
-			c.JSON(400, gin.H{"error": err.Error()})
-		}
+		respondProfileError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
@@ -457,17 +500,39 @@ func truncateForTest(b []byte) string {
 // handleFetchModelsForChannel fetches /v1/models with the named channel's
 // credentials, merges new ids (enriched) into that channel's pool only and
 // persists. Existing entries are never modified; other channels untouched.
-func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name string, prof config.ProviderProfile, channel string) {
+// EnrichCounts reports what enrichModelsWithCatalog did, so each caller can
+// surface the same numbers the WebUI shows.
+type EnrichCounts struct {
+	Enriched int
+	Skipped  int
+	Failed   int
+	Warning  string
+}
+
+// FetchChannelModels pulls the model list a channel's own credentials report,
+// enriches it, merges only the new ids into that channel's pool and persists.
+// It is the single implementation behind
+// POST /api/profiles/:name/fetch-models?channel= and
+// `pi-switch provider fetch-models --channel`, so the CLI cannot drift from the
+// handler's channel-directed semantics. Existing entries are never modified and
+// other channels are never touched.
+func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		return nil, EnrichCounts{}, profileErr(ErrProfileNotFound, "profile %q not found", name)
+	}
+	if channel == "" {
+		return nil, EnrichCounts{}, errors.New("channel is required")
+	}
 	idx := ensureMutationChannel(&prof, channel)
 	if idx < 0 {
-		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
-		return
+		return nil, EnrichCounts{}, profileErr(ErrUnknownChannel, "unknown channel %q", channel)
 	}
 	u := prof.Upstreams[idx]
 	ids, lastErr := fetchUpstreamIDs(u.BaseURL, u.APIKey, u.Headers)
 	if ids == nil {
-		c.JSON(500, gin.H{"error": lastErr})
-		return
+		return nil, EnrichCounts{}, profileErr(ErrUpstreamFetchFailed, "%s", lastErr)
 	}
 	seeds := make([]map[string]interface{}, 0, len(ids))
 	for _, id := range ids {
@@ -495,13 +560,21 @@ func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name
 		prof.Upstreams[idx].Models = append(prof.Upstreams[idx].Models, e)
 	}
 	cfg.Profiles[name] = prof
-	if err := saveConfig(cfg); err != nil {
-		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+	if err := persistProfileConfig(cfg, "failed to save config: "); err != nil {
+		return nil, EnrichCounts{}, err
+	}
+	return ids, EnrichCounts{Enriched: enriched, Skipped: skipped, Failed: failed, Warning: warning}, nil
+}
+
+func handleFetchModelsForChannel(c *gin.Context, name, channel string) {
+	ids, counts, err := FetchChannelModels(name, channel)
+	if err != nil {
+		respondProfileError(c, err)
 		return
 	}
-	enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
-	if warning != "" {
-		enrich["warning"] = warning
+	enrich := gin.H{"enriched": counts.Enriched, "skipped": counts.Skipped, "failed": counts.Failed}
+	if counts.Warning != "" {
+		enrich["warning"] = counts.Warning
 	}
 	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
 }
@@ -629,7 +702,7 @@ func handleFetchModels(c *gin.Context) {
 	// enrich 后仅新增 id 合并入该渠道池并落盘；未知渠道 400。
 	// 无参走下方旧路径（兼容，不写盘）。
 	if channel := c.Query("channel"); channel != "" {
-		handleFetchModelsForChannel(c, cfg, name, prof, channel)
+		handleFetchModelsForChannel(c, name, channel)
 		return
 	}
 	baseURL := prof.PrimaryBaseURL()
@@ -638,87 +711,27 @@ func handleFetchModels(c *gin.Context) {
 		c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	urls := []string{strings.TrimRight(baseURL, "/") + "/models", strings.TrimRight(baseURL, "/") + "/v1/models"}
-	var lastErr string
-	for _, u := range urls {
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Sprintf("upstream %d: %s", resp.StatusCode, string(body))
-			continue
-		}
-		var parsed map[string]interface{}
-		if err := json.Unmarshal(body, &parsed); err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		var ids []string
-		if data, ok := parsed["data"]; ok {
-			if arr, ok := data.([]interface{}); ok {
-				for _, v := range arr {
-					switch vv := v.(type) {
-					case string:
-						ids = append(ids, vv)
-					case map[string]interface{}:
-						if id, ok := vv["id"].(string); ok {
-							ids = append(ids, id)
-						}
-					}
-				}
-			}
-		}
-		if len(ids) == 0 {
-			if m, ok := parsed["models"]; ok {
-				if arr, ok := m.([]interface{}); ok {
-					for _, v := range arr {
-						if s, ok := v.(string); ok {
-							ids = append(ids, s)
-						}
-					}
-				}
-			}
-		}
-		if len(ids) == 0 {
-			if arr, ok := parsed["data"].([]interface{}); ok && len(arr) == 0 {
-				// empty
-			}
-		}
-		// enrich: build default ModelEntry for each id, then enrich with catalog
-		models := make([]map[string]interface{}, 0, len(ids))
-		for _, id := range ids {
-			m := map[string]interface{}{
-				"id":            id,
-				"contextWindow": uint32(128000),
-				"maxTokens":     uint32(16384),
-				"input":         []string{"text"},
-			}
-			models = append(models, m)
-		}
-		enriched, skipped, failed, warning := enrichModelsWithCatalog(models, prof)
-		enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
-		if warning != "" {
-			enrich["warning"] = warning
-		}
-		// For compat, also return models as []string ids but include enrich stats
-		// Check if caller expects full objects; we return ids as strings for backward compat, but also support objects
-		c.JSON(200, gin.H{"models": ids, "enrich": enrich})
+	// 只读列出：拉取复用 fetchUpstreamIDs（渠道定向路径用同一原语），此处不写盘。
+	ids, lastErr := fetchUpstreamIDs(baseURL, apiKey, nil)
+	if ids == nil {
+		c.JSON(500, gin.H{"error": lastErr})
 		return
 	}
-	c.JSON(500, gin.H{"error": lastErr})
+	models := make([]map[string]interface{}, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, map[string]interface{}{
+			"id":            id,
+			"contextWindow": uint32(128000),
+			"maxTokens":     uint32(16384),
+			"input":         []string{"text"},
+		})
+	}
+	enriched, skipped, failed, warning := enrichModelsWithCatalog(models, prof)
+	enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
+	if warning != "" {
+		enrich["warning"] = warning
+	}
+	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
 }
 
 func resolveModelsDevProvider(prof config.ProviderProfile) string {
@@ -835,14 +848,14 @@ func SetExposedModels(name, channel string, modelIDs []string) error {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	prof, ok := cfg.Profiles[name]
 	if !ok {
-		return fmt.Errorf("profile %q not found", name)
+		return profileErr(ErrProfileNotFound, "profile %q not found", name)
 	}
 	if channel == "" {
 		return errors.New("channel is required")
 	}
 	idx := ensureMutationChannel(&prof, channel)
 	if idx < 0 {
-		return fmt.Errorf("unknown channel %q", channel)
+		return profileErr(ErrUnknownChannel, "unknown channel %q", channel)
 	}
 	seen := map[string]bool{}
 	for _, m := range prof.Upstreams[idx].Models {
@@ -855,7 +868,7 @@ func SetExposedModels(name, channel string, modelIDs []string) error {
 	}
 	prof.Upstreams[idx].ExposedModels = modelIDs
 	cfg.Profiles[name] = prof
-	return saveConfig(cfg)
+	return persistProfileConfig(cfg, "failed to save config: ")
 }
 
 func handlePutExpose(c *gin.Context) {
@@ -868,14 +881,7 @@ func handlePutExpose(c *gin.Context) {
 	// prof 由 SetExposedModels 内部加载，handler 只负责取 channel 与映射错误。
 	channel := c.Query("channel")
 	if err := SetExposedModels(name, channel, body.ModelIds); err != nil {
-		switch {
-		case strings.Contains(err.Error(), "not found"):
-			c.JSON(404, gin.H{"error": "not found"})
-		case isPersistError(err):
-			c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
-		default:
-			c.JSON(400, gin.H{"error": err.Error()})
-		}
+		respondProfileError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
