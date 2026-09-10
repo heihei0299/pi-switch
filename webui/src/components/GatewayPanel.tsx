@@ -24,6 +24,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [backendDiff, setBackendDiff] = useState<GatewayDiff>({ added: [], removed: [], changed: [] });
   const [canonicalDraft, setCanonicalDraft] = useState<Record<string, unknown> | null>(null);
+  const [proposedDraft, setProposedDraft] = useState<Record<string, unknown> | null>(null);
+  const [draftView, setDraftView] = useState<"current" | "proposed">("current");
   const [loading, setLoading] = useState(true);
   const [lastPublishAt, setLastPublishAt] = useState<string | null>(() => {
     try { return typeof window !== "undefined" ? window.localStorage?.getItem(LAST_PUBLISH_KEY) ?? null : null; } catch { return null; }
@@ -61,16 +63,26 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     providers[next.providerKey] = provider;
     setCanonicalDraft(providers);
     setRawText(JSON.stringify({ providers }, null, 2));
+    setRawDraftDirty(true);
+    setDraftView("proposed");
   };
 
-  const applyPreview = (preview: GatewayPreview, checkedOverride?: Set<string>) => {
+  const applyPreview = (
+    preview: GatewayPreview,
+    checkedOverride?: Set<string>,
+    view: "current" | "proposed" = "proposed",
+  ) => {
     const cur = preview.current;
     const prop = preview.proposed;
     const groupsFromServer = preview.groups;
     const removedArr = preview.removed ?? [];
+    const nextProposed = prop ?? {};
+    const nextDisplayed = view === "current" ? cur ?? {} : nextProposed;
     setCurrent(cur);
-    setCanonicalDraft(prop);
-    setRawText(JSON.stringify({ providers: prop }, null, 2));
+    setProposedDraft(nextProposed);
+    setDraftView(view);
+    setCanonicalDraft(nextDisplayed);
+    setRawText(JSON.stringify({ providers: nextDisplayed }, null, 2));
     setRawDraftDirty(false);
     setConflicts(preview.conflicts);
     const diff = preview.diff;
@@ -107,13 +119,18 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const load = async (selection?: Set<string>) => {
     setLoading(true);
     try {
+      const draft = !rawDraftDirty && proposedDraft
+        ? { providers: proposedDraft }
+        : rawValidation.ok && rawValidation.value
+          ? rawValidation.value
+          : undefined;
       const preview = selection === undefined
         ? await api.previewGateway()
         : await api.previewGateway({
             selected: selectedGatewayModels(selection),
-            draft: rawValidation.ok && rawValidation.value ? rawValidation.value : undefined,
+            draft,
           });
-      applyPreview(preview, selection);
+      applyPreview(preview, selection, "current");
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     } finally {
@@ -198,11 +215,13 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       const previewInput: { selected: GatewaySelection[]; draft?: unknown } = {
         selected: selectedGatewayModels(next),
       };
-      if (rawValidation.ok && rawValidation.value) {
+      if (rawDraftDirty && rawValidation.ok && rawValidation.value) {
         previewInput.draft = rawValidation.value;
+      } else if (proposedDraft) {
+        previewInput.draft = { providers: proposedDraft };
       }
       const preview = await api.previewGateway(previewInput);
-      applyPreview(preview, next);
+      applyPreview(preview, next, "proposed");
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     }
@@ -214,9 +233,12 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         throw new Error(rawValidation.error ?? "Invalid JSON");
       }
       const selection = !rawDraftDirty && groups.length > 0 ? checked : undefined;
+      const draft = !rawDraftDirty && proposedDraft
+        ? { providers: proposedDraft }
+        : rawValidation.value;
       const previewInput = selection === undefined
-        ? { draft: rawValidation.value }
-        : { selected: selectedGatewayModels(selection), draft: rawValidation.value };
+        ? { draft }
+        : { selected: selectedGatewayModels(selection), draft };
       const preview = await api.previewGateway(previewInput);
       if (preview.conflicts.length > 0) {
         setConflicts(preview.conflicts);
@@ -224,8 +246,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         setBackendDiff(preview.diff);
         throw new Error(preview.conflicts.join("; "));
       }
-      applyPreview(preview);
       await api.applyGateway({ providers: preview.proposed });
+      applyPreview(preview);
       const now = new Date().toISOString();
       try { if (typeof window !== "undefined") window.localStorage?.setItem(LAST_PUBLISH_KEY, now); } catch {}
       setLastPublishAt(now);
@@ -369,7 +391,9 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       </Card>
         {/* Live JSON preview — editable */}
         <div className="mt-6">
-          <div className="mb-1 text-sm font-medium text-zinc-200">{t("Config JSON")}</div>
+          <div className="mb-1 text-sm font-medium text-zinc-200">
+            {draftView === "current" ? "已落盘 JSON" : "待发布 JSON"}
+          </div>
           <div className="space-y-2">
 			<JsonEditor value={rawText} onChange={handleRawChange} label="gateway json" className="h-80" errorLine={gatewayErrorLine} />
             {!rawValidation.ok && (

@@ -314,6 +314,18 @@ describe("GatewayPanel canonical draft", () => {
     window.localStorage?.clear();
   });
 
+  it("shows the persisted gateway in the editor on initial load", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw) as any);
+    renderGateway();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("gateway json")).toHaveValue(
+        JSON.stringify({ providers: currentGw }, null, 2),
+      );
+    });
+    expect((screen.getByLabelText("gateway json") as HTMLTextAreaElement).value).not.toContain("m2");
+  });
+
   it("renders structured preview and publishes the backend proposal", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
       diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
@@ -419,7 +431,7 @@ describe("GatewayPanel canonical draft", () => {
     expect(apply.mock.calls[0][0]).toEqual({ providers: proposedGw });
   });
 
-  it("uses canonical proposed draft when current gateway contains legacy prefixed ids", async () => {
+  it("shows persisted legacy ids on initial load", async () => {
     const legacyCurrent = {
       "pi-switch": {
         api: "openai-responses",
@@ -447,8 +459,8 @@ describe("GatewayPanel canonical draft", () => {
     } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-		expect(screen.getByDisplayValue("gpt-5.6-luna")).toBeInTheDocument()
-		expect(screen.queryByText("oc/responses/gpt-5.6-luna")).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue("oc/responses/gpt-5.6-luna")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("gpt-5.6-luna")).not.toBeInTheDocument();
   });
 });
 
