@@ -11,6 +11,11 @@ import (
 	"github.com/heihei0299/pi-switch/internal/gateway"
 )
 
+type gatewayPreviewRequest struct {
+	Selected *[]gateway.GatewaySelection `json:"selected"`
+	Draft    map[string]interface{}      `json:"draft"`
+}
+
 func handleGetGateway(c *gin.Context) {
 	path := gateway.ModelsPath()
 	b, err := os.ReadFile(path)
