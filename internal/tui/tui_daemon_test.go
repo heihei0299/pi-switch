@@ -156,7 +156,7 @@ func TestTuiDaemon_S2_EnterSwitchAndFilter(t *testing.T) {
 	if cfg.Current == nil || *cfg.Current != "test-provider" {
 		t.Fatalf("default current mismatch")
 	}
-	if err := saveConfig(cfg, cfgPath); err != nil {
+	if err := config.SaveAtPath(cfg, cfgPath); err != nil {
 		t.Fatalf("saveConfig: %v", err)
 	}
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
@@ -233,7 +233,7 @@ func TestTuiDaemon_S2_GPublishAndRefresh(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.json")
 	modelsPath := filepath.Join(dir, "models.json")
 	cfg := config.DefaultConfig()
-	_ = saveConfig(cfg, cfgPath)
+	_ = config.SaveAtPath(cfg, cfgPath)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_MODELS", modelsPath)
 	loaded, _, _ := config.LoadConfigAtPath(cfgPath)
@@ -334,7 +334,7 @@ func TestTuiDaemon_S3_CostAndCacheRate(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.json")
 	dbPath := filepath.Join(dir, "requests.db")
 	cfg := config.DefaultConfig()
-	_ = saveConfig(cfg, cfgPath)
+	_ = config.SaveAtPath(cfg, cfgPath)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", dbPath)
 	t.Setenv("PI_SWITCH_MODELS", filepath.Join(dir, "models.json"))

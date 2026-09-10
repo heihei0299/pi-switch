@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -145,15 +144,11 @@ func indexOf(s, substr string) int {
 	return -1
 }
 
+// configPath and saveConfig are kernel helpers: every domain file reaches the
+// config file through them. Both delegate to internal/config so that path
+// resolution and the save-time migration have exactly one implementation.
 func configPath() string {
-	if p := os.Getenv("PI_SWITCH_CONFIG"); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "/tmp/pi-switch-config.json"
-	}
-	return filepath.Join(home, ".pi-switch", "config.json")
+	return config.ResolvePath()
 }
 
 func NewProxyRouter() *gin.Engine {
@@ -470,15 +465,7 @@ func handleAssets(c *gin.Context) {
 // --- basic config handlers ---
 
 func saveConfig(cfg config.PiSwitchConfig) error {
-	cfg = config.MigratedForSave(cfg)
-	path := configPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	b, _ := json.MarshalIndent(cfg, "", "  ")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return config.SaveAtPath(cfg, configPath())
 }
 
 func sessionScanCandidates(source string) map[string]scan.PiSession {

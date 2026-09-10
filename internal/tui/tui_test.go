@@ -72,7 +72,7 @@ func TestTUI_SwitchViaFile(t *testing.T) {
 	prof2.API = "openai-responses"
 	cfg.Profiles["second"] = prof2
 	// save
-	if err := saveConfig(cfg, cfgPath); err != nil {
+	if err := config.SaveAtPath(cfg, cfgPath); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)

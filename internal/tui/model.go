@@ -1,10 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -175,11 +172,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.tab == 0 {
 				if it, ok := m.list.SelectedItem().(profileItem); ok && it.name != "(no profiles)" {
-					cfgPath := configPath()
+					cfgPath := config.ResolvePath()
 					cfg := m.cfg
 					name := it.name
 					cfg.Current = &name
-					if err := saveConfig(cfg, cfgPath); err != nil {
+					if err := config.SaveAtPath(cfg, cfgPath); err != nil {
 						m.statusMsg = "switch failed: " + err.Error()
 					} else {
 						m.cfg.Current = &name
@@ -239,25 +236,4 @@ func (m Model) View() string {
 	}
 	b.WriteString("\n" + helpStyle.Render("Keys: ↑/↓ navigate • enter switch profile • g publish • s refresh • 1/2/3 tabs • q quit") + "\n")
 	return b.String()
-}
-
-func configPath() string {
-	if p := os.Getenv("PI_SWITCH_CONFIG"); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "/tmp/pi-switch-config.json"
-	}
-	return filepath.Join(home, ".pi-switch", "config.json")
-}
-
-func saveConfig(cfg config.PiSwitchConfig, path string) error {
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	b, _ := json.MarshalIndent(cfg, "", "  ")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

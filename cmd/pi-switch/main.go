@@ -295,7 +295,7 @@ func handleProvider(args []string) {
 		fmt.Println("Usage: pi-switch provider <list|show|add|delete|duplicate|use|test|fetch-models> [name]")
 		os.Exit(0)
 	}
-	cfgPath := envOrDefault("PI_SWITCH_CONFIG", defaultConfigPath())
+	cfgPath := config.ResolvePath()
 	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
 	switch args[0] {
 	case "list", "ls":
@@ -421,7 +421,7 @@ func handleGatewayCLI(args []string) {
 		fmt.Println("Usage: pi-switch gateway <publish|status|preview>")
 		os.Exit(0)
 	}
-	cfgPath := envOrDefault("PI_SWITCH_CONFIG", defaultConfigPath())
+	cfgPath := config.ResolvePath()
 	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
 	switch args[0] {
 	case "publish", "apply":
@@ -452,7 +452,7 @@ func handleConfigCLI(args []string) {
 		fmt.Println("Usage: pi-switch config <show|validate|path>")
 		os.Exit(0)
 	}
-	cfgPath := envOrDefault("PI_SWITCH_CONFIG", defaultConfigPath())
+	cfgPath := config.ResolvePath()
 	switch args[0] {
 	case "show", "path":
 		fmt.Println(cfgPath)
@@ -471,47 +471,12 @@ func handleConfigCLI(args []string) {
 }
 
 func handleDoctor() {
-	cfgPath := envOrDefault("PI_SWITCH_CONFIG", defaultConfigPath())
+	cfgPath := config.ResolvePath()
 	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
 	fmt.Printf("config: %s (%d profiles)\n", cfgPath, len(cfg.Profiles))
 	fmt.Println("doctor: ok")
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "/tmp/pi-switch-config.json"
-	}
-	return home + "/.pi-switch/config.json"
-}
-
 func saveConfigFile(cfg config.PiSwitchConfig, path string) error {
-	// ensure dir
-	return saveConfigInner(cfg, path)
-}
-
-func saveConfigInner(cfg config.PiSwitchConfig, path string) error {
-	// duplicate of tui save
-	b, _ := json.MarshalIndent(cfg, "", "  ")
-	tmp := path + ".tmp"
-	_ = os.MkdirAll(defaultConfigDir(), 0755)
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func defaultConfigDir() string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return "/tmp/pi-switch"
-	}
-	return home + "/.pi-switch"
+	return config.SaveAtPath(cfg, path)
 }

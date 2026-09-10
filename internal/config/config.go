@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 type ModelCost struct {
@@ -294,6 +295,41 @@ func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
 		out.Settings.ConversationSource = "sessionScan"
 	}
 	return out
+}
+
+// ResolvePath returns the config file location used by every entry point
+// (server, TUI, CLI). Precedence: PI_SWITCH_CONFIG > ~/.pi-switch/config.json,
+// falling back to /tmp when the home directory cannot be determined.
+func ResolvePath() string {
+	if p := os.Getenv("PI_SWITCH_CONFIG"); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "/tmp/pi-switch-config.json"
+	}
+	return filepath.Join(home, ".pi-switch", "config.json")
+}
+
+// SaveAtPath applies the save-time migration and writes cfg to path atomically
+// (temp file + rename), creating the parent directory as needed.
+// Every entry point must go through this so that no caller skips the migration.
+func SaveAtPath(cfg PiSwitchConfig, path string) error {
+	cfg = MigratedForSave(cfg)
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ChannelName returns the stable key of the i-th upstream ("" when unnamed).
