@@ -43,7 +43,7 @@ npm install -g @heihei0299/pi-switch
 pi install npm:@heihei0299/pi-switch
 ```
 
-**Build from source** (requires Node.js >= 20, Go 1.23+):
+**Build from source** (requires Node.js >= 20, Go 1.24+):
 
 ```bash
 git clone https://github.com/heihei0299/pi-switch.git

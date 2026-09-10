@@ -55,7 +55,14 @@ func handlePutConfig(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	_ = os.Rename(tmp, path)
+	// A failed rename means the config was NOT replaced. Reporting success here
+	// would tell the operator their edit was saved while the old file is still in
+	// place (a realistic outcome on Windows when the target is locked).
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true})
 }
 

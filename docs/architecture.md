@@ -141,12 +141,11 @@ internal/server/server.go             kernel：路由注册、认证、静态资
 
 被两个以上域调用的 helper 必须留在 kernel；域文件之间不互相调用内部 helper。
 
-```text
-> `retry.go` 的重试/故障转移引擎**当前休眠**：代理路径只取单候选直通，
-> `PUT /api/proxy/failover` 返回 410；该文件仍在用的是校验函数
-> （`validateRetryFields`/`validateSettingsRetry`）。保留原因见
-> `.scratch/remove-failover-chain/spec.md` D1。
+`retry.go` 的重试**调度**引擎当前休眠（代理路径只取单候选直通，`PUT /api/proxy/failover`
+返回 410），保留原因见 `.scratch/remove-failover-chain/spec.md` D1；但该文件并非死代码——
+`narrowToChannel` 在活的代理路径上被调用，两个校验函数也仍在 profile/settings handler 中生效。
 
+```text
 internal/server/proxy_handlers.go
 ├── handleChatCompletions       非流式请求
 ├── handleStream                流式请求
