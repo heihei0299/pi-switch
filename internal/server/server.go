@@ -481,15 +481,6 @@ func saveConfig(cfg config.PiSwitchConfig) error {
 	return os.Rename(tmp, path)
 }
 
-func contains(arr []string, s string) bool {
-	for _, v := range arr {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 func sessionScanCandidates(source string) map[string]scan.PiSession {
 	if source != "sessionScan" {
 		return nil

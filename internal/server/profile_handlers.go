@@ -649,16 +649,6 @@ func handleFetchModels(c *gin.Context) {
 	c.JSON(500, gin.H{"error": lastErr})
 }
 
-var modelsDevCatalog = map[string]map[string]map[string]interface{}{
-	"openai": {
-		"gpt-4o-mini": {"cost": map[string]interface{}{"input": 0.15, "output": 0.6, "cacheRead": 0.075}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false, "input": []string{"text"}},
-		"gpt-4o":      {"cost": map[string]interface{}{"input": 2.5, "output": 10.0, "cacheRead": 1.25}, "contextWindow": 128000, "maxTokens": 16384, "reasoning": false},
-	},
-	"anthropic": {
-		"claude-3-5-sonnet": {"cost": map[string]interface{}{"input": 3.0, "output": 15.0}, "contextWindow": 200000, "maxTokens": 8192},
-	},
-}
-
 func resolveModelsDevProvider(prof config.ProviderProfile) string {
 	if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
 		return *prof.ModelsDevProvider
