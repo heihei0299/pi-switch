@@ -37,10 +37,10 @@ func handleProxyStatus(c *gin.Context) {
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid, "host": res.Host, "port": res.Port, "startedAt": res.StartedAt})
 }
 func handleWebUIInfo(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	host := cfg.Settings.Web.Host
-	needAuth := !isLoopback(host) && resolveWebUIPassword() != ""
-	c.JSON(200, gin.H{"authRequired": needAuth})
+	// Report the posture this listener actually enforces; the config file does
+	// not know the bind address, so deriving it there misreports exposed setups.
+	auth := requestAuthOptions(c)
+	c.JSON(200, gin.H{"authRequired": !isLoopback(effectiveBindHost(auth.BindHost))})
 }
 
 func handleInit(c *gin.Context) { c.JSON(200, gin.H{"messages": []string{"init ok"}}) }

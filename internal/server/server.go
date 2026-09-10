@@ -1,11 +1,14 @@
 package server
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,10 +167,32 @@ func NewProxyRouter() *gin.Engine {
 	return r
 }
 
+// NewMgmtRouter builds the management router for loopback use, with no
+// authentication. Callers that bind elsewhere must use NewMgmtRouterWithAuth:
+// an empty bind host means "every interface", not "local".
 func NewMgmtRouter() *gin.Engine {
+	return NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "127.0.0.1"})
+}
+
+// NewMgmtRouterWithAuth builds the management router for a specific bind
+// address: non-loopback bindings require the password from opts, and the
+// decision never consults the config file.
+func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(authMiddleware())
+	// Any non-loopback bind installs the guard, including an unspecified bind
+	// host. With no password the middleware rejects everything, because an
+	// exposed listener that cannot authenticate must not serve openly at all.
+	// Startup validation normally refuses this state before binding; installing
+	// the guard anyway means reaching it cannot silently fail open.
+	if !isLoopback(opts.BindHost) {
+		r.Use(basicAuthMiddleware(opts.Password))
+	}
+	// Record the enforced mode for handlers that report it back to clients.
+	r.Use(func(c *gin.Context) {
+		withAuthState(opts, c)
+		c.Next()
+	})
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	// API group
@@ -238,27 +263,24 @@ func NewMgmtRouter() *gin.Engine {
 }
 
 // --- auth ---
+// isLoopback reports whether host names only the local machine.
+//
+// An unspecified (empty) host is NOT loopback: gin's Run and net.Listen read
+// ":port" as "every interface", so treating "" as local is a fail-open exactly
+// when the operator forgot to name an interface. Callers that mean "default to
+// local" must say 127.0.0.1 explicitly. Wildcard addresses (0.0.0.0, ::) are
+// likewise not loopback — they mean "listen on every interface", the opposite
+// of local-only.
 func isLoopback(host string) bool {
 	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "" {
+	if h == "::1" || h == "[::1]" {
 		return true
 	}
-	// strip port
-	if strings.Contains(h, ":") {
-		if hp, _, err := splitHostPort(h); err == nil {
-			h = hp
-		}
+	// strip a trailing :port from the IPv4 / hostname forms
+	if idx := strings.LastIndex(h, ":"); idx >= 0 && !strings.Contains(h[idx+1:], "]") {
+		h = h[:idx]
 	}
-	return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]" || h == "0.0.0.0" || h == "::"
-}
-
-func splitHostPort(h string) (string, string, error) {
-	// naive
-	idx := strings.LastIndex(h, ":")
-	if idx < 0 {
-		return h, "", nil
-	}
-	return h[:idx], h[idx+1:], nil
+	return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
 }
 
 func webUIPasswordPath() string {
@@ -272,50 +294,154 @@ func webUIPasswordPath() string {
 	return filepath.Join(home, ".pi-switch", "webui_password")
 }
 
-func resolveWebUIPassword() string {
-	// Check explicit env
-	if pw := os.Getenv("PI_SWITCH_WEBUI_PASSWORD"); pw != "" {
-		return pw
-	}
-	p := webUIPasswordPath()
-	if b, err := os.ReadFile(p); err == nil {
-		s := strings.TrimSpace(string(b))
-		if s != "" {
-			return s
-		}
-	}
-	return ""
+// authStateCtxKey stores the auth mode this listener actually enforces, so
+// read-only handlers report the real posture instead of re-deriving it from a
+// source (the config file) that does not know the bind address. gin's
+// Set/Get only accept string keys, so this constant is the key contract.
+const authStateCtxKey = "pi-switch.auth"
+
+func withAuthState(opts MgmtAuthOptions, c *gin.Context) {
+	mode := opts
+	mode.Password = "" // never keep the secret in the request context
+	c.Set(authStateCtxKey, mode)
 }
 
-func authMiddleware() gin.HandlerFunc {
+// effectiveBindHost resolves the posture for a request. An empty bind host means
+// every interface, so the safe reading is the wildcard, not local.
+func effectiveBindHost(host string) string {
+	if strings.TrimSpace(host) == "" {
+		return "0.0.0.0"
+	}
+	return host
+}
+
+// requestAuthOptions returns the auth mode in effect for this request. A
+// request that never passed the auth-state middleware carries no state, which
+// only happens when the router installed no guard (loopback), so a loopback
+// posture is the honest answer there.
+func requestAuthOptions(c *gin.Context) MgmtAuthOptions {
+	if v, ok := c.Get(authStateCtxKey); ok {
+		if opts, ok := v.(MgmtAuthOptions); ok {
+			return opts
+		}
+	}
+	return MgmtAuthOptions{BindHost: "127.0.0.1"}
+}
+
+// MgmtAuthOptions carries the *actual* bind address of the listener together
+// with the resolved password. The bind address comes from the CLI flag and is
+// never written back to config, so it — not cfg.Settings.Web.Host — is the only
+// trustworthy input for deciding whether the API is exposed.
+type MgmtAuthOptions struct {
+	BindHost string
+	Password string
+	// GeneratePassword lets an operator explicitly ask for a generated
+	// credential when binding beyond loopback.
+	GeneratePassword bool
+}
+
+// ValidateBindAuth is the startup guard: binding the management API beyond
+// loopback without a password must refuse to start rather than serve
+// unauthenticated. An empty bind host counts as non-loopback because it binds
+// every interface. GeneratePassword is the explicit opt-in that makes the
+// operator's choice visible instead of silently inventing credentials.
+func ValidateBindAuth(opts MgmtAuthOptions) error {
+	if isLoopback(opts.BindHost) || strings.TrimSpace(opts.Password) != "" || opts.GeneratePassword {
+		return nil
+	}
+	return errors.New("refusing to start on non-loopback host " + opts.BindHost +
+		" without a password: set PI_SWITCH_WEBUI_PASSWORD, create the password file, or pass --generate-password")
+}
+
+// GenerateAndStorePassword creates a random password, persists it to the
+// password file (0600) and returns it so the caller can print it exactly once.
+func GenerateAndStorePassword() (string, error) {
+	buf := make([]byte, 18)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	pw := hex.EncodeToString(buf)
+	path := webUIPasswordPath()
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(path, []byte(pw+"\n"), 0600); err != nil {
+		return "", err
+	}
+	return pw, nil
+}
+
+// adminUser is the fixed username of the single management credential; the
+// password is the only secret. Kept next to the middleware that enforces it.
+const adminUser = "admin"
+
+// storedWebUIPassword reads the persisted credential only, ignoring the
+// environment.
+func storedWebUIPassword() string {
+	b, err := os.ReadFile(webUIPasswordPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// ResolveAuthOptions turns the actual bind address into the auth options the
+// routers enforce. It is the single startup entry: main resolves here, and the
+// daemon child resolves the identical inputs in its own process.
+//
+// Precedence is generate > password file > environment. The file outranks the
+// environment so that a generated credential is the one actually enforced (and
+// so a parent and the daemon child it spawns agree on the same secret);
+// --generate-password outranks both because asking for one is explicit.
+func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (MgmtAuthOptions, error) {
+	password := ""
+	switch {
+	case generate:
+		pw, err := GenerateAndStorePassword()
+		if err != nil {
+			return MgmtAuthOptions{}, err
+		}
+		password = pw
+		if announce != nil {
+			announce("generated WebUI password (also stored in " + webUIPasswordPath() + "): " + pw)
+		}
+	default:
+		password = storedWebUIPassword()
+		if password == "" {
+			password = strings.TrimSpace(os.Getenv("PI_SWITCH_WEBUI_PASSWORD"))
+		}
+	}
+	opts := MgmtAuthOptions{BindHost: bindHost, Password: password}
+	if err := ValidateBindAuth(opts); err != nil {
+		return MgmtAuthOptions{}, err
+	}
+	return opts, nil
+}
+
+// basicAuthMiddleware protects handlers with the single admin:<password> pair.
+// It only guards /api: health probes stay reachable so that a misconfigured
+// listener is still diagnosable.
+func basicAuthMiddleware(password string) gin.HandlerFunc {
+	expected := adminUser + ":" + password
+	reject := func(c *gin.Context) {
+		c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	}
 	return func(c *gin.Context) {
-		// Only for /api and / except healthz? But spec says WebUI and management API share basic auth when non-loopback
-		// Determine host from config
-		cfg, _, _ := config.LoadConfigAtPath(configPath())
-		host := cfg.Settings.Web.Host
-		if isLoopback(host) {
+		if !strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.Next()
 			return
 		}
-		pw := resolveWebUIPassword()
-		if pw == "" {
-			// if no password file and non-loopback, allow? But spec says generate, but for Go we allow without auth if no file to keep tests simple.
-			// Generate a placeholder and allow? We'll skip auth if no file to avoid breaking tests that use non-loopback.
-			// However if file exists, enforce.
-			c.Next()
-			return
-		}
-		expected := "admin:" + pw
 		auth := c.GetHeader("Authorization")
 		if !strings.HasPrefix(auth, "Basic ") {
-			c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
-			c.AbortWithStatusJSON(401, gin.H{"error": "Unauthorized"})
+			reject(c)
 			return
 		}
 		dec, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
 		if err != nil || string(dec) != expected {
-			c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
-			c.AbortWithStatusJSON(401, gin.H{"error": "Unauthorized"})
+			reject(c)
 			return
 		}
 		c.Next()

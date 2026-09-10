@@ -159,6 +159,68 @@ func parseHostPort(args []string, defHost string, defPort int) (string, int, boo
 	return host, port, daemonFlag
 }
 
+func hasGeneratePasswordFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--generate-password" {
+			return true
+		}
+	}
+	return false
+}
+
+// startWebUI is the single launch path for the management server. The direct
+// run and the daemon child both arrive here, so the bind-address guard cannot
+// be bypassed by spawning.
+func startWebUI(host string, port int) {
+	auth, err := server.ResolveAuthOptions(host, hasGeneratePasswordFlag(os.Args), func(msg string) {
+		fmt.Println(msg)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	r := server.NewMgmtRouterWithAuth(auth)
+	server.ImportLegacyOnStartup()
+	addr := host + ":" + strconv.Itoa(port)
+	fmt.Printf("WebUI server listening on http://%s\n", addr)
+	if err := r.Run(addr); err != nil {
+		fmt.Fprintf(os.Stderr, "webui: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func startProxy(host string, port int) {
+	r := server.NewProxyRouter()
+	server.ImportLegacyOnStartup()
+	addr := host + ":" + strconv.Itoa(port)
+	fmt.Printf("Proxy server listening on http://%s\n", addr)
+	if err := r.Run(addr); err != nil {
+		fmt.Fprintf(os.Stderr, "proxy: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func startWebUIMode(host string, port int, isDaemon bool) {
+	if isDaemon {
+		// Resolve before spawning so an exposed bind without credentials fails
+		// here, and so a generated password already exists for the child.
+		if _, err := server.ResolveAuthOptions(host, hasGeneratePasswordFlag(os.Args), func(msg string) {
+			fmt.Println(msg)
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		res, err := daemon.Start(daemon.WebUI, host, uint16(port))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(res.Message)
+		os.Exit(0)
+	}
+	startWebUI(host, port)
+}
+
 func handleProxy(args []string) {
 	if len(args) == 0 {
 		args = []string{"start"}
@@ -187,14 +249,7 @@ func handleProxy(args []string) {
 			}
 			os.Exit(0)
 		}
-		r := server.NewProxyRouter()
-		server.ImportLegacyOnStartup()
-		addr := host + ":" + strconv.Itoa(port)
-		fmt.Printf("Proxy server listening on http://%s\n", addr)
-		if err := r.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "proxy: %v\n", err)
-			os.Exit(1)
-		}
+		startProxy(host, port)
 	case "stop":
 		res, _ := daemon.Stop(daemon.Proxy)
 		fmt.Println(res.Message)
@@ -216,14 +271,7 @@ func handleProxy(args []string) {
 			fmt.Println(res.Message)
 			os.Exit(0)
 		}
-		r := server.NewProxyRouter()
-		server.ImportLegacyOnStartup()
-		addr := host + ":" + strconv.Itoa(port)
-		fmt.Printf("Proxy server listening on http://%s\n", addr)
-		if err := r.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "proxy: %v\n", err)
-			os.Exit(1)
-		}
+		startProxy(host, port)
 	}
 }
 
@@ -238,27 +286,11 @@ func handleWebUI(args []string) {
 	}
 	switch sub {
 	case "-h", "--help", "help":
-		fmt.Println("Usage: pi-switch webui [start|stop|status] [--host HOST] [--port PORT] [--daemon]")
+		fmt.Println("Usage: pi-switch webui [start|stop|status] [--host HOST] [--port PORT] [--daemon] [--generate-password]")
 		os.Exit(0)
 	case "start":
 		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43110)
-		if isDaemon {
-			res, err := daemon.Start(daemon.WebUI, host, uint16(port))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println(res.Message)
-			os.Exit(0)
-		}
-		r := server.NewMgmtRouter()
-		server.ImportLegacyOnStartup()
-		addr := host + ":" + strconv.Itoa(port)
-		fmt.Printf("WebUI server listening on http://%s\n", addr)
-		if err := r.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "webui: %v\n", err)
-			os.Exit(1)
-		}
+		startWebUIMode(host, port, isDaemon)
 	case "stop":
 		res, _ := daemon.Stop(daemon.WebUI)
 		fmt.Println(res.Message)
@@ -270,23 +302,7 @@ func handleWebUI(args []string) {
 		}
 	default:
 		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43110)
-		if isDaemon {
-			res, err := daemon.Start(daemon.WebUI, host, uint16(port))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println(res.Message)
-			os.Exit(0)
-		}
-		r := server.NewMgmtRouter()
-		server.ImportLegacyOnStartup()
-		addr := host + ":" + strconv.Itoa(port)
-		fmt.Printf("WebUI server listening on http://%s\n", addr)
-		if err := r.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "webui: %v\n", err)
-			os.Exit(1)
-		}
+		startWebUIMode(host, port, isDaemon)
 	}
 }
 
