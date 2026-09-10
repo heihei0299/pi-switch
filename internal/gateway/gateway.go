@@ -575,15 +575,15 @@ var generatedKeys = map[string]bool{
 // MergeGatewayExtra merges non-generated provider and model fields from current
 // into the proposed providers wrapper.
 func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]interface{} {
-	return mergeGatewayExtra(current, proposed, nil)
+	return mergeGatewayExtra(current, proposed, nil, true)
 }
 
 // MergeGatewayExtraForConfig also recognizes legacy provider keys derived from config.
 func MergeGatewayExtraForConfig(cfg config.PiSwitchConfig, current, proposed map[string]interface{}) map[string]interface{} {
-	return mergeGatewayExtra(current, proposed, managedProviderKeys(cfg))
+	return mergeGatewayExtra(current, proposed, managedProviderKeys(cfg), true)
 }
 
-func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[string]bool) map[string]interface{} {
+func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[string]bool, preservePublishedName bool) map[string]interface{} {
 	if current == nil {
 		return proposed
 	}
@@ -634,6 +634,11 @@ func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[str
 			}
 			id, _ := entry["id"].(string)
 			if old, exists := curByID[id]; exists {
+				if preservePublishedName {
+					if oldName, hasOldName := old["name"]; hasOldName {
+						entry["name"] = oldName
+					}
+				}
 				for _, field := range []string{"headers", "compat", "extra"} {
 					oldValue, hasOld := old[field]
 					if !hasOld {
@@ -854,12 +859,14 @@ func cloneGatewayMap(input map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
-func buildCanonicalProposedGateway(cfg config.PiSwitchConfig, current, edited map[string]interface{}) map[string]interface{} {
+func buildCanonicalProposedGateway(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) map[string]interface{} {
 	proposed := cloneGatewayMap(edited)
 	if proposed == nil {
 		proposed = BuildProposedGatewayEntry(cfg)
 	}
-	merged := MergeGatewayExtraForConfig(cfg, current, proposed)
+	// A submitted draft owns its explicit name; a fresh canonical proposal
+	// reuses the name from the last published Gateway metadata.
+	merged := mergeGatewayExtra(current, proposed, managedProviderKeys(cfg), preservePublishedMetadata)
 	curProvs := getProviders(current)
 	propProvs := getProviders(merged)
 	if propProvs == nil {
@@ -922,10 +929,21 @@ func validateThirdPartyEdits(cfg config.PiSwitchConfig, current, edited map[stri
 
 // BuildCanonicalGatewayPlan derives every publish-facing view from one normalized proposed gateway.
 func BuildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}) CanonicalGatewayPlan {
+	return buildCanonicalGatewayPlan(cfg, current, edited, edited == nil)
+}
+
+// BuildCanonicalGatewayPlanWithPublishedMetadata is used when the server has
+// enriched a generated proposal but still needs current Gateway-owned metadata
+// (for example a hand-edited model name) to remain authoritative.
+func BuildCanonicalGatewayPlanWithPublishedMetadata(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
+	return buildCanonicalGatewayPlan(cfg, current, edited, preservePublishedMetadata)
+}
+
+func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
 	if current == nil {
 		current = emptyGatewayWrapper()
 	}
-	proposed := buildCanonicalProposedGateway(cfg, current, edited)
+	proposed := buildCanonicalProposedGateway(cfg, current, edited, preservePublishedMetadata)
 	added, removed, changed := DiffGateway(current, proposed)
 	sort.Strings(added)
 	sort.Strings(removed)

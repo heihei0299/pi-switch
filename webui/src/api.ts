@@ -9,6 +9,7 @@ import type {
   EnrichStats,
   ModelEntry,
   PackageEntry,
+  PackageImportResult,
   PresetInfo,
   ProfileDetail,
   ProviderProfile,
@@ -135,7 +136,7 @@ export const api = {
   addPackage: (spec: string) =>
     req("POST", "/packages", { spec, enabled: true }, decodeOk),
   importPackages: () =>
-    req<{ ok: boolean; count: number; message: string }>("POST", "/packages/import", {}, decodeImportPackages),
+    req<PackageImportResult>("POST", "/packages/import", {}, decodeImportPackages),
   togglePackage: (id: string) => req("POST", `/packages/${enc(id)}/toggle`, undefined, decodeOk),
   deletePackage: (id: string) => req("DELETE", `/packages/${enc(id)}`, undefined, decodeOk),
 
@@ -169,7 +170,7 @@ export const api = {
       decodeFetchModels,
     ),
   updateModels: (name: string, models: ModelEntry[], channel?: string) =>
-    req<{ ok: boolean; backup?: string; enrich?: EnrichStats }>(
+    req<{ ok: boolean; backup?: string | null; enrich?: EnrichStats }>(
       "PUT",
       `/profiles/${enc(name)}/models`,
       channel ? { models, channel } : { models },

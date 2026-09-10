@@ -359,7 +359,13 @@ func handlePackage(args []string) {
 	}
 	switch args[0] {
 	case "list", "ls":
-		fmt.Println(`{"packages":[]}`)
+		packages, err := server.ListInstalledPackages()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "package list failed: %v\n", err)
+			os.Exit(1)
+		}
+		b, _ := json.Marshal(map[string]interface{}{"packages": packages})
+		fmt.Println(string(b))
 	case "add":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "package add <spec> required")
@@ -369,7 +375,13 @@ func handlePackage(args []string) {
 	case "sync":
 		fmt.Println(`{"ok":true,"message":"sync done"}`)
 	case "import":
-		fmt.Println(`{"ok":true,"count":0}`)
+		result, err := server.ImportPiPackages()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "package import failed: %v\n", err)
+			os.Exit(1)
+		}
+		b, _ := json.Marshal(result)
+		fmt.Println(string(b))
 	case "show":
 		fmt.Println(`{"error":"not found"}`)
 	case "delete", "remove", "rm":

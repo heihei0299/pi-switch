@@ -50,6 +50,34 @@ describe("API runtime contract boundary", () => {
     expect(result).toMatchObject({ version: "20260908.0.2", commit: "abc123", target: "linux/amd64", dirty: "false" });
   });
 
+  it("accepts the nullable backup returned by model updates", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      ok: true,
+      backup: null,
+      enrich: { enriched: 0 },
+    })));
+
+    const result = await api.updateModels("mock", [], "main");
+    expect(result.ok).toBe(true);
+    expect(result.backup).toBeNull();
+  });
+
+  it("decodes package import status and warnings", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      ok: true,
+      count: 2,
+      discovered: 3,
+      skipped: 1,
+      status: "imported",
+      message: "Imported 2 Pi packages",
+      warnings: ["one package had no manifest"],
+    })));
+
+    const result = await api.importPackages();
+    expect(result).toMatchObject({ count: 2, discovered: 3, skipped: 1, status: "imported" });
+    expect(result.warnings).toEqual(["one package had no manifest"]);
+  });
+
   it("normalizes legacy snake_case stats aliases at the API boundary", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
       total_requests: 1,

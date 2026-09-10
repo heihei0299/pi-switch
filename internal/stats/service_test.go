@@ -55,6 +55,30 @@ func TestStatsServiceUsesSQLWindowAndPreservesNullableFacts(t *testing.T) {
 	}
 }
 
+func TestStatsServiceKeepsMillisecondRightOpenBoundary(t *testing.T) {
+	db := openStatsDB(t)
+	center := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	recorded := center.Add(250 * time.Millisecond)
+	insertFact(t, db, recorded.Format(time.RFC3339Nano), "p", "m", 1, int64(10), int64(5), int64(0), int64(0), nil, nil, nil, nil)
+	service := Service{DB: db, Source: conversation.SourceProxy}
+
+	inside, err := service.Stats(&Window{From: center.UnixMilli(), To: center.Add(500 * time.Millisecond).UnixMilli()}, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inside.TotalRequests != 1 {
+		t.Fatalf("subsecond request inside window = %d, want 1", inside.TotalRequests)
+	}
+
+	atRightEdge, err := service.Stats(&Window{From: center.UnixMilli(), To: recorded.UnixMilli()}, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atRightEdge.TotalRequests != 0 {
+		t.Fatalf("request exactly at right edge = %d, want 0", atRightEdge.TotalRequests)
+	}
+}
+
 func TestStatsServiceSharesConversationAttributionAcrossEndpoints(t *testing.T) {
 	db := openStatsDB(t)
 	ts := "2026-09-10T12:00:00Z"

@@ -335,12 +335,14 @@ func overwriteInput(entry map[string]interface{}, input []string) bool {
 	return true
 }
 
-// FillOverwrite overwrites entry fields with catalog meta when catalog has non-zero values.
-// It returns true if any field changed. cacheWrite normalization is not counted.
+// FillOverwrite refreshes generated metadata from the catalog while preserving
+// an explicit model name. It returns true if any field changed; cacheWrite
+// normalization is not counted.
 func FillOverwrite(entry map[string]interface{}, meta Meta) bool {
 	changed := false
 	if strings.TrimSpace(meta.Name) != "" {
-		if s, _ := entry["name"].(string); strings.TrimSpace(s) != strings.TrimSpace(meta.Name) {
+		s, exists := entry["name"].(string)
+		if !exists || strings.TrimSpace(s) == "" {
 			entry["name"] = meta.Name
 			changed = true
 		}

@@ -26,6 +26,11 @@ func testRepoRoot(t *testing.T) string {
 
 func TestHelp_ListsAllCommands(t *testing.T) {
 	writeLegacyTestEnv(t, "")
+	agentRoot := t.TempDir()
+	if err := os.MkdirAll(agentRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_AGENT_ROOT", agentRoot)
 	// We test via spawning go binary's help output indirectly via main printHelp?
 	// Instead test that our server exposes all required API groups mentioned in ticket
 	r := NewMgmtRouter()
@@ -54,6 +59,22 @@ func TestHelp_ListsAllCommands(t *testing.T) {
 }
 
 func TestPackageAndCcsApis(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"version":2,"profiles":{},"settings":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", filepath.Join(dir, "requests.db"))
+	agentRoot := filepath.Join(dir, "pi", "agent")
+	t.Setenv("PI_AGENT_ROOT", agentRoot)
+	pkgRoot := filepath.Join(agentRoot, "npm", "node_modules", "demo-pi-package")
+	if err := os.MkdirAll(pkgRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgRoot, "package.json"), []byte(`{"name":"demo-pi-package","version":"1.0.0","pi":{"extensions":["./index.ts"],"skills":[]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	r := NewMgmtRouter()
 
 	// package list
@@ -84,7 +105,35 @@ func TestPackageAndCcsApis(t *testing.T) {
 	req3.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w3, req3)
 	if w3.Code != 200 {
-		t.Fatalf("POST /api/packages/import code=%d", w3.Code)
+		t.Fatalf("POST /api/packages/import code=%d body=%s", w3.Code, w3.Body.String())
+	}
+	var imported map[string]interface{}
+	if err := json.Unmarshal(w3.Body.Bytes(), &imported); err != nil {
+		t.Fatal(err)
+	}
+	if imported["count"] != float64(1) || imported["status"] != "imported" {
+		t.Fatalf("unexpected import result: %s", w3.Body.String())
+	}
+	wImportedList := httptest.NewRecorder()
+	r.ServeHTTP(wImportedList, httptest.NewRequest("GET", "/api/packages", nil))
+	var importedList map[string]interface{}
+	_ = json.Unmarshal(wImportedList.Body.Bytes(), &importedList)
+	packages, _ := importedList["packages"].([]interface{})
+	if len(packages) != 2 { // the manual add plus the Pi package
+		t.Fatalf("imported packages = %s", wImportedList.Body.String())
+	}
+	foundPi := false
+	for _, raw := range packages {
+		pkg := raw.(map[string]interface{})
+		if pkg["origin"] == "pi" {
+			foundPi = true
+			if pkg["version"] != "1.0.0" || pkg["hasExtensions"] != true {
+				t.Fatalf("Pi package metadata = %#v", pkg)
+			}
+		}
+	}
+	if !foundPi {
+		t.Fatalf("Pi package missing from list: %s", wImportedList.Body.String())
 	}
 
 	// ccs list

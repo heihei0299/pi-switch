@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { PackageEntry } from "../types";
-import { Button, Card, Input, SectionTitle, Switch, useAction } from "./ui";
+import { Button, Card, Input, SectionTitle, Switch, useAction, useToast } from "./ui";
 import { useI18n } from "../i18n";
 
 interface PackagesPanelProps {
@@ -32,6 +32,7 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [spec, setSpec] = useState("");
   const run = useAction();
+  const toast = useToast();
 
   const loadPackages = async () => {
     try {
@@ -95,12 +96,20 @@ export function PackagesPanel({ refresh }: PackagesPanelProps) {
 
   const handleImport = async () => {
     await run(
-      () => api.importPackages(),
-      t("Packages imported from Pi Agent"),
+      async () => {
+        const result = await api.importPackages();
+        const warning = result.warnings && result.warnings.length > 0 ? ` · ${result.warnings.join("; ")}` : "";
+        if (result.status === "empty") {
+          toast("err", `${result.message || "No Pi packages discovered"}${warning}`);
+          return;
+        }
+        toast("ok", `${result.message || t("Packages imported from Pi Agent")}${warning}`);
+      },
+      undefined,
       () => {
         loadPackages();
         refresh();
-      }
+      },
     );
   };
 

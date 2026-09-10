@@ -210,6 +210,39 @@ describe("Profiles save decoupled from gateway (gateway-sep)", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
+  it("continues to expose a newly checked model when updateModels returns backup null", async () => {
+    const expose = vi.spyOn(api, "expose").mockResolvedValue({ ok: true } as any);
+    vi.spyOn(api, "fetchModels").mockResolvedValue({ models: [], enrich: undefined } as any);
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => JSON.stringify({ ok: true, backup: null, enrich: { enriched: 0 } }),
+    } as Response);
+    const refresh = vi.fn(async () => {});
+    const state = stateWithProfile({
+      models: [
+        { id: "model-a", input: ["text"], contextWindow: 1000, maxTokens: 100 },
+        { id: "model-b", input: ["text"], contextWindow: 1000, maxTokens: 100 },
+      ],
+      exposedModels: ["model-a"],
+    });
+    renderPanel(state, refresh);
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+    await waitFor(() => expect(screen.getByText(/Model config/)).toBeInTheDocument());
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes).toHaveLength(2);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(expose).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/profiles/native/models",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    expect(expose).toHaveBeenCalledWith("native", ["model-a", "model-b"], "main");
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
   it("Add profile save does not trigger preview/apply", async () => {
     const add = vi.spyOn(api, "addProfile").mockResolvedValue({});
     const preview = vi.spyOn(api, "previewGateway").mockResolvedValue({ current: null, proposed: {}, conflicts: [] } as any);

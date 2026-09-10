@@ -323,3 +323,17 @@ func TestCatalog_WarningCarriesStatus(t *testing.T) {
 		t.Fatalf("warn = %q, want status 503 mentioned", warn)
 	}
 }
+
+func TestCatalog_FillOverwritePreservesExplicitName(t *testing.T) {
+	entry := map[string]interface{}{"id": "sup/model", "name": "Browser Edited"}
+	changed := FillOverwrite(entry, Meta{Name: "Catalog Default", ContextWindow: 1000})
+	if !changed {
+		t.Fatal("expected generated metadata to be filled")
+	}
+	if entry["name"] != "Browser Edited" {
+		t.Fatalf("explicit name was overwritten: %v", entry["name"])
+	}
+	if entry["contextWindow"] != float64(1000) {
+		t.Fatalf("contextWindow = %v, want 1000", entry["contextWindow"])
+	}
+}

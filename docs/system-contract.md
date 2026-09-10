@@ -46,7 +46,7 @@
 | `providers` 缺失或 `null` | current 为空 map；不删除或覆盖任何不存在的第三方 provider |
 | fixed provider 无 exposed model | canonical proposed 不包含该 provider；发布后不保留 stale fixed provider |
 | 第三方 provider | 不属于 pi-switch 管理范围，发布时原样保留其 entry 和未受管字段 |
-| `compat`/`headers`/其他 extra 缺失 | 不生成空的伪字段；current 中存在的受允许 extra 合并进 canonical proposed |
+| Gateway-owned model metadata（`name`/`compat`/`headers`/其他 `extra`）缺失 | 不生成空的伪字段；current 中存在的受允许 metadata 合并进 canonical proposed，显式 draft 优先 |
 | validation/conflict 非空 | publish 零写入；不部分写入、不先写临时目标再报告冲突 |
 | 连续 publish 同一 canonical plan | 结构等价且 `pending_count=0`；不得因 normalization 或 extra merge 产生漂移 |
 
@@ -104,7 +104,7 @@
 | models 文件不存在时 current 为空，publish 创建目录并原子写 | §2.3 models file | IMP-05 | golden/atomic write tests | 真实 models.json 副本首次 publish 可被 Pi 解析 |
 | providers 缺失/null 不删除不存在的第三方 provider | §2.3 providers | IMP-05 | current-empty/preservation tests | 真实第三方 provider 字节/结构保留 |
 | fixed provider 无 exposed model 时不保留 stale entry | §2.3 fixed provider | IMP-05 | stale provider cleanup tests | 删除模型后重新 preview/publish 不复活 |
-| compat/headers/extra 由 canonical merge 保留 | §2.3 extras | IMP-05；后续 IMP-06 | extra preservation tests | publish 后再次 preview pending 为 0 |
+| Gateway-owned `name`/compat/headers/extra 由 canonical merge 保留，显式 draft 优先 | §2.3 Gateway metadata | IMP-05；后续 IMP-06 | manual metadata preservation tests | publish 后再次 preview pending 为 0 |
 | conflict/validation 非空时零写入 | §2.3 conflict | IMP-05 | failure atomicity tests | 冲突前后 models.json 字节不变 |
 | 同一 canonical plan 连续 publish 幂等 | §2.3 idempotency | IMP-05 | golden/idempotency tests | 第二次 publish 后 `pending_count=0` |
 | responsesMode 只按声明 api 决定 passthrough/convert | §2.4.1/2 | IMP-04 | table-driven PlanRequest tests | Responses/Chat provider 实际 endpoint 与事件语义一致 |

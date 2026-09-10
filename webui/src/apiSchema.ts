@@ -754,13 +754,17 @@ export function decodeCcsImport(value: unknown): { ok: boolean; imported: number
   };
 }
 
-export function decodeImportPackages(value: unknown): { ok: boolean; count: number; message: string } {
+export function decodeImportPackages(value: unknown): { ok: boolean; count: number; discovered: number; skipped: number; status: string; message: string; warnings?: string[] } {
   const raw = object(value, "packages.import");
   return {
     ...raw,
     ok: requiredBoolean(raw, "ok", "packages.import"),
     count: defaultNumber(raw, "count", "packages.import", 0),
+    discovered: defaultNumber(raw, "discovered", "packages.import", 0),
+    skipped: defaultNumber(raw, "skipped", "packages.import", 0),
+    status: defaultString(raw, "status", "packages.import", "imported"),
     message: defaultString(raw, "message", "packages.import", ""),
+    warnings: has(raw, "warnings") ? stringArray(raw.warnings, "packages.import.warnings") : undefined,
   };
 }
 
@@ -783,12 +787,12 @@ export function decodeFetchModels(value: unknown): { models: string[]; enrich?: 
   };
 }
 
-export function decodeUpdateModels(value: unknown): { ok: boolean; backup?: string; enrich?: EnrichStats } {
+export function decodeUpdateModels(value: unknown): { ok: boolean; backup?: string | null; enrich?: EnrichStats } {
   const raw = object(value, "updateModels");
   return {
     ...raw,
     ok: requiredBoolean(raw, "ok", "updateModels"),
-    backup: optionalString(raw, "backup", "updateModels"),
+    backup: nullableString(raw, "backup", "updateModels"),
     enrich: has(raw, "enrich") ? decodeEnrichStatsAt(raw.enrich, "updateModels.enrich") : undefined,
   };
 }

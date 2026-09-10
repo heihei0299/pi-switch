@@ -313,11 +313,24 @@ export interface PackageEntry {
   name: string;
   version: string;
   enabled: boolean;
+  description?: string;
+  homepage?: string;
+  origin?: string;
   installedAt?: string;
   hasExtensions?: boolean;
   hasSkills?: boolean;
   hasPrompts?: boolean;
   hasThemes?: boolean;
+}
+
+export interface PackageImportResult {
+  ok: boolean;
+  count: number;
+  discovered: number;
+  skipped: number;
+  status: "imported" | "empty" | "not_found" | string;
+  message: string;
+  warnings?: string[];
 }
 
 export interface CcsProvider {

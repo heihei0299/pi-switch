@@ -11,7 +11,7 @@ pi-switch 同时管理 `config.json`、`models.json`、SQLite request rows、pi 
 ## Decision
 
 1. `config.json` 的 Supplier/Channel/Model/exposed model 是供应商事实来源；Gateway 是显式发布的派生视图，不因 Supplier 或 settings 变更自动写入。
-2. Gateway 由后端 `CanonicalGatewayPlan` 生成；Preview、Diff、Validation、Publish 必须消费同一 plan。第三方 provider 原样保留，冲突时零写入，连续发布收敛到 `pending_count=0`。
+2. Gateway 由后端 `CanonicalGatewayPlan` 生成；Preview、Diff、Validation、Publish 必须消费同一 plan。第三方 provider 原样保留，冲突时零写入，连续发布收敛到 `pending_count=0`；已发布 Gateway 的手工 model metadata（`name`、`headers`、`compat`、`extra`）由 current 合并回 proposal，显式 draft 优先，不回写 Supplier config。
 3. SQLite request rows 保存 immutable request facts；conversation attribution 是独立派生视图；Stats GET 不执行 migration 写入。
 4. Responses 路由以 provider 声明的 `api` 和 `responsesMode` 为能力 contract，不运行时探测、不静默降级、不引入 failover。所有 outbound request 路径共享 builder；所有 token clamp 路径共享唯一实现。
 5. WebUI 使用一个 canonical draft；Config JSON 保持直接可编辑，Format 在左下，错误只标记真实位置。

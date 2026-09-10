@@ -21,6 +21,11 @@ type Service struct {
 	Candidates []conversation.Candidate
 }
 
+// timestampEpochMillisSQL keeps the Stats window in the same epoch-millisecond
+// domain as the API bounds. SQLite julianday() rounds fractional timestamps and
+// can drop a just-completed request at the right edge.
+const timestampEpochMillisSQL = "(CAST(strftime('%s', ts) AS INTEGER) * 1000 + CASE WHEN instr(ts, '.') = 0 THEN 0 WHEN substr(ts, instr(ts, '.') + 3, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 3) AS INTEGER) WHEN substr(ts, instr(ts, '.') + 2, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 2) AS INTEGER) * 10 ELSE CAST(substr(ts, instr(ts, '.') + 1, 1) AS INTEGER) * 100 END)"
+
 // RequestFact keeps database nullability until the DTO boundary. In
 // particular, missing token facts are not silently converted to zero.
 type RequestFact struct {
@@ -354,8 +359,8 @@ func (s Service) pageFacts(window *Window, page, limit int) ([]RequestFact, erro
 	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests`
 	args := []any{}
 	if window != nil {
-		query += ` WHERE julianday(ts) >= julianday(? / 1000.0, 'unixepoch') AND julianday(ts) < julianday(? / 1000.0, 'unixepoch')`
-		args = append(args, float64(window.From), float64(window.To))
+		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
+		args = append(args, window.From, window.To)
 	}
 	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, page*limit)
@@ -385,8 +390,8 @@ func (s Service) forEachFact(window *Window, order string, visit func(RequestFac
 	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests`
 	args := []any{}
 	if window != nil {
-		query += ` WHERE julianday(ts) >= julianday(? / 1000.0, 'unixepoch') AND julianday(ts) < julianday(? / 1000.0, 'unixepoch')`
-		args = append(args, float64(window.From), float64(window.To))
+		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
+		args = append(args, window.From, window.To)
 	}
 	if order != "ASC" {
 		order = "DESC"
