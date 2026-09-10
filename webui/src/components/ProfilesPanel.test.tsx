@@ -360,3 +360,24 @@ describe("ProfileForm channel name validation", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("ProfilesPanel cc-switch honesty", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "getPresets").mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("offers no cc-switch import entry, because that import is unimplemented", () => {
+    renderPanel();
+
+    // The modal and its trigger were removed together with the 501 endpoint;
+    // this guards against the entry coming back without a real implementation.
+    expect(screen.queryByRole("button", { name: /cc-switch/i })).toBeNull();
+    expect(screen.queryByText(/Import from cc-switch/i)).toBeNull();
+  });
+});
+

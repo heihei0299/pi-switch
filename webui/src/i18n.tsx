@@ -17,7 +17,6 @@ const zh: Record<string, string> = {
   "provider control · web": "provider 管理 · Web",
   "CLI · TUI · WebUI — same core": "CLI · TUI · WebUI — 同一核心",
   "Could not load config": "无法加载配置",
-  "Initialize config": "初始化配置",
   "Loading…": "加载中…",
 
   // Home
@@ -43,22 +42,19 @@ const zh: Record<string, string> = {
   "config backups & encrypted sync": "配置备份与加密同步",
   "Config backups": "配置备份",
   Refresh: "刷新",
-  "No backups yet.": "暂无备份。",
   "Restore this backup? Current config is backed up first.":
     "恢复此备份？当前配置会先备份。",
   Restore: "恢复",
   Restored: "已恢复",
-  "Export (encrypted)": "导出（加密）",
   Passphrase: "密码",
-  "Export config": "导出配置",
+  "Config backups are not implemented yet": "配置备份尚未实现",
+  "To safeguard your setup, copy {{path}} yourself, or read its path with pi-switch config show.":
+    "如需自行保护配置，请自行复制 {{path}}，或用 `pi-switch config show` 查看其路径。",
+  "This build has no backup store and no encrypted export/import/restore. The related API endpoints answer 501 instead of pretending to succeed, so nothing here reports a result it did not produce.":
+    "本构建没有备份存储，也没有加密导出/导入/恢复。相关 API 端点返回 501 而不是假装成功，因此这里不会报告任何并未产生的结果。",
+  "Automatic config initialization is not implemented. Create the file yourself, or run `pi-switch config show` to print its expected path.":
+    "自动初始化配置尚未实现。请自行创建该文件，或运行 `pi-switch config show` 查看其预期路径。",
   Exported: "已导出",
-  "Import (encrypted)": "导入（加密）",
-  "File path": "文件路径",
-  "Import config": "导入配置",
-  Imported: "已导入",
-  "Exported to:": "已导出到:",
-
-  // Doctor
   "config & connectivity checks": "配置与连通性检查",
   "Re-run": "重新运行",
   "Health checks": "健康检查",
@@ -152,7 +148,6 @@ const zh: Record<string, string> = {
   // Profiles
   "profile(s)": "个供应商",
   "+ Add profile": "+ 添加供应商",
-  "⇥ Import from cc-switch": "⇥ 从 cc-switch 导入",
   "Add profile": "添加供应商",
   "Edit profile": "编辑供应商",
   Save: "保存",
@@ -174,14 +169,8 @@ const zh: Record<string, string> = {
   "Max tokens": "最大 token",
   "No profiles yet.": "暂无供应商。",
   search: "搜索",
-  "Import from cc-switch": "从 cc-switch 导入",
-  "No importable providers found in cc-switch.": "cc-switch 中未找到可导入的 provider。",
-  "Path to cc-switch.db (optional)": "cc-switch.db 路径（可选）",
   Retry: "重试",
-  "Import selected": "导入选中",
   exists: "已存在",
-  "Nothing imported (already exist or skipped).": "未导入任何内容（已存在或已跳过）。",
-  "Imported {{n}} provider(s) from cc-switch": "已从 cc-switch 导入 {{n}} 个 provider",
   "Provider name": "供应商名称",
   Responses: "Responses",
   "Responses mode": "Responses 模式",

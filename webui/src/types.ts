@@ -333,19 +333,3 @@ export interface PackageImportResult {
   warnings?: string[];
 }
 
-export interface CcsProvider {
-  id: string;
-  name: string;
-  appType: string;
-  api: string;
-  baseUrl: string;
-  apiKey: string;
-  models: string[];
-  exists: boolean;
-}
-
-export interface CcsImportResult {
-  name: string;
-  imported: boolean;
-  message: string;
-}

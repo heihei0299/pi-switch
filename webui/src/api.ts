@@ -1,7 +1,5 @@
 import type {
   AppState,
-  CcsImportResult,
-  CcsProvider,
   ConversationRequestsPage,
   ConversationsPage,
   DaemonResult,
@@ -26,8 +24,6 @@ import {
   ContractError,
   decodeAppState,
   decodeBuildInfo,
-  decodeCcsImport,
-  decodeCcsProviders,
   decodeConversationRequestsPage,
   decodeConversationsPage,
   decodeCredits,
@@ -39,7 +35,6 @@ import {
   decodeGatewayPreview,
   decodeGatewayStart,
   decodeImportPackages,
-  decodeMessageList,
   decodeOk,
   decodeOkResult,
   decodePackage,
@@ -48,15 +43,11 @@ import {
   decodePresets,
   decodeProfileDetail,
   decodeProviderProfile,
-  decodeStringArray,
   decodeTestResult,
   decodeUpdateModels,
   decodeUsageStats,
   decodeValidationIssues,
   decodeWebUIInfo,
-  decodeExportConfig,
-  decodeImportConfig,
-  decodeRestoreConfig,
 } from "./apiSchema";
 import type { Decoder } from "./apiSchema";
 
@@ -96,7 +87,6 @@ export const api = {
   getProfile: (name: string) => req<ProfileDetail>("GET", `/profiles/${enc(name)}`, undefined, decodeProfileDetail),
   doctor: () => req<DoctorCheck[]>("GET", "/doctor", undefined, decodeDoctorChecks),
   validate: () => req<ValidationIssue[]>("GET", "/config/validate", undefined, decodeValidationIssues),
-  backups: () => req<string[]>("GET", "/backups", undefined, (value) => decodeStringArray(value, "backups")),
   stats: (range: StatsRange, from: number, to: number, page = 0, limit = 50) =>
     req<UsageStats>(
       "GET",
@@ -141,18 +131,7 @@ export const api = {
   deletePackage: (id: string) => req("DELETE", `/packages/${enc(id)}`, undefined, decodeOk),
 
   // cc-switch import
-  ccsProviders: (path?: string) =>
-    req<{ providers: CcsProvider[] }>("GET", `/ccswitch/providers${path ? `?path=${enc(path)}` : ""}`, undefined, decodeCcsProviders),
-  importCcs: (selections: { id: string; force?: boolean }[], path?: string) =>
-    req<{ ok: boolean; imported: number; results: CcsImportResult[] }>(
-      "POST",
-      "/ccswitch/import",
-      { selections, path },
-      decodeCcsImport,
-    ),
-
   // profile mutations
-  init: () => req<{ messages: string[] }>("POST", "/init", undefined, decodeMessageList),
   addProfile: (name: string, profile: ProviderProfile) =>
     req("POST", "/profiles", { name, profile }, decodeOk),
   updateProfile: (name: string, profile: ProviderProfile, renameFrom?: string) =>
@@ -196,12 +175,6 @@ export const api = {
   applyGateway: (gateway: unknown) => req<{ ok: boolean }>("PUT", "/models/gateway", gateway, decodeOkResult),
   getGatewayHealth: () => req<GatewayHealth>("GET", "/gateway/health", undefined, decodeGatewayHealth),
   startGateway: () => req<{ running: boolean; mode: string }>("POST", "/gateway/start", undefined, decodeGatewayStart),
-  exportConfig: (passphrase: string) =>
-    req<{ path: string }>("POST", "/config/export", { passphrase }, decodeExportConfig),
-  importConfig: (filePath: string, passphrase: string) =>
-    req<{ message: string }>("POST", "/config/import", { filePath, passphrase }, decodeImportConfig),
-  restoreConfig: (backupPath: string) =>
-    req<{ backup: string }>("POST", "/config/restore", { backupPath }, decodeRestoreConfig),
 };
 
 export function logsExportUrl(format: "json" | "csv"): string {

@@ -101,11 +101,6 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
     void refresh();
   }, [refresh]);
 
-  const initConfig = useCallback(async () => {
-    await api.init();
-    await refresh();
-  }, [refresh]);
-
   const handleNav = useCallback((key: NavKey) => {
     setNav(key);
     setDrawerOpen(false);
@@ -246,9 +241,11 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
             <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200">
               <div className="font-medium">{t("Could not load config")}</div>
               <div className="mt-1 break-words text-red-300/80">{error}</div>
-              <Button variant="primary" className="mt-3" onClick={() => void initConfig()}>
-                {t("Initialize config")}
-              </Button>
+              <div className="mt-2 text-red-300/80">
+                {t(
+                  "Automatic config initialization is not implemented. Create the file yourself, or run `pi-switch config show` to print its expected path.",
+                )}
+              </div>
             </div>
           )}
 
@@ -288,7 +285,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
               )}
               {nav === "backups" && (
                 <PanelErrorBoundary>
-                  <BackupsPanel state={state} refresh={refresh} />
+                  <BackupsPanel />
                 </PanelErrorBoundary>
               )}
               {nav === "settings" && (

@@ -1,7 +1,5 @@
 import type {
   AppState,
-  CcsImportResult,
-  CcsProvider,
   ConversationRequestsPage,
   ConversationsPage,
   DaemonResult,
@@ -441,10 +439,6 @@ export function decodeValidationIssues(value: unknown): ValidationIssue[] {
   return (value as unknown[]).map((entry, index) => decodeValidationAt(entry, `validation[${index}]`));
 }
 
-export function decodeStringArray(value: unknown, path = "response"): string[] {
-  return stringArray(value, path);
-}
-
 export function decodeDaemonResult(value: unknown): DaemonResult {
   const raw = object(value, "daemon");
   const out = { ...raw } as unknown as DaemonResult;
@@ -707,26 +701,6 @@ export function decodePackages(value: unknown): { packages: PackageEntry[] } {
   return { ...raw, packages: arrayField(raw, "packages", "packages", decodePackage) };
 }
 
-function decodeCcsProviderAt(value: unknown, path: string): CcsProvider {
-  const raw = object(value, path);
-  return {
-    ...raw,
-    id: requiredString(raw, "id", path),
-    name: defaultString(raw, "name", path, ""),
-    appType: defaultString(raw, "appType", path, ""),
-    api: requiredString(raw, "api", path),
-    baseUrl: defaultString(raw, "baseUrl", path, ""),
-    apiKey: defaultString(raw, "apiKey", path, ""),
-    models: has(raw, "models") ? stringArray(raw.models, `${path}.models`) : [],
-    exists: defaultBoolean(raw, "exists", path, false),
-  };
-}
-
-export function decodeCcsProviders(value: unknown): { providers: CcsProvider[] } {
-  const raw = object(value, "ccswitch");
-  return { ...raw, providers: arrayField(raw, "providers", "ccswitch", decodeCcsProviderAt) };
-}
-
 function decodeEnrichStatsAt(value: unknown, path: string): EnrichStats {
   const raw = object(value, path);
   return {
@@ -735,22 +709,6 @@ function decodeEnrichStatsAt(value: unknown, path: string): EnrichStats {
     skipped: defaultNumber(raw, "skipped", path, 0),
     failed: defaultNumber(raw, "failed", path, 0),
     warning: nullableString(raw, "warning", path),
-  };
-}
-
-export function decodeCcsImport(value: unknown): { ok: boolean; imported: number; results: CcsImportResult[] } {
-  const raw = object(value, "ccswitch.import");
-  const results = arrayOfObjects(has(raw, "results") ? raw.results : [], "ccswitch.import.results").map((entry, index) => ({
-    ...entry,
-    name: defaultString(entry, "name", `ccswitch.import.results[${index}]`, ""),
-    imported: defaultBoolean(entry, "imported", `ccswitch.import.results[${index}]`, false),
-    message: defaultString(entry, "message", `ccswitch.import.results[${index}]`, ""),
-  }));
-  return {
-    ...raw,
-    ok: requiredBoolean(raw, "ok", "ccswitch.import"),
-    imported: defaultNumber(raw, "imported", "ccswitch.import", 0),
-    results,
   };
 }
 
@@ -887,11 +845,6 @@ export function decodeGatewayStart(value: unknown): { running: boolean; mode: st
   };
 }
 
-export function decodeMessageList(value: unknown): { messages: string[] } {
-  const raw = object(value, "response");
-  return { ...raw, messages: has(raw, "messages") ? stringArray(raw.messages, "response.messages") : [] };
-}
-
 export function decodeOk(value: unknown): Record<string, unknown> {
   const raw = object(value, "response");
   if (has(raw, "ok")) requiredBoolean(raw, "ok", "response");
@@ -925,17 +878,3 @@ export function decodeWebUIInfo(value: unknown): { authRequired: boolean } {
   return { ...raw, authRequired: requiredBoolean(raw, "authRequired", "webuiInfo") };
 }
 
-export function decodeExportConfig(value: unknown): { path: string } {
-  const raw = object(value, "config.export");
-  return { ...raw, path: requiredString(raw, "path", "config.export") };
-}
-
-export function decodeImportConfig(value: unknown): { message: string } {
-  const raw = object(value, "config.import");
-  return { ...raw, message: requiredString(raw, "message", "config.import") };
-}
-
-export function decodeRestoreConfig(value: unknown): { backup: string } {
-  const raw = object(value, "config.restore");
-  return { ...raw, backup: requiredString(raw, "backup", "config.restore") };
-}

@@ -155,6 +155,16 @@ func configPath() string {
 	return config.ResolvePath()
 }
 
+// notImplemented answers with 501 for capabilities that have no implementation.
+// It lives in the kernel because both the settings and profile domains use it
+// (domain files must not call each other's helpers). These endpoints used to
+// return 200 with a plausible payload — a path that was never written, a restore
+// that never happened — so the WebUI reported success for work that did not
+// occur.
+func notImplemented(what string) gin.H {
+	return gin.H{"error": gin.H{"type": "not_implemented", "message": what + " is not implemented"}}
+}
+
 func NewProxyRouter() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())

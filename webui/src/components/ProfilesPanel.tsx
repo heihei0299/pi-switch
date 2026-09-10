@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AppState, CcsProvider, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
+import type { AppState, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
 import { draftFromEntry, entryFromDraft, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
@@ -78,7 +78,6 @@ export function ProfilesPanel({
   const { t, lang } = useI18n() as any;
   const [editing, setEditing] = useState<{ name: string | null } | null>(null);
   const [models, setModels] = useState<string | null>(null); // profile name for models modal
-  const [ccImport, setCcImport] = useState(false);
 
   const entries = Object.entries(state.profiles).sort(([a], [b]) => a.localeCompare(b));
 
@@ -90,7 +89,6 @@ export function ProfilesPanel({
         <Button variant="primary" onClick={() => setEditing({ name: null })}>
           {t("+ Add profile")}
         </Button>
-        <Button onClick={() => setCcImport(true)}>⇥ {t("Import from cc-switch")}</Button>
       </div>
 
       <div className="space-y-2">
@@ -205,16 +203,6 @@ export function ProfilesPanel({
           onClose={() => setModels(null)}
           onSaved={async () => {
             setModels(null);
-            await refresh();
-          }}
-        />
-      )}
-
-      {ccImport && (
-        <CcsImportModal
-          onClose={() => setCcImport(false)}
-          onImported={async () => {
-            setCcImport(false);
             await refresh();
           }}
         />
@@ -1090,120 +1078,3 @@ function usePresets(): PresetInfo[] {
   return presets;
 }
 
-// ─── cc-switch import modal ───────────────────────────────
-
-function CcsImportModal({
-  onClose,
-  onImported,
-}: {
-  onClose: () => void;
-  onImported: () => Promise<void>;
-}) {
-  const run = useAction();
-  const toast = useToast();
-  const { t, lang } = useI18n() as any;
-  const [providers, setProviders] = useState<CcsProvider[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [path, setPath] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  const load = async (p?: string) => {
-    setError(null);
-    setProviders(null);
-    try {
-      const data = await api.ccsProviders(p || undefined);
-      setProviders(data.providers);
-      setSelected(new Set(data.providers.filter((x) => !x.exists).map((x) => x.id)));
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const toggle = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const doImport = async () => {
-    const selections = [...selected].map((id) => ({ id }));
-    if (selections.length === 0) return;
-    const data = await api.importCcs(selections, path || undefined);
-    if (data.imported > 0) {
-      alert(t("Imported {{n}} provider(s) from cc-switch").replace("{{n}}", String(data.imported)));
-      await onImported();
-    } else {
-      alert(t("Nothing imported (already exist or skipped)."));
-    }
-  };
-
-  const apiLabel = (api: string) =>
-    ({ "anthropic-messages": "anthropic", "openai-responses": "openai", "google-generative-ai": "gemini" })[api] ?? api;
-
-  return (
-    <Modal title={t("Import from cc-switch")} onClose={onClose} wide>
-      <div className="space-y-3">
-        {error && (
-          <div>
-            <p style={{ color: "#ff5555", fontSize: "0.9rem" }}>{error}</p>
-            <div className="flex gap-2 mt-2">
-              <Input
-                placeholder={t("Path to cc-switch.db (optional)")}
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-              />
-              <Button onClick={() => void load(path)}>{t("Retry")}</Button>
-            </div>
-          </div>
-        )}
-
-        {providers === null && !error && <p style={{ color: "#999" }}>{t("Loading…")}</p>}
-
-        {providers && providers.length === 0 && (
-          <p style={{ color: "#999" }}>{t("No importable providers found in cc-switch.")}</p>
-        )}
-
-        {providers && providers.length > 0 && (
-          <div className="space-y-2 max-h-80 overflow-auto">
-            {providers.map((p) => (
-              <label
-                key={p.id}
-                className="flex items-start gap-2 p-2 rounded cursor-pointer"
-                style={{ background: selected.has(p.id) ? "#f0f7ff" : "#fafafa" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(p.id)}
-                  onChange={() => toggle(p.id)}
-                />
-                <span className="text-sm">
-                  <strong>{p.name}</strong>{" "}
-                  <Badge>{apiLabel(p.api)}</Badge>{" "}
-                  {p.exists && <Badge>{t("exists")}</Badge>}
-                  <br />
-                  <span style={{ color: "#999" }}>{p.baseUrl}</span>
-                  <br />
-                  <span style={{ color: "#666" }}>{p.models.join(", ") || "-"}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-
-        <div className="flex gap-2 justify-end">
-          <Button onClick={onClose}>{t("Cancel")}</Button>
-          <Button variant="primary" disabled={!providers || selected.size === 0} onClick={() => void doImport()}>
-            {t("Import selected")}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}

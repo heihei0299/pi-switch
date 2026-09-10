@@ -1084,5 +1084,7 @@ func handleValidate(c *gin.Context) {
 
 func handleCcsProviders(c *gin.Context) { c.JSON(200, gin.H{"providers": []interface{}{}}) }
 func handleCcsImport(c *gin.Context) {
-	c.JSON(200, gin.H{"ok": true, "imported": 0, "results": []interface{}{}})
+	// Reporting ok with imported:0 for work that never happens is the defect
+	// this endpoint must not reintroduce.
+	c.JSON(501, notImplemented("ccswitch import"))
 }

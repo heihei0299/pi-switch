@@ -42,7 +42,6 @@ async function mockApi(page: import("@playwright/test").Page) {
     });
     if (path === "/api/webui/info") return route.fulfill({ json: { authRequired: false } });
     if (path === "/api/packages") return route.fulfill({ json: { packages: [] } });
-    if (path === "/api/backups") return route.fulfill({ json: [] });
     if (path === "/api/doctor" || path === "/api/config/validate") return route.fulfill({ json: [] });
     if (path === "/api/stats") {
       return route.fulfill({

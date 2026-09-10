@@ -1,120 +1,32 @@
-import { useEffect, useState } from "react";
-import type { AppState } from "../types";
-import { api } from "../api";
-import { Button, Card, Field, Input, SectionTitle, useAction } from "./ui";
+import { Card, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 
-export function BackupsPanel({
-  refresh,
-}: {
-  state: AppState;
-  refresh: () => Promise<void>;
-}) {
-  const run = useAction();
+// Config backup / encrypted export / import / restore have no implementation, so
+// the server answers 501 and this panel offers no control that could report
+// success for work that never happens. The feature needs its own spec.
+export function BackupsPanel() {
   const { t } = useI18n();
-  const [backups, setBackups] = useState<string[]>([]);
-
-  const load = async () => {
-    try {
-      setBackups(await api.backups());
-    } catch {
-      setBackups([]);
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const [passphrase, setPassphrase] = useState("");
-  const [importPath, setImportPath] = useState("");
-  const [importPass, setImportPass] = useState("");
 
   return (
     <div>
       <SectionTitle hint={t("config backups & encrypted sync")}>{t("Backups")}</SectionTitle>
 
-      <Card className="mb-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-zinc-200">{t("Config backups")}</div>
-          <Button onClick={() => void load()}>{t("Refresh")}</Button>
+      <Card>
+        <div className="text-sm font-semibold text-zinc-200">
+          {t("Config backups are not implemented yet")}
         </div>
-        <div className="max-h-72 space-y-1 overflow-y-auto">
-          {backups.length === 0 && <div className="text-sm text-zinc-500">{t("No backups yet.")}</div>}
-          {backups
-            .slice()
-            .reverse()
-            .map((path) => (
-              <div
-                key={path}
-                className="flex items-center justify-between gap-2 rounded-md border border-white/10 px-2 py-1.5"
-              >
-                <span className="truncate font-mono text-xs text-zinc-400">{path}</span>
-                <Button
-                  onClick={() => {
-                    if (confirm(t("Restore this backup? Current config is backed up first.")))
-                      run(() => api.restoreConfig(path), t("Restored"), refresh);
-                  }}
-                >
-                  {t("Restore")}
-                </Button>
-              </div>
-            ))}
+        <div className="mt-2 text-sm text-zinc-400">
+          {t(
+            "This build has no backup store and no encrypted export/import/restore. The related API endpoints answer 501 instead of pretending to succeed, so nothing here reports a result it did not produce.",
+          )}
+        </div>
+        <div className="mt-2 text-sm text-zinc-500">
+          {t("To safeguard your setup, copy {{path}} yourself, or read its path with pi-switch config show.").replace(
+            "{{path}}",
+            "~/.pi-switch/config.json",
+          )}
         </div>
       </Card>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <div className="mb-2 text-sm font-semibold text-zinc-200">{t("Export (encrypted)")}</div>
-          <Field label={t("Passphrase")}>
-            <Input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              placeholder={t("Passphrase")}
-            />
-          </Field>
-          <Button
-            variant="primary"
-            onClick={() =>
-              run(
-                async () => {
-                  const r = await api.exportConfig(passphrase);
-                  alert(`${t("Exported to:")}\n${r.path}`);
-                },
-                t("Exported"),
-              )
-            }
-          >
-            {t("Export config")}
-          </Button>
-        </Card>
-
-        <Card>
-          <div className="mb-2 text-sm font-semibold text-zinc-200">{t("Import (encrypted)")}</div>
-          <Field label={t("File path")}>
-            <Input
-              value={importPath}
-              onChange={(e) => setImportPath(e.target.value)}
-              placeholder="/path/to/export.enc"
-            />
-          </Field>
-          <Field label={t("Passphrase")}>
-            <Input
-              type="password"
-              value={importPass}
-              onChange={(e) => setImportPass(e.target.value)}
-            />
-          </Field>
-          <Button
-            variant="primary"
-            onClick={() =>
-              run(() => api.importConfig(importPath, importPass), t("Imported"), refresh)
-            }
-          >
-            {t("Import config")}
-          </Button>
-        </Card>
-      </div>
     </div>
   );
 }

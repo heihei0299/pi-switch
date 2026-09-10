@@ -155,14 +155,13 @@ func TestPackageAndCcsApis(t *testing.T) {
 		t.Fatalf("missing providers: %s", w4.Body.String())
 	}
 
-	// ccs import
+	// ccs import has no implementation, so it must say so instead of reporting
+	// a successful import of nothing.
 	w5 := httptest.NewRecorder()
 	req5, _ := http.NewRequest("POST", "/api/ccswitch/import", strings.NewReader(`{}`))
 	req5.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w5, req5)
-	if w5.Code != 200 {
-		t.Fatalf("POST /api/ccswitch/import code=%d", w5.Code)
-	}
+	assertNotImplemented(t, w5)
 }
 
 func TestZeroMigration_OldConfigReadable(t *testing.T) {

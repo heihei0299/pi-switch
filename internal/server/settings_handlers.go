@@ -29,7 +29,9 @@ func handleBuildInfo(c *gin.Context) {
 }
 
 func handleBackups(c *gin.Context) {
-	c.JSON(200, []string{})
+	// No backup store exists to enumerate, so an empty list would be a claim
+	// about a feature that is not there.
+	c.JSON(501, notImplemented("config backups"))
 }
 
 func handleProxyStatus(c *gin.Context) {
@@ -43,7 +45,7 @@ func handleWebUIInfo(c *gin.Context) {
 	c.JSON(200, gin.H{"authRequired": !IsLoopback(effectiveBindHost(auth.BindHost))})
 }
 
-func handleInit(c *gin.Context) { c.JSON(200, gin.H{"messages": []string{"init ok"}}) }
+func handleInit(c *gin.Context) { c.JSON(501, notImplemented("config init")) }
 func handleProxyStart(c *gin.Context) {
 	var body struct {
 		Host   string `json:"host"`
@@ -152,10 +154,13 @@ func handlePutSettings(c *gin.Context) {
 	_ = saveConfig(cfg)
 	c.JSON(200, gin.H{"ok": true})
 }
+
 func handleConfigExportStub(c *gin.Context) {
-	c.JSON(200, gin.H{"ok": true, "path": "/tmp/export.json"})
+	c.JSON(501, notImplemented("config export"))
 }
-func handleConfigImportStub(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "message": "imported"}) }
+func handleConfigImportStub(c *gin.Context) {
+	c.JSON(501, notImplemented("config import"))
+}
 func handleConfigRestoreStub(c *gin.Context) {
-	c.JSON(200, gin.H{"ok": true, "backup": "/tmp/backup.json"})
+	c.JSON(501, notImplemented("config restore"))
 }
