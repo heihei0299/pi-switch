@@ -30,6 +30,9 @@ func TestHelp_ListsAllCommands(t *testing.T) {
 	if err := os.MkdirAll(agentRoot, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(agentRoot, "settings.json"), []byte(`{"packages":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PI_AGENT_ROOT", agentRoot)
 	// We test via spawning go binary's help output indirectly via main printHelp?
 	// Instead test that our server exposes all required API groups mentioned in ticket
@@ -70,6 +73,9 @@ func TestPackageAndCcsApis(t *testing.T) {
 	t.Setenv("PI_AGENT_ROOT", agentRoot)
 	pkgRoot := filepath.Join(agentRoot, "npm", "node_modules", "demo-pi-package")
 	if err := os.MkdirAll(pkgRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentRoot, "settings.json"), []byte(`{"packages":["npm:demo-pi-package"]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(pkgRoot, "package.json"), []byte(`{"name":"demo-pi-package","version":"1.0.0","pi":{"extensions":["./index.ts"],"skills":[]}}`), 0644); err != nil {

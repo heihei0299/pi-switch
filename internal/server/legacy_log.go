@@ -87,6 +87,8 @@ func legacyFileHash(path string) (string, error) {
 // ensureLegacyImported is retained as the startup adapter. Stats and export
 // handlers must not call it: reads are SQLite-only after IMP-10.
 func ensureLegacyImported(db *sql.DB) {
+	legacyMu.Lock()
+	defer legacyMu.Unlock()
 	if _, _, err := importLegacyPath(db, legacyLogPath()); err != nil {
 		log.Printf("legacy requests.log import: %v", err)
 	}
@@ -95,10 +97,13 @@ func ensureLegacyImported(db *sql.DB) {
 // ImportLegacyNow runs the migration synchronously for an explicit command or
 // deterministic tests. It is separate from the asynchronous startup adapter.
 func ImportLegacyNow() error {
-	db, err := store.GetDB()
+	legacyMu.Lock()
+	defer legacyMu.Unlock()
+	db, err := store.Open(store.DBPath())
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 	_, _, err = importLegacyPath(db, legacyLogPath())
 	return err
 }
@@ -112,11 +117,8 @@ func importLegacyPath(db *sql.DB, path string) (imported, skipped int, err error
 		return 0, 0, err
 	}
 
-	// The process mutex prevents duplicate local work; the store CAS protects
-	// the same source when two processes share the database.
-	legacyMu.Lock()
-	defer legacyMu.Unlock()
-
+	// Callers serialize local importers; the store CAS protects the same source
+	// when two processes share the database.
 	key := legacyMigrationKey(path, fi)
 	hash, err := legacyFileHash(path)
 	if err != nil {
