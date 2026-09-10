@@ -80,7 +80,8 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **动作**：能接已有实现的接入；不能实现的改为 stderr 说明 + 非零退出（`not implemented`），不再打印成功 JSON。
 - **完成判据**：每个命令至少一条测试断言"未实现时退出码非零且 stdout 不含 ok"。
 - **完成情况**：`package add/show/delete` 接线到服务端真实逻辑（抽出 `AddInstalledPackage`/`GetInstalledPackage`/`DeleteInstalledPackage` 供 handler 与 CLI 共用）；`package sync`、`ccs import`、`stats` 改为 stderr 说明 + 退出码 2；`doctor` 改为真实探测（config 可读性、DB 可读、两个 daemon 状态、运行中的暴露监听器无密码）；`preset` 接线到真实目录（服务端一直返回 4 条静态预设，旧 CLI 打印 `[]`）。**`ccs list` 的空数组保留**——确无 CCS provider 存储，空集合未声称任何副作用。
-- **后续（未纳入本项）**：README 的 CLI 段落仍有本项之外的失真——`package toggle`、`config backups`、`config export/import`、`import ccswitch` 实测均返回非零（未实现或不存在）。
+- **后续（未纳入本项）**：README 的 CLI 段落仍有本项之外的失真——`package toggle`、`config backups`、`config export/import` 实测均返回非零（未实现或不存在）；`import ccswitch` 一节已于 2026-09-11 改为据实描述。
+- **后续补齐（2026-09-11，`.scratch/provider-cli-wiring`）**：`provider` 一族当时也未处理——`--help` 宣布 8 个子命令，实际只识别 3 个，而服务端能力都是真实实现的。已接线 `add`/`duplicate`/`test`/`fetch-models`/`expose` 五个命令（另加 `--models` 与默认 `main` 渠道），help 与两个 README 的示例同步校正；机械核验 README 提到的 9 个子命令全部可识别。
 - **相关**：服务端同族问题（HTTP API + WebUI）是 A7。
 
 ### A3 [P1/结构] `internal/server/server.go` 按 handler 领域拆文件 —— ✅ 已完成

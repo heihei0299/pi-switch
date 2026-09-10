@@ -23,3 +23,19 @@
 - 不改服务端的路由、认证、JSON 契约（D10 精神）。
 - 不为 CLI 引入交互式 TUI 选择器：`add` 用 flag 表达（`--preset/--api-key/--base-url/--api`），保持可脚本化。
 - 不在 CLI 侧做「保存前备份」等新机制。
+
+## 实施结果（2026-09-11）
+
+5 张票全部 resolved，各一个提交：`4339e6e`(add)、`54ff461`(duplicate)、`5caeb40`(test)、`9d38bc8`(fetch-models)、`df947dd`(expose + 文档)。
+
+**超出原计划的一项**：实施中发现 `provider expose` 在两个 README 里被宣传、且有 6 处示例，但它既不在 help 里也未被接线。与其在多处加"仅 WebUI/API"的说明，不如把它一并接线（服务端 `handlePutExpose` 早已实现），故本批实际接线 **6 个命令**。
+
+**过程中发现并修掉的真问题**：
+
+1. **`provider add --base-url` 建不出可路由的 profile**：顶层 `baseUrl` 不构成渠道，路由与 expose 都以 `upstreams[]` 为单位。此前新建的 profile 没有任何渠道，`fetch-models`/`expose` 都无从操作。已改为给了 `--base-url` 就同时建一个名为 `main` 的渠道，并新增 `--models` 让该渠道自带模型池。
+2. **`expose` 的报错顺序**：未知 profile 时先抱怨缺 `--channel`，掩盖了真正原因。已改为先判 profile。
+3. **测试断言用错文案**：CLI 对未知 profile 用 `unknown profile %q`（与 show/use/delete 一致），服务端才用 `not found`。我两次把测试写成断言服务端文案，两次都按 CLI 的既有惯例改了测试而非实现，并把这一点写进断言注释。
+
+**机械核验**：脚本枚举两个 README 中出现的每个 `provider <sub>` 并真实执行，**9/9 可识别**（此前 add/duplicate/test/fetch-models/expose 五个报 unknown subcommand）。
+
+**未收敛项**：handler 的 `handleFetchModels`（无渠道分支）仍保留自己的 JSON 解析拉取逻辑，与 CLI 用的 `fetchUpstreamIDs`/`FetchUpstreamModelIDs` 是两份实现；本票为控制风险只接线未重构它，两者语义一致（都是打 `/models` 与 `/v1/models`、Bearer 鉴权）。建议后续单独立票把 handler 也切到同一原语。
