@@ -11,7 +11,7 @@ Every **Long-Horizon Skill** must carry a positive **Turn Continuity** rule of i
 - It must be **self-contained** — the skill cannot rely on the harness `/goal` line, because no `/goal` exists when the user does not activate one.
 - Every stage ends on a checkable exit condition; reaching it is the only thing that ends the turn.
 - A sub-step going green (e.g. one seam) is not a stage exit — a stage ends only when all of its seams are complete. Progress output does not itself end the turn: output, then keep executing until one of the three endpoints (compliance checkpoint, external blocker, stage exit) is reached.
-- Canonical example: the 回合连续性 rule in [`.agents/skills/tdd-implement/references/stages.md`](.agents/skills/tdd-implement/references/stages.md) stage ③.
+- Canonical example: the 回合连续性 rule in [`.agents/skills/tdd-implement/references/stages.md`](.agents/skills/tdd-implement/references/stages.md), especially the Red-Green continuity section.
 
 ## Rule 2 — Model Selection
 
@@ -31,7 +31,7 @@ Every skill that touches git must preserve history after `BASE_HEAD`: history ma
 
 To achieve "directory clean" (`git status` clean) the skill may only delete its own temporary artifacts (`[DEBUG-...]`, one-off scripts, untracked probe files) — it must never use git-level destructive commands to reach a clean state. The following are forbidden without explicit user confirmation: `git reset --hard`, `git checkout .`, `git clean -fd`, `git stash push --include-untracked` (use `--keep-index` instead and `pop` with verification), `git push --force`, `git rebase -i` and any `reset`/`checkout` that moves `HEAD` backward.
 
-Canonical enforcement: [`tdd-implement/references/stages.md`](.agents/skills/tdd-implement/references/stages.md) stage ③/⑥/⑦/A2-A4 Git 安全红线 and [`commit-check/SKILL.md`](.agents/skills/commit-check/SKILL.md) ③ 目录卫生.
+Canonical enforcement: [`tdd-implement/references/stages.md`](.agents/skills/tdd-implement/references/stages.md) checks `BASE_HEAD` at every four-stage exit and before commit; multi-issue enforcement lives in [`tdd-implement/references/orchestration.md`](.agents/skills/tdd-implement/references/orchestration.md) A2-A4. Repository-local commit gating remains a workspace-only concern and is not part of the distributable template.
 ## Long-horizon skills inventory
 
-Skills currently classified as Long-Horizon, to be evolved against these rules as they are touched: `tdd-implement` (fixed), `diagnose-fix` (fixed — new orchestration skill for diagnosis + TDD fix, carries its own Turn Continuity rule), `diagnosing-bugs`, `improve-codebase-architecture`, `wayfinder`, `grill-to-spec`, `to-spec`. Backfilling existing skill texts is out of scope for now — these rules bind new and edited skills going forward.
+Skills currently classified as Long-Horizon, to be evolved against these rules as they are touched: `tdd-implement` (fixed), `diagnose-fix` (fixed — orchestration for diagnosis + TDD fix), `diagnosing-bugs`, `improve-codebase-architecture`, `wayfinder`, `grill-to-spec` (fixed — carries its own Turn Continuity rule), `to-spec`. Backfilling existing skill texts is out of scope for now — these rules bind new and edited skills going forward.
