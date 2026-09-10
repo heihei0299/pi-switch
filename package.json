@@ -1,6 +1,6 @@
 {
   "name": "@heihei0299/pi-switch",
-  "version": "20260908.0.2",
+  "version": "20260910.0.1",
   "description": "Lightweight profile switcher for pi models.json",
   "type": "module",
   "bin": {

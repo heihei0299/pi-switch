@@ -71,11 +71,43 @@ jobs:
       - name: Verify build identity
         run: |
           info=$(bin/pi-switch --build-info)
-          node -e 'const info=JSON.parse(process.argv[1]); const target=process.argv[2]; if (info.commit === "unknown" || info.buildTime === "unknown" || info.target !== target || !["true","false"].includes(info.dirty)) { console.error(info); process.exit(1); }' "$info" "$(go env GOOS)/$(go env GOARCH)"
+          expected=$(git rev-parse --short=7 HEAD)
+          node -e 'const info=JSON.parse(process.argv[1]); const target=process.argv[2]; const expected=process.argv[3]; if (info.commit !== expected || info.buildTime === "unknown" || info.target !== target || !["true","false"].includes(info.dirty)) { console.error({info, expected, target}); process.exit(1); }' "$info" "$(go env GOOS)/$(go env GOARCH)" "$expected"
           bin/pi-switch --help >/dev/null
 
       - name: Deterministic functional smoke
         run: bash scripts/functional-check.sh bin/pi-switch
+
+  release-preflight:
+    needs: [verify, build]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.verify.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    name: release preflight / tag and npm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Validate release identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          package_name=$(node -p "require('./package.json').name")
+          test "$RELEASE_TAG" = "v$version"
+          if npm view "$package_name@$version" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "$package_name@$version already exists on npm"
+            exit 1
+          fi
+          echo "preflight accepted $RELEASE_TAG for $package_name@$version"
 
   build:
     strategy:
@@ -140,7 +172,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build, verify]
+    needs: [build, verify, release-preflight]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -181,6 +213,32 @@ jobs:
           mv artifacts/pi-switch-* bin/ 2>/dev/null || mv artifacts/* bin/ 2>/dev/null || true
           ls -lh bin/
 
+      - name: Validate npm package contents
+        run: |
+          npm pack --dry-run --json > npm-pack.json
+          node <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync("npm-pack.json", "utf8"));
+          const files = report.flatMap((entry) => entry.files || []).map((entry) => entry.path);
+          const required = [
+            "package.json",
+            "bin/pi-switch.js",
+            "bin/pi-switch-linux-amd64",
+            "bin/pi-switch-linux-arm64",
+            "bin/pi-switch-darwin-amd64",
+            "bin/pi-switch-darwin-arm64",
+            "bin/pi-switch-windows-amd64.exe",
+            "bin/pi-switch-windows-arm64.exe",
+          ];
+          const missing = required.filter((file) => !files.includes(file));
+          const forbidden = files.filter((file) => /(^|\/)(\.env|.*\.key$|.*secret.*|node_modules|\.git)(\/|$)/i.test(file));
+          if (missing.length || forbidden.length) {
+            console.error({ missing, forbidden });
+            process.exit(1);
+          }
+          console.log(`validated ${files.length} npm package files`);
+          NODE
+
       - name: Publish to npm
         run: npm publish --access public
         env:
@@ -201,6 +259,16 @@ jobs:
           done
           echo "publish verification failed for $pkg@$ver"
           exit 1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi
 
       - name: Create issue on publish verification failure
         if: failure()
