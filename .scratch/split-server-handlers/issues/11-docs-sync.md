@@ -32,3 +32,4 @@
 - 符号可检索性已逐条机械校验：文档出现的 `resolveRoute`、`clampBody`、`handleChatCompletions`、`handleStream`、`handlePutFailover`、`authMiddleware`、`isLoopback`、`NewMgmtRouter`、`NewProxyRouter` 全部落在真实文件；文档涉及的文件路径 9/9 存在
 - 未回改 `.scratch` 下历史 spec；未新增 ADR；`CONTEXT.md` 未改
 - 说明：`docs/architecture.md` 工作区另有一处非本票改动（顶部指向 `architecture-review.md`/`system-contract.md` 的交叉引用行），同属本次文档同步的导航修正，一并提交
+- 后续：`docs/architecture-review.md` 由用户另行扩写为完整 15 项评估（新增 A7–A15：服务端假成功 API、WebUI 密码无生成路径、Proxy 无认证与请求体无上限、保存失败静默吞掉、CI Go 版本不匹配、前端组件单体、ADR 编号重复、README 徽章漂移、工作区残留）。扩写保留本票的 A3 完成记录与全部符号化改写；新增部分的符号引用（`handleConfigExportStub`、`handleCcsProviders`、`resolveWebUIPassword`、`handlePutFailover` 等）经核对全部指向拆分后的真实文件，A7–A15 的事实性断言（组件尺寸、ADR 编号、版本号、目录占用）亦逐条核实属实

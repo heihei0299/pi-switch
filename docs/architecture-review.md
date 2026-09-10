@@ -9,7 +9,11 @@
 
 **不需要全面重构。** 分层（`server → 领域包 → config` 单向无环）、事实来源分离（config.json / models.json / requests.db）、协议转换注册表、显式发布边界、60+ Go 测试文件 + vitest/Playwright 覆盖，都是资产，重写会全部赔掉。
 
-**需要 4 项精准收敛**（§3）：2 个信任边界/诚实性 bug（A1、A2），2 个结构卫生（A3、A4）；另有 1 个产品决策（A5）和 1 个触发式优化（A6）。
+**不需要全面重构，需要精准收敛**（§3）：
+
+- **P0 信任边界与诚实性（5 项）**：A1 管理面认证缺口、A2 CLI 假成功、A7 服务端假成功 API（WebUI 已接线）、A8 WebUI 密码无生成路径、A9 Proxy 无认证且请求体无上限。
+- **P1 结构与工程（4 项）**：A3 handler 拆分（✅ 已完成）、A4 retry 休眠标注、A10 保存失败静默吞掉、A11 CI Go 版本与 go.mod 不匹配。
+- **P2 决策与卫生（6 项）**：A5 遗留 JS 归属、A6 config 读取缓存（触发式）、A12 前端组件单体（观察）、A13 ADR 编号重复、A14 README 版本徽章漂移、A15 工作区残留。
 
 **明确不做**见 §4。
 
@@ -66,6 +70,7 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **影响**：`pi-switch webui --host 0.0.0.0` 且未设置 `~/.pi-switch/webui_password`（或 `PI_SWITCH_WEBUI_PASSWORD`）时，`/api/config`、`/api/profiles/*` 等管理接口无认证可达。这是信任边界问题，优先级高于一切结构问题。
 - **动作**：非 loopback + 无密码 → 拒绝启动，或生成随机密码并打印一次；`isLoopback` 只认 `127.0.0.1`/`localhost`/`::1`。若确实需要反向代理场景，用显式 `trustedProxies` 配置，不用通配地址。
 - **完成判据**：新增测试——非 loopback host + 无密码文件时 `/api/config` 返回 401/403；`0.0.0.0` 不被判为 loopback。
+- **相关**：密码无生成路径是 A8（本项根因）；Proxy 完全无认证是 A9。
 
 ### A2 [P0/诚实性] CLI 假成功命令
 
@@ -73,6 +78,7 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **影响**：CLI/脚本按 stdout JSON 判断成功，实际什么都没发生。`package list/import` 已真实实现（`server.ListInstalledPackages` / `ImportPiPackages`），同命令族内不一致放大误导。
 - **动作**：能接已有实现的接入；不能实现的改为 stderr 说明 + 非零退出（`not implemented`），不再打印成功 JSON。
 - **完成判据**：每个命令至少一条测试断言"未实现时退出码非零且 stdout 不含 ok"。
+- **相关**：服务端同族问题（HTTP API + WebUI）是 A7。
 
 ### A3 [P1/结构] `internal/server/server.go` 按 handler 领域拆文件 —— ✅ 已完成
 
@@ -100,6 +106,71 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **证据**：每个 proxy 请求都 `config.LoadConfigAtPath`（如 `proxy_handlers.go:handleChatCompletions`）；`authMiddleware` 也每请求读一次。
 - **动作**：现在不优化。出现可测的延迟/QPS 证据后，按 mtime 缓存 `LoadConfigAtPath`。触发条件见 §5。
 
+### A7 [P0/诚实性] 服务端假成功 API 且 WebUI 已接线
+
+- **证据**：`settings_handlers.go:handleConfigExportStub` 返回 `{"ok":true,"path":"/tmp/export.json"}`（该文件不存在），`handleConfigImportStub`、`handleConfigRestoreStub` 同为恒成功；`profile_handlers.go:handleCcsProviders`（恒空）与 `handleCcsImport`（恒 ok、imported=0）；`settings_handlers.go:handleInit` 恒 ok。`webui/src/api.ts` 真实调用这些端点（config export/import/restore、ccswitch、init）。
+- **影响**：WebUI 用户点"导出/导入/恢复配置"或 CCS 导入会看到成功提示，实际无任何操作；与 A2 同族，但用户面更广、更易被当成可用功能。
+- **动作**：与 A2 同一把尺子——能接已有实现的接上（导出/恢复可复用 `handleBackups` 的备份能力）；不能实现的返回 501 `{error:{type:"not_implemented"}}`，并在 WebUI 隐藏或禁用对应入口。
+- **完成判据**：每个 stub 要么有真实实现 + 测试，要么返回 501 且 WebUI 不再展示成功路径；不存在"200 ok 但无副作用"的端点。
+- **相关**：A2（CLI 同族）。
+
+### A8 [P0/安全] WebUI 密码无生成路径（A1 的根因）
+
+- **证据**：`server.go:resolveWebUIPassword` 只读 `PI_SWITCH_WEBUI_PASSWORD` 与 `~/.pi-switch/webui_password`；全仓无任何写该文件的代码（仅 `webUIPasswordPath` 的路径拼接）。
+- **影响**：非 loopback 时"无密码就放行"不是边缘情况而是默认状态——没有任何机制能产生密码文件，管理面等于永久无认证。
+- **动作**：启动时若绑定非 loopback 且无密码：生成随机密码写入用户私有文件（0600）并打印一次；或直接拒绝启动。二选一，需与 A1 同批实现。
+- **完成判据**：全新环境非 loopback 启动后，认证要么强制生效（密码文件存在且权限 0600），要么启动被拒绝；测试覆盖所选路径。
+
+### A9 [P0/安全] Proxy 无认证且请求体无上限
+
+- **证据**：`server.go:NewProxyRouter` 仅挂 `gin.Recovery()`，无认证中间件；`proxy_handlers.go:handleChatCompletions` 以 `io.ReadAll(c.Request.Body)` 读取请求体，无 `http.MaxBytesReader`。
+- **影响**：`pi-switch proxy --host 0.0.0.0` 时局域网可无认证消耗付费上游额度，并可用超大 body 打爆内存。默认绑 loopback 只降低触发概率，不构成防护。
+- **动作**：非 loopback 绑定时要求同一套 Basic 认证（复用 A1/A8 的密码）；proxy 入口加 `http.MaxBytesReader`（上限可配，缺省建议 32MB）。若产品明确不支持远程代理，则非 loopback 直接拒绝启动并在文档说明。
+- **完成判据**：非 loopback + 无密码时 proxy 不可用；超大 body 返回 413；测试覆盖两条路径。
+
+### A10 [P1/诚实性] 保存失败静默吞掉
+
+- **证据**：`_ = saveConfig(cfg)` 8 处（`profile_handlers.go` 5 处、`settings_handlers.go:handlePutSettings` 1 处、`cmd/pi-switch/main.go` 2 处），随后仍返回 `200 {"ok":true}`。
+- **影响**：磁盘满、权限错误时配置写入丢失，但所有入口报告成功——用户配置静默丢失。
+- **动作**：`saveConfig` 失败必须让 handler 返回 5xx 与错误信息；CLI 路径退出码非零。
+- **完成判据**：写盘失败注入测试（只读目录或 mock）返回 5xx / 非零退出；全仓 `_ = saveConfig` 归零。
+
+### A11 [P1/工程] CI Go 版本与 go.mod 不匹配
+
+- **证据**：`.github/workflows/ci.yml:36,150,193` 为 `go-version: "1.23"`，`go.mod:3` 为 `go 1.24.2`；当前依赖 `GOTOOLCHAIN=auto` 隐式下载工具链。
+- **影响**：离线/受限镜像或设 `GOTOOLCHAIN=local` 时 CI 直接失败；构建时间与网络依赖隐性存在。
+- **动作**：CI 三个 job 的 go-version 对齐 `go.mod`（或显式声明 `GOTOOLCHAIN` 策略）。
+- **完成判据**：CI 不触发工具链下载即可通过；版本以 `go.mod` 为单一事实来源。
+
+### A12 [P2/观察] 前端组件单体
+
+- **证据**：`webui/src/components/ProfilesPanel.tsx` 49KB、`StatsPanel.tsx` 47KB（`StatsPanel.test.tsx` 62KB）、`GatewayPanel.test.tsx` 33KB；最近 50 提交中 `GatewayPanel.tsx` 与其测试各被改 10 次。
+- **影响**：churn × 尺寸的组合与 A3 前的 `server.go` 同构，评审与冲突成本会持续上升。
+- **动作**：现在不动。A3 完成后按同一把尺子观察 1–2 个迭代；若 GatewayPanel 继续高频变更，再立拆分 spec（不预先设计）。
+- **完成判据**：无（观察项）；触发条件见 §5。
+- **相关**：A3（同构问题，方法可复用）。
+
+### A13 [P2/文档] ADR 编号重复
+
+- **证据**：`docs/adr/0004-responses-provider-passthrough.md` 与 `docs/adr/0004-supplier-side-pi-session-scan.md` 并存。
+- **影响**：引用 "ADR 0004" 有歧义；后续编号连续性被破坏。
+- **动作**：给其中一个重新编号（按时间保持单调），并更新相关文档/`.scratch` 引用；不改内容。
+- **完成判据**：`docs/adr/` 编号唯一且连续。
+
+### A14 [P2/文档] README 版本徽章漂移
+
+- **证据**：`README.md` 徽章为 `20260902.0.0`，`package.json` 为 `20260910.0.2`。
+- **动作**：发布流程同步徽章，或改为动态 release badge。
+- **完成判据**：两者一致，或不一致会被 CI 检出。
+
+### A15 [P2/卫生] 工作区残留
+
+- **证据**：`target/` 6.9G（ADR 0007 已宣告 Go-only）、`.gocache/` 303M；均被 gitignore。`bin/` 101M 为本地构建产物（仅 `bin/pi-switch.js` 被跟踪），不需处理。
+- **影响**：磁盘占用与工具链认知噪声；新 agent 可能误在 Rust 残留目录中探索。
+- **动作**：删除 `target/` 与 `.gocache/`（属破坏性操作，需用户确认后执行）；`.gitignore` 已覆盖，无需改动。
+- **完成判据**：目录不存在，且 `git status` 不受影响。
+- **相关**：ADR 0007。
+
 ## 4. 明确不做
 
 1. 不重写、不换 gin / bubbletea / SQLite 技术栈。
@@ -115,4 +186,6 @@ tui / webui                          同一 Go 核心的另外两个视图
 - 出现独立复用代理核心的第二消费方 → 才评估把 proxy core 从 `server` 包提升为独立包。
 - 有 QPS/延迟数据证明 config 读取是热点 → 启动 A6。
 - per-conversation 熔断立项 → 基于 A4 的 spec 恢复 retry 原语或删除。
-- 认证模型变化（远程访问、多用户）→ 重估 A1 方案。
+- 认证模型变化（远程访问、多用户）→ 重估 A1/A8/A9 方案。
+- `GatewayPanel`/`StatsPanel` 的 churn 或尺寸继续上升 → 启动 A12 的拆分 spec。
+- A2/A7 任一实现落地 → 同批处理 A10（保存错误传播），避免再次出现"成功但无副作用"。
