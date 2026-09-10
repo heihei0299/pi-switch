@@ -56,3 +56,5 @@ Status: open —— 部分需先确认「是否有意为之」，未修复
 - [ ] (a) 空 body 的 `proxy/start` 不再声称 `running: true`（或明确它是有意的兼容占位并有测试固定）
 - [ ] (b) 启动失败的等待上限有明确理由，且「端口占用」不再靠错误文本判定
 - [ ] (c) `has_models_file` 反映真实文件状态，或该字段被移除
+
+**处理情况（2026-09-11）**：(a) 非 daemon 分支改为 501 + 指明 `daemon:true`；(b) 子进程退出即结束健康等待（同场景实测 18037ms → 17ms），并且端口占用改为 `daemon.ErrPortInUse` + `errors.Is`；(c) `has_models_file` 改为真实 `os.Stat`。`gateway start` 的恒定载荷经查证是有意设计（`mode: logical-isolation` 无进程可启动），故不改。

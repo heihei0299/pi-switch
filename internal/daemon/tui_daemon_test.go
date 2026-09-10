@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -301,9 +300,16 @@ func TestTuiDaemon_S5_DefaultHostPort(t *testing.T) {
 		}
 		ln.Close()
 	}
-	// Verify health attempts for Start is 15×200ms (≈3s) – we can test timing of failed Start
-	// Use a free port where child (test binary) will not listen, so health fails after 15*200ms.
-	// Ensure no pid file for this port
+	// Verify a failed Start reports the failure and leaves no state behind.
+	//
+	// This block used to assert the duration of the health wait (a 2.5-4.5s
+	// window, i.e. 15 × 200ms). That pinned behavior the P0 batch had already
+	// recorded as a defect (F14: the operator waits out the whole health check for
+	// a failure that is decided in milliseconds), and the duration is no longer a
+	// fixed number: Start now stops as soon as the child is gone, so the elapsed
+	// time legitimately depends on the child's lifetime. The early exit has its own
+	// test with a controlled fixture (start_failfast_test.go); asserting timing
+	// through Start here would measure the test binary's own lifetime instead.
 	_ = os.Remove(filepath.Join(dir, "proxy.pid"))
 	_ = os.Remove(filepath.Join(dir, "proxy.log"))
 	ln2, err := net.Listen("tcp", "127.0.0.1:0")
@@ -311,19 +317,11 @@ func TestTuiDaemon_S5_DefaultHostPort(t *testing.T) {
 		_, ps, _ := net.SplitHostPort(ln2.Addr().String())
 		p, _ := strconv.Atoi(ps)
 		ln2.Close() // free port, health will fail
-		start := time.Now()
-		_, _ = Start(Proxy, "127.0.0.1", uint16(p))
-		elapsed := time.Since(start)
-		// Expect elapsed ~3s (15* (500ms timeout? actually checkHealth does 500ms DialTimeout +200ms sleep per attempt, but for free port Dial fails quickly <10ms, so ~200ms*15=3s)
-		if elapsed < 2500*time.Millisecond || elapsed > 4500*time.Millisecond {
-			t.Logf("Start health duration %v not ~3s (15×200ms) – might be 25×200ms =5s", elapsed)
-			if elapsed > 4500*time.Millisecond {
-				t.Fatalf("Start health took %v want ~3s (15×200ms), got >4.5s likely 25 attempts", elapsed)
-			}
-			if elapsed < 2500*time.Millisecond {
-				t.Fatalf("Start health took %v want ~3s, got <2.5s", elapsed)
-			}
+		if _, err := Start(Proxy, "127.0.0.1", uint16(p)); err == nil {
+			t.Fatalf("Start reported success although nothing ever served health on port %d", p)
 		}
-		_ = fmt.Sprintf("port %d", p)
+		if _, statErr := os.Stat(filepath.Join(dir, "proxy.pid")); statErr == nil {
+			t.Fatal("a failed Start left its pid file behind, so the next start would see a phantom daemon")
+		}
 	}
 }

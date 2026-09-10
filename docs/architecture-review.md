@@ -120,7 +120,11 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **动作**：与 A2 同一把尺子——能接已有实现的接上；不能实现的返回 501 `{error:{type:"not_implemented"}}`，并在 WebUI 隐藏或禁用对应入口。
 - **完成判据**：每个 stub 要么有真实实现 + 测试，要么返回 501 且 WebUI 不再展示成功路径；不存在"200 ok 但无副作用"的端点。
 - **完成情况**：config export/import/restore、`/api/backups`、ccswitch import、`/api/init` 六个端点改为 501；WebUI 侧删除了对应入口（Backups 面板改为"未实现"说明、删除 "Import from cc-switch" 弹窗与按钮、"Initialize config" 按钮改为说明），并清理了随之失效的客户端方法与解码器。**勘误**：本项原以为"导出/恢复可复用 `handleBackups` 的备份能力"，实际全仓没有任何备份实现（`handleBackups` 本身就是恒空数组），故无"接已有实现"的选项。
-- **尚未关闭（需另立票）**：本项只覆盖了上表端点，**全仓仍存在"200 但无工作"的端点**——`POST /api/proxy/start` 的非 daemon 分支返回 `running:true, message:"proxy started (stub)"`，`POST /api/proxy/start` 经管理 API 时约 15s 后才以笼统的 health check 失败告终（子进程守卫保证 fail-closed，仅诊断体验差），`gateway` start/health 返回恒定成功 payload。因此本项最后一条判据（"不存在 200 但无副作用的端点"）在**全仓范围**仍不成立。
+- **遗留项关闭情况（2026-09-11，`known-gaps-remediation`）**：本项最后一条判据此前在**全仓范围**不成立，三处已逐一处理：
+  - `POST /api/proxy/start` 非 daemon 分支（**已修**）：原返回 `running:true, message:"proxy started (stub)"`，而该分支不派生进程、不监听端口；现返回 501 `{error:{type:"not_implemented",...}}` 并指明需 `daemon:true`（或 host/port）。
+  - 管理 API 启动的失败延迟（**已修**）：原描述"约 15s"经实测为按机制计——15 次尝试 ×（`/healthz`+`/health` 各 500ms 超时 + 200ms 间隔）；端口被占用或探测超时时最坏约 18s（实测 18037ms），连接被拒时约 3s。现子进程一退出即结束等待（同场景实测 17ms），并且端口占用改为类型化错误（`daemon.ErrPortInUse` + `errors.Is`），不再按错误文本分类。
+  - `gateway health` / `gateway start` 的恒定 payload（**部分修**）：`has_models_file` 此前是字面量 `true`，现真实核对 `gateway.ModelsPath()`；`upstreams_total` 本就真实。`POST /api/gateway/start` 与 `running`/`last_notify` 保持不变——网关的 `mode: "logical-isolation"` 表明它是"发布 models.json"这个逻辑概念，没有常驻进程也没有通知记录可查，故不谎报之外也无从改造。
+- **尚未关闭**：F21 的**根治**（可发布的代理专用 token）仍未决；本批只做了"明确告知 + 文档化"（见 `known-gaps/issues/01`）。
 - **相关**：A2（CLI 同族）。
 
 ### A8 [P0/安全] WebUI 密码无生成路径（A1 的根因） —— ✅ 已完成（2026-09-11, `e3f9f0c`）

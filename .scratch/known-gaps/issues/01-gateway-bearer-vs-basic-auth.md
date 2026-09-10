@@ -55,3 +55,5 @@ Status: open —— 需要产品决策，未修复
 - [ ] 具名 LAN 绑定 + 密码下，网关发布出去的那个客户端能真正用起来（或文档明确它不支持）
 - [ ] 鉴权决策来源与发布 URL 来源的一致性有明确结论并被测试固定
 - [ ] `models.json` 中不出现共享密码
+
+**处理情况（2026-09-11）**：按 A 案落地（明确告知 + 文档化，不发布任何凭据）。两条 publish 路径（`PUT /api/models/gateway`、`POST /api/gateway/publish`）在非 loopback 绑定时于成功响应中带 `warnings`；CLI `gateway publish` 同样把警告打到 stderr，判断取自**即将写入的条目**自身的 baseUrl，避免与 gateway 包的 host 推法漂移；两个 README 记录了该限制。测试同时断言响应与 `models.json` 都不含共享密码。**根治项（可发布的代理专用 token）仍未决，需另立票。**

@@ -186,6 +186,39 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
+// gatewayPublishAuthWarning reports a limitation an operator cannot see from the
+// published file: the providers pi-switch writes carry `"apiKey":
+// "pi-switch-proxy"` (internal/gateway/gateway.go), which a client sends as a
+// Bearer token, while the proxy guard only accepts HTTP Basic
+// (basicAuthMiddleware). Beyond loopback the guard is always installed, because
+// ValidateBindAuth refuses to start without a password — so there the published
+// providers cannot authenticate at all.
+//
+// The bind address is the only runtime fact available, and it is exactly why this
+// cannot be derived from the config file: an empty host means every interface.
+// Judging by it can only over-warn when the webui and the proxy are started with
+// different hosts, which is the safe direction.
+//
+// Nothing here may include a credential: the whole point of warning (rather than
+// publishing a working key) is that the shared password must not land in
+// ~/.pi/agent/models.json.
+func gatewayPublishAuthWarning(c *gin.Context) []string {
+	if IsLoopback(effectiveBindHost(requestAuthOptions(c).BindHost)) {
+		return nil
+	}
+	return []string{`this listener is bound beyond loopback, so /v1 requires HTTP Basic authentication, but the published providers carry "apiKey": "pi-switch-proxy", which clients send as a Bearer token — such clients get 401. Point them at a Basic-capable configuration, or bind the proxy to loopback.`}
+}
+
+// gatewayPublishOK is the success body for a publish, with the warning attached
+// only when there is one (a loopback publish stays byte-identical to before).
+func gatewayPublishOK(c *gin.Context) gin.H {
+	resp := gin.H{"ok": true}
+	if warnings := gatewayPublishAuthWarning(c); len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	return resp
+}
+
 func handlePutGateway(c *gin.Context) {
 	raw, _ := c.GetRawData()
 	var gw map[string]interface{}
@@ -212,11 +245,32 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(200, gatewayPublishOK(c))
 }
-func handleGatewayHealth(c *gin.Context) {
+
+// gatewayHealthPayload reports the gateway's state. has_models_file and
+// upstreams_total are read from reality; the rest are constants, and deliberately
+// so: the gateway is a logical concept ("logical-isolation" — publishing
+// ~/.pi/agent/models.json), so there is no process to report and no notification
+// record to date. has_models_file used to be one of those constants (literally
+// `true`), which made "already published" always true for a frontend that decodes
+// it as a required boolean.
+func gatewayHealthPayload(c *gin.Context) gin.H {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch", "has_models_file": true, "last_notify": nil, "upstreams_total": len(cfg.Profiles), "message": "ok"})
+	_, statErr := os.Stat(gateway.ModelsPath())
+	return gin.H{
+		"running":         true,
+		"mode":            "logical-isolation",
+		"gateway_id":      "pi-switch",
+		"has_models_file": statErr == nil,
+		"last_notify":     nil,
+		"upstreams_total": len(cfg.Profiles),
+		"message":         "ok",
+	}
+}
+
+func handleGatewayHealth(c *gin.Context) {
+	c.JSON(200, gatewayHealthPayload(c))
 }
 func handleGatewayStart(c *gin.Context) {
 	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch"})
@@ -265,5 +319,5 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(200, gatewayPublishOK(c))
 }

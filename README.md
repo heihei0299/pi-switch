@@ -122,6 +122,12 @@ pi-switch package import                           # Import packages found in th
 # Binding a non-loopback --host requires a password: set
 # PI_SWITCH_WEBUI_PASSWORD, or pass --generate-password to have one written to
 # ~/.pi-switch/webui_password (0600); otherwise startup is refused.
+#
+# Known limitation beyond loopback: the proxy then accepts HTTP Basic only, while
+# the providers pi-switch publishes to ~/.pi/agent/models.json carry a Bearer-style
+# apiKey ("pi-switch-proxy"). Clients using those published providers get 401, and
+# `gateway publish` says so. Bind the proxy to loopback, or use a client that can
+# send Basic. The shared password is deliberately never written into models.json.
 pi-switch webui start --daemon [--host <ip>] [--port <port>] [--generate-password]
 pi-switch webui status
 pi-switch webui stop

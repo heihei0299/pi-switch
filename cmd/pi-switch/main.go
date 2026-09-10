@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -908,6 +909,34 @@ func configFileProblem(path string) error {
 	return nil
 }
 
+// publishedProxyAuthWarning reports the authentication limitation of what is about
+// to be published, or "" when there is nothing to say.
+//
+// The host comes from the entries themselves rather than from a second reading of
+// the config: the gateway package already decides the baseUrl (including rewriting
+// a wildcard host to loopback), and re-deriving it here would be a second copy
+// free to drift. The limitation is that the published providers carry
+// `"apiKey": "pi-switch-proxy"`, which a client sends as a Bearer token, while the
+// proxy only accepts HTTP Basic once it is bound beyond loopback.
+//
+// No credential may appear in this text: warning is the whole point of not
+// publishing the shared password into ~/.pi/agent/models.json.
+func publishedProxyAuthWarning(published map[string]interface{}) string {
+	providers, _ := published["providers"].(map[string]interface{})
+	for _, raw := range providers {
+		entry, _ := raw.(map[string]interface{})
+		base, _ := entry["baseUrl"].(string)
+		u, err := url.Parse(base)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		if !server.IsLoopback(u.Hostname()) {
+			return "the published providers point at " + u.Hostname() + " and carry a Bearer-style apiKey, but the proxy only accepts HTTP Basic authentication beyond loopback — such clients get 401. Bind the proxy to loopback, or use a Basic-capable client."
+		}
+	}
+	return ""
+}
+
 func handleGatewayCLI(args []string) {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println("Usage: pi-switch gateway <publish|status|preview>")
@@ -923,6 +952,12 @@ func handleGatewayCLI(args []string) {
 			os.Exit(1)
 		}
 		fmt.Println("gateway published")
+		// 与 WebUI 那条路一致地告知限制：发布的 provider 携带 Bearer 形式的
+		// apiKey，而代理面在超出 loopback 时只接受 HTTP Basic。判断取自**即将写入
+		// 的条目**里的 baseUrl，不再自己推一遍 host，避免与 gateway 包的推法漂移。
+		if warn := publishedProxyAuthWarning(toPublish); warn != "" {
+			fmt.Fprintln(os.Stderr, "warning: "+warn)
+		}
 	case "status":
 		fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
 	case "preview":

@@ -25,6 +25,11 @@ type Service struct {
 var Proxy = Service{PidFile: "proxy.pid", LogFile: "proxy.log", Subcommand: "proxy", Label: "Proxy"}
 var WebUI = Service{PidFile: "webui.pid", LogFile: "webui.log", Subcommand: "webui", Label: "WebUI"}
 
+// ErrPortInUse marks a start failure caused by another listener owning the port.
+// Callers must match it with errors.Is instead of looking for the words in the
+// message: the wording is for operators and may change.
+var ErrPortInUse = errors.New("port already in use")
+
 func ServiceByName(name string) *Service {
 	switch name {
 	case "proxy":
@@ -298,6 +303,37 @@ func managedHealth(info DaemonInfo, attempts int) bool {
 	return checkHealthEndpoint(info.Host, info.Port, attempts)
 }
 
+// startHealthAttempts bounds how long Start waits for a freshly spawned daemon.
+// One attempt probes both health paths with a 500ms client timeout and then
+// sleeps 200ms, so a full run-out is about 18s.
+const startHealthAttempts = 15
+
+// waitForHealth polls a newly spawned daemon's health, stopping as soon as the
+// child has exited: a daemon that died on startup (port taken, bad argument, lock
+// held) cannot start answering later, so the remaining attempts only make the
+// operator wait. The failure is already determined in milliseconds.
+//
+// `exited` is closed by the Wait goroutine in Start, and it is the only reliable
+// signal: liveness must NOT be derived from the pid. Verified on this machine —
+// after a child exits without being waited for, `ps -o stat=` reports `Z` while
+// `kill -0 <pid>` still succeeds, so a pid-based check calls a dead daemon alive
+// and the early exit never fires.
+func waitForHealth(info DaemonInfo, exited <-chan struct{}) bool {
+	for attempt := 0; attempt < startHealthAttempts; attempt++ {
+		if exited != nil {
+			select {
+			case <-exited:
+				return false
+			default:
+			}
+		}
+		if managedHealth(info, 1) {
+			return true
+		}
+	}
+	return false
+}
+
 func listeningPID(port uint16) (uint32, bool) {
 	if runtime.GOOS != "linux" {
 		return 0, false
@@ -431,6 +467,16 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	if err := cmd.Start(); err != nil {
 		return DaemonResult{}, fmt.Errorf("Failed to spawn daemon: %w", err)
 	}
+	// Reap the child, and learn when it exits. cmd.Start leaves a zombie when
+	// nobody waits, and a zombie still answers `kill -0`, so this goroutine is what
+	// makes "the child is gone" observable at all. It also stops dead daemons from
+	// accumulating as zombies for as long as this process lives.
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+
 	pid := uint32(cmd.Process.Pid)
 	now := uint64(time.Now().UnixMilli())
 	identity := processIdentity(pid)
@@ -444,15 +490,15 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
 			removePidFile(s)
 			_ = cmd.Process.Kill()
-			return DaemonResult{}, fmt.Errorf("unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", host, port, owner, s.Label)
+			return DaemonResult{}, fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
 		}
 	}
-	healthy := managedHealth(info, 15)
+	healthy := waitForHealth(info, exited)
 	if healthy && runtime.GOOS == "linux" {
 		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
 			removePidFile(s)
 			_ = cmd.Process.Kill()
-			return DaemonResult{}, fmt.Errorf("unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", host, port, owner, s.Label)
+			return DaemonResult{}, fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
 		}
 	}
 	if !healthy {
@@ -460,7 +506,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		_ = cmd.Process.Kill()
 		if data, err := os.ReadFile(lp); err == nil {
 			if strings.Contains(strings.ToLower(string(data)), "address already in use") {
-				return DaemonResult{}, fmt.Errorf("port already in use — use ss -tlnp to locate (address already in use on %s:%d)", host, port)
+				return DaemonResult{}, fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
 			}
 		}
 		return DaemonResult{}, fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
