@@ -151,7 +151,12 @@ func handlePutSettings(c *gin.Context) {
 	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	cfg.Settings = s
-	_ = saveConfig(cfg)
+	// A failed write must not be reported as success: the caller would believe
+	// settings were persisted while the file still holds the old values.
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save settings: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true})
 }
 

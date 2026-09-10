@@ -293,7 +293,10 @@ func handleDeleteProfile(c *gin.Context) {
 	if cfg.Current != nil && *cfg.Current == name {
 		cfg.Current = nil
 	}
-	_ = saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
 }
 
@@ -319,7 +322,10 @@ func handleDuplicateProfile(c *gin.Context) {
 		return
 	}
 	cfg.Profiles[body.As] = prof
-	_ = saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true})
 }
 
@@ -426,7 +432,10 @@ func handleFetchModelsForChannel(c *gin.Context, cfg config.PiSwitchConfig, name
 		prof.Upstreams[idx].Models = append(prof.Upstreams[idx].Models, e)
 	}
 	cfg.Profiles[name] = prof
-	_ = saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
 	if warning != "" {
 		enrich["warning"] = warning
@@ -747,7 +756,10 @@ func handlePutModels(c *gin.Context) {
 	}
 	prof.Upstreams[idx].Models = body.Models
 	cfg.Profiles[name] = prof
-	_ = saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil, "enrich": gin.H{"enriched": 0}})
 }
 
@@ -786,7 +798,10 @@ func handlePutExpose(c *gin.Context) {
 	}
 	prof.Upstreams[idx].ExposedModels = body.ModelIds
 	cfg.Profiles[name] = prof
-	_ = saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
 }
 

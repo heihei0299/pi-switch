@@ -118,7 +118,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "provider", "providers":
-		handleProvider(args[1:])
+		os.Exit(handleProvider(args[1:]))
 	case "package", "packages":
 		os.Exit(handlePackage(args[1:]))
 	case "ccs", "ccswitch", "cc-switch":
@@ -315,10 +315,10 @@ func handleWebUI(args []string) {
 	}
 }
 
-func handleProvider(args []string) {
+func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println("Usage: pi-switch provider <list|show|add|delete|duplicate|use|test|fetch-models> [name]")
-		os.Exit(0)
+		return 0
 	}
 	cfgPath := config.ResolvePath()
 	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
@@ -326,7 +326,7 @@ func handleProvider(args []string) {
 	case "list", "ls":
 		if len(cfg.Profiles) == 0 {
 			fmt.Println("No profiles.")
-			return
+			return 0
 		}
 		for name := range cfg.Profiles {
 			mark := " "
@@ -338,43 +338,50 @@ func handleProvider(args []string) {
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")
-			os.Exit(1)
+			return 1
 		}
 		prof, ok := cfg.Profiles[args[1]]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
-			os.Exit(1)
+			return 1
 		}
 		b, _ := json.MarshalIndent(prof, "", "  ")
 		fmt.Println(string(b))
 	case "use":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider use <name> required")
-			os.Exit(1)
+			return 1
 		}
 		name := args[1]
 		if _, ok := cfg.Profiles[name]; !ok {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", name)
-			os.Exit(1)
+			return 1
 		}
 		cfg.Current = &name
-		_ = saveConfigFile(cfg, cfgPath)
+		if err := saveConfigFile(cfg, cfgPath); err != nil {
+			fmt.Fprintf(os.Stderr, "provider use failed to save config: %v\n", err)
+			return 1
+		}
 		fmt.Printf("Switched to %s\n", name)
 	case "delete", "remove", "rm":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider delete <name> required")
-			os.Exit(1)
+			return 1
 		}
 		delete(cfg.Profiles, args[1])
 		if cfg.Current != nil && *cfg.Current == args[1] {
 			cfg.Current = nil
 		}
-		_ = saveConfigFile(cfg, cfgPath)
+		if err := saveConfigFile(cfg, cfgPath); err != nil {
+			fmt.Fprintf(os.Stderr, "provider delete failed to save config: %v\n", err)
+			return 1
+		}
 		fmt.Printf("Deleted %s\n", args[1])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown provider subcommand %q\n", args[0])
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // handlePackage reports failures by returning a non-zero exit code instead of

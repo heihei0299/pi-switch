@@ -12,8 +12,8 @@
 **不需要全面重构，需要精准收敛**（§3）：
 
 - **P0 信任边界与诚实性（5 项，✅ 全部已完成 2026-09-11）**：A1 管理面认证缺口、A8 密码无生成路径、A9 Proxy 无认证且请求体无上限（一票：`.scratch/trust-boundary-and-honesty/issues/01`、`02`）、A2 CLI 假成功（`03`）、A7 服务端假成功 API 且 WebUI 已接线（`04`）。逐票证据、review 与验证见该 spec 的 `progress.md`。
-- **P1 结构与工程（4 项）**：A3 handler 拆分（✅ 已完成）、A4 retry 休眠标注、A10 保存失败静默吞掉、A11 CI Go 版本与 go.mod 不匹配。
-- **P2 决策与卫生（6 项）**：A5 遗留 JS 归属、A6 config 读取缓存（触发式）、A12 前端组件单体（观察）、A13 ADR 编号重复、A14 README 版本徽章漂移、A15 工作区残留。
+- **P1 结构与工程（4 项，✅ 全部已完成）**：A3 handler 拆分、A4 retry 休眠标注、A10 保存失败静默吞掉、A11 CI Go 版本与 go.mod 不匹配（后四项一票：`.scratch/arch-review-eng-batch/issues/02`、`01`、`03`）。
+- **P2 决策与卫生（6 项）**：A5 遗留 JS 归属、A6 config 读取缓存（触发式）、A12 前端组件单体（观察）、A15 工作区残留；A13 ADR 编号重复与 A14 README 版本徽章漂移✅ 已完成（`.scratch/arch-review-eng-batch/issues/04`、`05`）。
 
 **明确不做**见 §4。
 
@@ -91,12 +91,13 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **完成情况**：`server.go` 收至 522 行 / 18 个函数，只剩 router、auth、静态资源、构建信息与 kernel helper（`configPath`、`saveConfig`、`resolveModelsDevProvider`、`sessionScanCandidates`、`conversationCandidates`）。六个域文件为 `proxy_handlers.go`（含 `handleChatCompletions`/`handleStream`/`resolveRoute`/`clampBody`）、`profile_handlers.go`、`gateway_handlers.go`、`package_handlers.go`、`settings_handlers.go`、`stats_handlers.go`。被 2+ 域调用的 helper 留在 kernel，域文件之间无内部依赖。
 - **完成判据**：`server.go` 只剩 router/auth/静态资源/横切工具；测试文件一行不改仍全绿。二者均已满足。拆分方法、逐票证据与偏差裁决见 `.scratch/split-server-handlers/`。
 
-### A4 [P1/可发现性] 标注 `retry.go` 为休眠原语
+### A4 [P1/可发现性] 标注 `retry.go` 为休眠原语 —— ✅ 已完成（2026-09-11）
 
 - **证据**：`internal/server/retry.go` 顶部无休眠说明，读起来像生效中的策略引擎；`.scratch/remove-failover-chain/spec.md` D1 明确"保留原语与 `circuitBreaker` 占位，供后续 per-conversation 熔断复用"；生产路径只取单候选（`proxy_handlers.go:resolveRoute` 的 `candidates[0]`），`PUT /api/proxy/failover` 返回 410（`settings_handlers.go:handlePutFailover`）。
 - **影响**：新读者误判 failover 可用；不清除上下文时也容易被误删或误改。
 - **动作**：`retry.go` 文件头注释说明"当前休眠、代理路径为单候选直通、复用前提见 spec"；`docs/architecture.md` 补一句同一事实。
 - **完成判据**：文件头注释 + 架构文档一句话，且 `retry.go` 无生产调用点的事实有出处可查。
+- **完成情况**：文件头加了 DORMANT 说明，并**区分了两件事**——调度引擎（`expandAttempts`/`admitForRound`/`waitForRound`/`classifyUpstreamError` 等）在非测试代码中零调用，而校验函数（`validateRetryFields`/`validateSettingsRetry`）仍被 profile 与 settings handler 调用；说明同时给出 `remove-failover-chain/spec.md` D1 的出处与"不要期望此处改动影响生产、未经确认不要删除"的告警。`docs/architecture.md` 已补同一事实。
 
 ### A5 [P2/决策] 遗留 JS 层归属
 
@@ -136,19 +137,21 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **完成情况**：非 loopback 时 Proxy 挂上与管理面**同一份** Basic 守卫（同一实现、同一密码来源），只守护 `/v1` 前缀；请求体加 `http.MaxBytesReader`（`PI_SWITCH_MAX_BODY_BYTES`，缺省 32 MiB，非法值回退默认而非关闭上限），超限返回 413 且早于任何上游调用/落库/计费。CLI 的 webui/proxy 共四条启动路径全部经过同一守卫，daemon 子进程独立重新校验。
 - **已知缺口（需产品决策）**：守卫只接受 HTTP Basic，而网关发布给本地代理的 provider 携带 `apiKey: "pi-switch-proxy"`，客户端会以 `Authorization: Bearer …` 发送——**在具名 LAN 绑定下，网关配置的那个客户端无法通过认证**（通配绑定会被改写为 127.0.0.1，掩盖该问题）。出路是文档化"暴露代理需要支持 Basic 的客户端"，或在 spec 层重议"仅 Basic"；**不可**把共享密码写进 `models.json`。
 
-### A10 [P1/诚实性] 保存失败静默吞掉
+### A10 [P1/诚实性] 保存失败静默吞掉 —— ✅ 已完成（2026-09-11）
 
 - **证据**：`_ = saveConfig(cfg)` 8 处（`profile_handlers.go` 5 处、`settings_handlers.go:handlePutSettings` 1 处、`cmd/pi-switch/main.go` 2 处），随后仍返回 `200 {"ok":true}`。
 - **影响**：磁盘满、权限错误时配置写入丢失，但所有入口报告成功——用户配置静默丢失。
 - **动作**：`saveConfig` 失败必须让 handler 返回 5xx 与错误信息；CLI 路径退出码非零。
 - **完成判据**：写盘失败注入测试（只读目录或 mock）返回 5xx / 非零退出；全仓 `_ = saveConfig` 归零。
+- **完成情况**：六个服务端调用点（`handlePutSettings` + profile 五处）改为写盘失败返回 500，CLI 的 `provider use`/`provider delete` 改为非零退出且不打印成功文案；全仓 `_ = saveConfig` 已归零。失败注入用"配置文件可读但所在目录不可写"，并配了可写路径的正向对照。红检确认：恢复吞错后断言以 `put settings = 200 ({"ok":true}), want 500` 失败。
 
-### A11 [P1/工程] CI Go 版本与 go.mod 不匹配
+### A11 [P1/工程] CI Go 版本与 go.mod 不匹配 —— ✅ 已完成（2026-09-11）
 
 - **证据**：`.github/workflows/ci.yml:36,150,193` 为 `go-version: "1.23"`，`go.mod:3` 为 `go 1.24.2`；当前依赖 `GOTOOLCHAIN=auto` 隐式下载工具链。
 - **影响**：离线/受限镜像或设 `GOTOOLCHAIN=local` 时 CI 直接失败；构建时间与网络依赖隐性存在。
 - **动作**：CI 三个 job 的 go-version 对齐 `go.mod`（或显式声明 `GOTOOLCHAIN` 策略）。
 - **完成判据**：CI 不触发工具链下载即可通过；版本以 `go.mod` 为单一事实来源。
+- **完成情况**：三处 `go-version: "1.23"` 改为 `go-version-file: go.mod`（setup-go 直接读 `go 1.24.2`）。选择读文件而非改常量，正是为了消除"人工同步版本"这一漂移来源。CI 实跑需推送后才能确认。
 
 ### A12 [P2/观察] 前端组件单体
 
@@ -158,18 +161,20 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **完成判据**：无（观察项）；触发条件见 §5。
 - **相关**：A3（同构问题，方法可复用）。
 
-### A13 [P2/文档] ADR 编号重复
+### A13 [P2/文档] ADR 编号重复 —— ✅ 已完成（2026-09-11）
 
-- **证据**：`docs/adr/0004-responses-provider-passthrough.md` 与 `docs/adr/0004-supplier-side-pi-session-scan.md` 并存。
+- **证据（修复前）**：`docs/adr/0004-responses-provider-passthrough.md` 与 `docs/adr/0004-supplier-side-pi-session-scan.md` 并存。
 - **影响**：引用 "ADR 0004" 有歧义；后续编号连续性被破坏。
 - **动作**：给其中一个重新编号（按时间保持单调），并更新相关文档/`.scratch` 引用；不改内容。
 - **完成判据**：`docs/adr/` 编号唯一且连续。
+- **完成情况**：按"编号与时间单调"把后引入的 `supplier-side-pi-session-scan` 重编为 `0012`（`0004-responses-provider-passthrough` 引入于 2026-08-07，该 ADR 引入于 2026-08-31，而 0005 是 08-28），文件内标题同步为 `ADR-0012`。`.scratch` 下的历史 spec 按惯例不回改，其中指向该 ADR 的编号引用已成为历史记录。
 
-### A14 [P2/文档] README 版本徽章漂移
+### A14 [P2/文档] README 版本徽章漂移 —— ✅ 已完成（2026-09-11）
 
 - **证据**：`README.md` 徽章为 `20260902.0.0`，`package.json` 为 `20260910.0.2`。
 - **动作**：发布流程同步徽章，或改为动态 release badge。
 - **完成判据**：两者一致，或不一致会被 CI 检出。
+- **完成情况**：两个 README 的徽章从 `20260902.0.0` 更新为 `20260910.0.2`，与 `package.json` 一致。"不一致会被 CI 检出"未实现，可另立项。
 
 ### A15 [P2/卫生] 工作区残留
 

@@ -10,6 +10,23 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
+// DORMANT: the retry/failover engine in this file is not wired into the request
+// path. The proxy takes a single candidate and streams it straight through
+// (`proxy_handlers.go`), `PUT /api/proxy/failover` answers 410, and every
+// scheduling symbol below — `expandAttempts`, `admitForRound`, `waitForRound`,
+// `classifyUpstreamError`, `classifyTransportError`, `coolForAttempt` and the
+// cooldown helpers — has no caller outside the tests in this package. What is
+// still live are the validators (`validateRetryFields`, `validateSettingsRetry`,
+// called from the profile and settings handlers), which keep rejecting
+// malformed retry knobs.
+//
+// The engine is retained on purpose rather than deleted:
+// `.scratch/remove-failover-chain/spec.md` D1 keeps the primitives plus the
+// `circuitBreaker` placeholder so a future per-conversation breaker can reuse
+// them. Read it as a policy library with tests, not as the live strategy — do
+// not expect a behavior change here to affect production, and do not delete it
+// without checking that spec first.
+//
 // Retry scheduling modeled on CLIProxyAPI's credential retry rounds, adapted
 // to pi-switch's Supplier/Channel model (one attempt = one profile channel,
 // narrowed via narrowToChannel). Pure policy: no I/O here, so it stays unit-testable.

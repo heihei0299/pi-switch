@@ -439,3 +439,65 @@ func TestHandleDoctor_FailsOnUnreadableConfig(t *testing.T) {
 		t.Fatalf("doctor did not explain the failure: %q", out)
 	}
 }
+
+// unreadableWriteConfig keeps the config readable while making every write fail,
+// so `provider use/delete` reach their save call and must report the failure.
+func unreadableWriteConfigCLI(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not restrict writes")
+	}
+	dir := t.TempDir()
+	dbDir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	body := `{"version":2,"profiles":{"p1":{"api":"openai-responses","responsesMode":"passthrough","baseUrl":"http://x","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}]}},"settings":{}}`
+	if err := os.WriteFile(cfgPath, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
+	t.Setenv("PI_SWITCH_DB", filepath.Join(dbDir, "requests.db"))
+	t.Setenv("PI_AGENT_SESSIONS", filepath.Join(dbDir, "sessions"))
+	t.Setenv("PI_SWITCH_WEBUI_PASSWORD_FILE", filepath.Join(dbDir, "webui_password"))
+	return cfgPath
+}
+
+// A10: a provider change that cannot be persisted must not report success.
+func TestHandleProvider_ReportsSaveFailure(t *testing.T) {
+	unreadableWriteConfigCLI(t)
+
+	for _, args := range [][]string{{"use", "p1"}, {"delete", "p1"}} {
+		code, out, errOut := runCLIStreams(t, func() int { return handleProvider(args) })
+		if code == 0 {
+			t.Fatalf("provider %v exit = 0 while the config write fails (stdout=%q)", args, out)
+		}
+		if strings.Contains(out, "Switched to") || strings.Contains(out, "Deleted ") {
+			t.Fatalf("provider %v still reported success: %q", args, out)
+		}
+		if !strings.Contains(errOut, "failed to save config") {
+			t.Fatalf("provider %v did not explain the save failure: %q", args, errOut)
+		}
+	}
+}
+
+// Positive control: with a writable config the same commands succeed.
+func TestHandleProvider_SucceedsOnWritableConfig(t *testing.T) {
+	isolateCLI(t)
+	cfgPath := os.Getenv("PI_SWITCH_CONFIG")
+	body := `{"version":2,"profiles":{"p1":{"api":"openai-responses","responsesMode":"passthrough","baseUrl":"http://x","apiKey":"k","models":[]}},"settings":{}}`
+	if err := os.WriteFile(cfgPath, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := runCLI(t, func() int { return handleProvider([]string{"use", "p1"}) })
+
+	if code != 0 {
+		t.Fatalf("provider use exit = %d, want 0 (stdout=%q)", code, out)
+	}
+	if !strings.Contains(out, "Switched to p1") {
+		t.Fatalf("provider use stdout = %q, want the switch confirmation", out)
+	}
+}
