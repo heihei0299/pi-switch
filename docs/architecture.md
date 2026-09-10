@@ -3,14 +3,16 @@
 > 这是一份代码导航文档：先从入口定位，再沿真实调用链阅读实现。
 >
 > 核心原则：`config.json` 保存供应商事实，Gateway 是显式发布的派生视图，Proxy 负责请求路由与协议转换，`requests.db` 保存请求事实。
+>
+> 架构评估结论与行动清单见 `docs/architecture-review.md`；边界不变量见 `docs/system-contract.md`。
 
 ## 1. 先看哪里
 
 | 目标 | 入口 | 继续阅读 |
 |---|---|---|
 | CLI 命令分发 | `cmd/pi-switch/main.go:main` | `handleProxy`、`handleWebUI`、`handleGatewayCLI` |
-| WebUI 管理 API | `internal/server/server.go:NewMgmtRouter` | `handle*` 管理接口 |
-| Proxy 请求入口 | `internal/server/server.go:NewProxyRouter` | `handleChatCompletions`、`handleStream` |
+| WebUI 管理 API | `internal/server/server.go:NewMgmtRouter` | `profile_handlers.go`、`settings_handlers.go`、`stats_handlers.go`、`package_handlers.go`、`gateway_handlers.go` |
+| Proxy 请求入口 | `internal/server/server.go:NewProxyRouter` | `proxy_handlers.go:handleChatCompletions`、`handleStream` |
 | 供应商/渠道/模型 | `internal/config/config.go:PiSwitchConfig` | `ProviderProfile`、`Upstream`、`ModelEntry` |
 | Gateway 预览与发布 | `internal/gateway/gateway.go:BuildCanonicalGatewayPlan` | `BuildProposedGatewayEntry`、`PublishPlan` |
 | 协议转换 | `internal/translator/translator.go:PlanRequest` | `TransformRequest`、stream converter |
@@ -124,15 +126,34 @@ translator.PlanRequest
 
 ### Proxy 入口对应代码
 
+`internal/server` 按 handler 领域拆分为一个 kernel 加六个域文件，同属一个 package：
+
 ```text
-internal/server/server.go
+internal/server/server.go             kernel：路由注册、认证、静态资源、构建信息、
+                                      configPath/saveConfig/resolveModelsDevProvider
+├── proxy_handlers.go                 handleChatCompletions、handleStream
+├── profile_handlers.go               供应商/渠道/模型 profile 管理
+├── gateway_handlers.go               gateway 预览与发布
+├── package_handlers.go               pi 包安装与导入
+├── settings_handlers.go              设置、备份、proxy/daemon 运行时状态
+└── stats_handlers.go                 统计查询与日志导出
+```
+
+被两个以上域调用的 helper 必须留在 kernel；域文件之间不互相调用内部 helper。
+
+```text
+internal/server/proxy_handlers.go
 ├── handleChatCompletions       非流式请求
 ├── handleStream                流式请求
 ├── resolveRoute                裸 model → supplier/channel
-├── BuildOutboundRequest        上游 URL/header/body
-├── translator.PlanRequest      协议能力规划
 ├── clampBody                   请求长度限制
 └── logRequest                  SQLite 请求事实
+
+internal/server/outbound.go
+└── BuildOutboundRequest        上游 URL/header/body
+
+internal/translator/translator.go
+└── PlanRequest                 协议能力规划
 ```
 
 ### 路由语义
@@ -233,7 +254,7 @@ webui/src/api.ts
 webui/src/apiSchema.ts
       │  decode contract
       ▼
-internal/server/server.go
+internal/server/server.go        kernel：NewMgmtRouter 注册 /api/*
       │
       ▼
 config / gateway / store / piagent
