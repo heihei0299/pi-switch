@@ -46,7 +46,7 @@ Commands:
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] | use <name> | delete <name>
-            test | fetch-models are not wired to the CLI yet
+            fetch-models is not wired to the CLI yet
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
@@ -382,7 +382,7 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|use|delete> [name]")
+		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|use|delete> [name]")
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -436,6 +436,22 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		fmt.Printf("Duplicated %s as %s\n", args[1], as)
+	case "test":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "provider test <name> required")
+			return 1
+		}
+		prof, ok := cfg.Profiles[args[1]]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
+			return 1
+		}
+		success, message, ms := server.TestProfileUpstream(prof)
+		if !success {
+			fmt.Fprintf(os.Stderr, "provider test %s: %s (%dms)\n", args[1], message, ms)
+			return 1
+		}
+		fmt.Printf("%s: %s (%dms)\n", args[1], message, ms)
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")

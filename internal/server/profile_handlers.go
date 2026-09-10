@@ -378,22 +378,17 @@ func handleDuplicateProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
-func handleTestProfile(c *gin.Context) {
-	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
+// TestProfileUpstream performs the read-only upstream probe behind
+// POST /api/profiles/:name/test and `pi-switch provider test`: it GETs the
+// smallest models endpoint, never writes, and never touches request stats.
+// success=false with a reason is a finding, not an error, so callers decide how
+// to surface it (HTTP 200 with success:false, CLI exit code).
+func TestProfileUpstream(prof config.ProviderProfile) (success bool, message string, responseMs int64) {
 	baseURL := strings.TrimRight(prof.PrimaryBaseURL(), "/")
 	apiKey := prof.PrimaryAPIKey()
 	if baseURL == "" {
-		c.JSON(200, gin.H{"success": false, "message": "baseUrl is empty", "responseTimeMs": 0})
-		return
+		return false, "baseUrl is empty", 0
 	}
-	// 真实探测：打上游最小只读接口，不写盘、不污染统计。
-	// 之前这里是写死成功的桩，错误 Key 也能过（manual-test-bugs/01）。
 	start := time.Now()
 	client := &http.Client{Timeout: 5 * time.Second}
 	urls := []string{baseURL + "/models", baseURL + "/v1/models"}
@@ -416,17 +411,27 @@ func handleTestProfile(c *gin.Context) {
 		resp.Body.Close()
 		ms := time.Since(start).Milliseconds()
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
-			c.JSON(200, gin.H{"success": false, "message": fmt.Sprintf("upstream HTTP %d: invalid api key or no permission", resp.StatusCode), "responseTimeMs": ms})
-			return
+			return false, fmt.Sprintf("upstream HTTP %d: invalid api key or no permission", resp.StatusCode), ms
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			lastErr = fmt.Sprintf("upstream HTTP %d: %s", resp.StatusCode, truncateForTest(body))
 			continue
 		}
-		c.JSON(200, gin.H{"success": true, "message": "ok", "responseTimeMs": ms})
+		return true, "ok", ms
+	}
+	return false, "unreachable: " + lastErr, time.Since(start).Milliseconds()
+}
+
+func handleTestProfile(c *gin.Context) {
+	name := c.Param("name")
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	c.JSON(200, gin.H{"success": false, "message": "unreachable: " + lastErr, "responseTimeMs": time.Since(start).Milliseconds()})
+	success, message, ms := TestProfileUpstream(prof)
+	c.JSON(200, gin.H{"success": success, "message": message, "responseTimeMs": ms})
 }
 
 func truncateForTest(b []byte) string {
