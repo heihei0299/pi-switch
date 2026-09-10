@@ -46,7 +46,7 @@ Commands:
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] | use <name> | delete <name>
-            duplicate | test | fetch-models are not wired to the CLI yet
+            test | fetch-models are not wired to the CLI yet
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
@@ -382,7 +382,7 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|use|delete> [name]")
+		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|use|delete> [name]")
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -416,6 +416,26 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		fmt.Printf("Added %s\n", name)
+	case "duplicate":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "provider duplicate <name> --as <new> required")
+			return 1
+		}
+		as := ""
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--as" && i+1 < len(args) {
+				as = args[i+1]
+				i++
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "provider duplicate: unknown argument %q\n", args[i])
+			return 1
+		}
+		if err := server.DuplicateProfile(args[1], as); err != nil {
+			fmt.Fprintf(os.Stderr, "provider duplicate failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Duplicated %s as %s\n", args[1], as)
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")

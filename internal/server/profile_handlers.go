@@ -335,6 +335,26 @@ func handleDeleteProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
 }
 
+// DuplicateProfile copies a profile under a new name. It is the single
+// implementation behind POST /api/profiles/:name/duplicate and
+// `pi-switch provider duplicate`, and it never overwrites an existing supplier.
+func DuplicateProfile(src, as string) error {
+	as = strings.TrimSpace(as)
+	if as == "" {
+		return errors.New("--as <new> required")
+	}
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	prof, ok := cfg.Profiles[src]
+	if !ok {
+		return fmt.Errorf("profile %q not found", src)
+	}
+	if _, exists := cfg.Profiles[as]; exists {
+		return fmt.Errorf("target %q already exists", as)
+	}
+	cfg.Profiles[as] = prof
+	return saveConfig(cfg)
+}
+
 func handleDuplicateProfile(c *gin.Context) {
 	name := c.Param("name")
 	var body struct {
@@ -342,23 +362,17 @@ func handleDuplicateProfile(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	if strings.TrimSpace(body.As) == "" {
-		c.JSON(400, gin.H{"error": "as required"})
-		return
-	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	if _, exists := cfg.Profiles[body.As]; exists {
-		c.JSON(400, gin.H{"error": "target exists"})
-		return
-	}
-	cfg.Profiles[body.As] = prof
-	if err := saveConfig(cfg); err != nil {
-		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+	if err := DuplicateProfile(name, body.As); err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			c.JSON(404, gin.H{"error": "not found"})
+		case strings.Contains(err.Error(), "already exists"):
+			c.JSON(400, gin.H{"error": "target exists"})
+		case isPersistError(err):
+			c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		default:
+			c.JSON(400, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
