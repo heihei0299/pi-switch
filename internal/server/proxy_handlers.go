@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,9 +245,46 @@ func extractData(frame []byte) string {
 	return ""
 }
 
+// maxProxyBodyEnv names the environment variable that overrides the proxy body
+// cap. It lives here, next to its only consumer, so the cap cannot drift away
+// from the code that enforces it.
+const maxProxyBodyEnv = "PI_SWITCH_MAX_BODY_BYTES"
+
+// defaultMaxProxyBodyBytes is 32 MiB.
+const defaultMaxProxyBodyBytes int64 = 32 << 20
+
+// ProxyBodyLimit reports the body cap the proxy routes enforce, for read-only
+// callers such as `pi-switch doctor`.
+func ProxyBodyLimit() int64 { return maxProxyBodyBytes() }
+
+// maxProxyBodyBytes returns the request body cap for the proxy routes. An
+// unparsable or non-positive value falls back to the default rather than
+// disabling the cap, so a typo can never remove the bound.
+func maxProxyBodyBytes() int64 {
+	if v := strings.TrimSpace(os.Getenv(maxProxyBodyEnv)); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxProxyBodyBytes
+}
+
 func handleChatCompletions(c *gin.Context) {
 	start := time.Now()
-	raw, _ := io.ReadAll(c.Request.Body)
+	// Cap the body before buffering it: an unbounded read is a memory
+	// exhaustion vector once the listener is reachable beyond loopback. A
+	// rejected request stops here, before any upstream call, logging or billing.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxProxyBodyBytes())
+	limited := c.Request.Body
+	raw, readErr := io.ReadAll(limited)
+	var tooLarge *http.MaxBytesError
+	if errors.As(readErr, &tooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
+			"message": fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit),
+			"type":    "request_too_large",
+		}})
+		return
+	}
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	var body map[string]interface{}
 	if err := json.Unmarshal(raw, &body); err != nil {

@@ -40,6 +40,9 @@ func isolateConfig(t *testing.T) string {
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", filepath.Join(dir, "requests.db"))
 	t.Setenv("PI_SWITCH_WEBUI_PASSWORD_FILE", filepath.Join(dir, "webui_password"))
+	// conversationSource defaults to sessionScan, which would otherwise read the
+	// developer's real session directory on any proxy request.
+	t.Setenv("PI_AGENT_SESSIONS", filepath.Join(dir, "sessions"))
 	return cfgPath
 }
 

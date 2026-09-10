@@ -166,8 +166,18 @@ func notImplemented(what string) gin.H {
 }
 
 func NewProxyRouter() *gin.Engine {
+	return NewProxyRouterWithAuth(MgmtAuthOptions{BindHost: "127.0.0.1"})
+}
+
+// NewProxyRouterWithAuth builds the proxy router for a specific bind address.
+// A non-loopback bind installs the same Basic guard the management API uses,
+// scoped to the inference routes; health probes stay open.
+func NewProxyRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	if !IsLoopback(opts.BindHost) {
+		r.Use(basicAuthMiddleware(opts.Password, "/v1"))
+	}
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.POST("/v1/chat/completions", handleChatCompletions)
@@ -197,7 +207,7 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	// Startup validation normally refuses this state before binding; installing
 	// the guard anyway means reaching it cannot silently fail open.
 	if !IsLoopback(opts.BindHost) {
-		r.Use(basicAuthMiddleware(opts.Password))
+		r.Use(basicAuthMiddleware(opts.Password, "/api"))
 	}
 	// Record the enforced mode for handlers that report it back to clients.
 	r.Use(func(c *gin.Context) {
@@ -368,7 +378,7 @@ func ValidateBindAuth(opts MgmtAuthOptions) error {
 		return nil
 	}
 	return errors.New("refusing to start on non-loopback host " + opts.BindHost +
-		" without a password: set PI_SWITCH_WEBUI_PASSWORD, create the password file, or pass --generate-password")
+		" without a password: set PI_SWITCH_WEBUI_PASSWORD (the shared management/proxy password), create the password file, or pass --generate-password")
 }
 
 // GenerateAndStorePassword creates a random password, persists it to the
@@ -433,7 +443,7 @@ func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (
 		}
 		password = pw
 		if announce != nil {
-			announce("generated WebUI password (also stored in " + webUIPasswordPath() + "): " + pw)
+			announce("generated management/proxy password (also stored in " + webUIPasswordPath() + "): " + pw)
 		}
 	default:
 		password = StoredWebUIPassword()
@@ -448,17 +458,28 @@ func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (
 	return opts, nil
 }
 
-// basicAuthMiddleware protects handlers with the single admin:<password> pair.
-// It only guards /api: health probes stay reachable so that a misconfigured
-// listener is still diagnosable.
-func basicAuthMiddleware(password string) gin.HandlerFunc {
+// basicAuthMiddleware protects the guarded prefixes with the single
+// admin:<password> pair. Health probes are deliberately left reachable so that a
+// misconfigured listener stays diagnosable; proxies pass their own prefix set
+// instead of getting a second authentication implementation.
+func basicAuthMiddleware(password string, guardedPrefixes ...string) gin.HandlerFunc {
+	if len(guardedPrefixes) == 0 {
+		guardedPrefixes = []string{"/api"}
+	}
 	expected := adminUser + ":" + password
 	reject := func(c *gin.Context) {
 		c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 	}
 	return func(c *gin.Context) {
-		if !strings.HasPrefix(c.Request.URL.Path, "/api") {
+		guarded := false
+		for _, prefix := range guardedPrefixes {
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				guarded = true
+				break
+			}
+		}
+		if !guarded {
 			c.Next()
 			return
 		}

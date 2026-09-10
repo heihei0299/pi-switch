@@ -42,7 +42,7 @@ Usage:
   pi-switch [command] [options]
 
 Commands:
-  proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon]
+  proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> | delete <name> | duplicate <name> --as <new>
@@ -175,14 +175,7 @@ func hasGeneratePasswordFlag(args []string) bool {
 // run and the daemon child both arrive here, so the bind-address guard cannot
 // be bypassed by spawning.
 func startWebUI(host string, port int) {
-	auth, err := server.ResolveAuthOptions(host, hasGeneratePasswordFlag(os.Args), func(msg string) {
-		fmt.Println(msg)
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-	r := server.NewMgmtRouterWithAuth(auth)
+	r := server.NewMgmtRouterWithAuth(mustResolveBindAuth(host))
 	server.ImportLegacyOnStartup()
 	addr := host + ":" + strconv.Itoa(port)
 	fmt.Printf("WebUI server listening on http://%s\n", addr)
@@ -192,8 +185,24 @@ func startWebUI(host string, port int) {
 	}
 }
 
+// resolveBindAuth applies the bind-address guard for a listener about to start.
+// Both the direct run and the daemon spawn call it, so an exposed proxy cannot
+// start without a credential and the parent reports the same verdict the child
+// will reach.
+func mustResolveBindAuth(host string) server.MgmtAuthOptions {
+	auth, err := server.ResolveAuthOptions(host, hasGeneratePasswordFlag(os.Args), func(msg string) {
+		fmt.Println(msg)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	return auth
+}
+
+// startProxy is the single launch path for the proxy.
 func startProxy(host string, port int) {
-	r := server.NewProxyRouter()
+	r := server.NewProxyRouterWithAuth(mustResolveBindAuth(host))
 	server.ImportLegacyOnStartup()
 	addr := host + ":" + strconv.Itoa(port)
 	fmt.Printf("Proxy server listening on http://%s\n", addr)
@@ -207,12 +216,7 @@ func startWebUIMode(host string, port int, isDaemon bool) {
 	if isDaemon {
 		// Resolve before spawning so an exposed bind without credentials fails
 		// here, and so a generated password already exists for the child.
-		if _, err := server.ResolveAuthOptions(host, hasGeneratePasswordFlag(os.Args), func(msg string) {
-			fmt.Println(msg)
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
-		}
+		mustResolveBindAuth(host)
 		res, err := daemon.Start(daemon.WebUI, host, uint16(port))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -235,11 +239,12 @@ func handleProxy(args []string) {
 	}
 	switch sub {
 	case "-h", "--help", "help":
-		fmt.Println("Usage: pi-switch proxy [start|stop|status] [--host HOST] [--port PORT] [--daemon]")
+		fmt.Println("Usage: pi-switch proxy [start|stop|status] [--host HOST] [--port PORT] [--daemon] [--generate-password]")
 		os.Exit(0)
 	case "start":
 		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43112)
 		if isDaemon {
+			mustResolveBindAuth(host)
 			res, err := daemon.Start(daemon.Proxy, host, uint16(port))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -266,6 +271,7 @@ func handleProxy(args []string) {
 		// treat as start with flags directly: pi-switch proxy --daemon etc
 		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43112)
 		if isDaemon {
+			mustResolveBindAuth(host)
 			res, err := daemon.Start(daemon.Proxy, host, uint16(port))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -575,6 +581,14 @@ func handleDoctor() int {
 		problems++
 	} else {
 		fmt.Printf("webui daemon: %s\n", daemonSummary(webRes))
+	}
+
+	cap := server.ProxyBodyLimit()
+	fmt.Printf("proxy body cap: %d bytes\n", cap)
+	if raw := os.Getenv("PI_SWITCH_MAX_BODY_BYTES"); raw != "" {
+		if n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64); err != nil || n <= 0 {
+			fmt.Printf("proxy body cap: PI_SWITCH_MAX_BODY_BYTES=%q is not a positive integer, so the default is in effect\n", raw)
+		}
 	}
 
 	if problems > 0 {
