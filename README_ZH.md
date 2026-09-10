@@ -98,7 +98,7 @@ pi-switch provider delete <名称>
 pi-switch provider expose <名称> <model-ids...>    # 暴露模型到 pi agent
 pi-switch provider fetch-models <名称>             # 从 API 抓取模型列表
 
-# WebUI：Profiles → + Add profile / Import from cc-switch → Edit → Expose
+# WebUI：Profiles → + Add profile → Edit → Expose
 
 # 代理（网关）
 pi-switch proxy start --daemon                     # 启动代理守护进程
@@ -139,7 +139,7 @@ pi-switch stats                                     # 未实现——退出码�
 |------|------|
 | 🌐 **WebUI（主界面）** | 浏览器控制面板 `http://127.0.0.1:43110` — Profiles 增删改查、Gateway `Current vs Proposed` 差异与 `Apply to Pi`、Proxy 启停、Stats 仪表（时间窗口/自动刷新）、Packages、Settings、Doctor。Daemon 托管（独立 pid/log/port），本地回环免认证、非回环 Basic 认证。 |
 | 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、暴露到 pi agent、配置 Responses API 透传/转换模式 |
-| ⇥ **cc-switch 导入** | 一键从 cc-switch（Claude Code / Codex / Gemini）导入 provider，按 baseUrl 去重、跳过官方预置项 — CLI、TUI、WebUI 三端支持 |
+| ⇥ **cc-switch 导入** | **未实现**：Go 版本没有该能力，CLI/TUI/WebUI 均无入口，相关端点返回 501 |
 | 💡 **内置预设** | OpenRouter、Anthropic、DeepSeek、SiliconFlow、OpenAI — 一键创建配置 |
 | 🌉 **模型名网关** | 无状态按 `profile/model` 路由、SSE 流式、User-Agent 伪装、请求体过滤、OpenAI ↔ Anthropic 转换、Responses ↔ Chat Completions 转换（含 function tools）、原生 OpenAI Responses 透传、故障转移、断路器 |
 | 🗂️ **模型目录** | 用 https://models.dev 快照补齐缺失模型元数据（cost/limit/reasoning/input/name），缓存在 `~/.pi-switch/cache/models-dev.json`（24h TTL，过期降级告警）：拉取时按 profile 的 `modelsDevProvider` 映射 enrich，网关预览/发布时只补缺失（已有值优先，不写回池，重名跳过） |
@@ -152,24 +152,11 @@ pi-switch stats                                     # 未实现——退出码�
 
 ---
 
-## ⇥ 从 cc-switch 导入
+## ⇥ 从 cc-switch 导入——未实现
 
-已经在用 [cc-switch](https://github.com/farion1231/cc-switch)？一条命令即可把它的 provider 导入 pi-switch，无需手动重新添加：
+从 [cc-switch](https://github.com/farion1231/cc-switch) 导入 provider 的能力在 **Go 版本中未实现**：没有 CLI 命令、没有 TUI 入口、也没有 WebUI 入口；`pi-switch ccs import` 与 `POST /api/ccswitch/import` 都会明确拒绝，而不是回报一次什么都没做的"导入成功"。
 
-```bash
-pi-switch import ccswitch                 # 交互式选择
-pi-switch import ccswitch --all           # 导入全部新 provider
-pi-switch import ccswitch --path /路径/cc-switch.db   # 自定义数据库路径
-```
-
-- 读取 `~/.cc-switch/cc-switch.db`（SQLite，只读 — 不修改 cc-switch 数据）
-- 映射三种常用客户端：**Claude** → `anthropic-messages`、**Codex** → `openai-responses`、**Gemini** → `google-generative-ai`
-- 跳过官方预置项（如 `claude-official`）
-- **按 baseUrl 去重**：pi-switch 已有的 provider 标记为已存在并跳过（`--force` 可覆盖）
-- 同名冲突自动加 `(cc)` 后缀，不静默覆盖
-- 默认路径找不到时会提示输入 `cc-switch.db` 的路径（或取消）
-
-三端均支持：CLI（`pi-switch import ccswitch`）、TUI（Profiles → `i`）、WebUI（Profiles → *Import from cc-switch*）。
+遗留 JS 实现（`src/commands.js`，未包含在 npm 的 `files` 列表中）曾只读地读取 `~/.cc-switch/cc-switch.db`，并把 Claude/Codex/Gemini 映射到对应 API。若需要该能力，应单独立 spec；本构建不提供旧行为。
 
 ---
 

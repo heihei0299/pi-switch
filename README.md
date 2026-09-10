@@ -98,7 +98,7 @@ pi-switch provider delete <name>
 pi-switch provider expose <name> <model-ids...>    # Expose models to pi agent
 pi-switch provider fetch-models <name>             # Fetch models from API
 
-# In WebUI: Profiles → + Add profile / Import from cc-switch → Edit → Expose
+# In WebUI: Profiles → + Add profile → Edit → Expose
 
 # Proxy (gateway)
 pi-switch proxy start --daemon                     # Start proxy daemon
@@ -139,7 +139,7 @@ pi-switch stats                                     # Not implemented — exits 
 |----------|------------|
 | 🌐 **WebUI (primary)** | Browser control plane at `http://127.0.0.1:43110` — Profiles CRUD, Gateway `Current vs Proposed` diff & `Apply to Pi`, Proxy control, Stats dashboard with time windows, Packages, Settings, Doctor. Daemon-managed (own pid/log/port), loopback-open / non-loopback Basic auth. |
 | 🔌 **Provider Management** | CRUD, duplicate, search/filter, model management, **multi-upstream** (`upstreams[]` with api/baseUrl/apiKey/headers/weight/name, each channel carrying its own `models`/`exposedModels` partition), per-channel fetch/expose, gateway publish with secondary model selection, configure Responses API passthrough/conversion mode |
-| ⇥ **cc-switch Import** | One-click import of providers from cc-switch (Claude Code / Codex / Gemini), dedup by base URL, skip official presets — CLI, TUI, WebUI |
+| ⇥ **cc-switch Import** | **Not implemented**: the Go build has no such capability — no CLI/TUI/WebUI entry, and the related endpoints answer 501 |
 | 💡 **Built-in Presets** | OpenRouter, Anthropic, DeepSeek, SiliconFlow, OpenAI — add profiles instantly |
 | 🌉 **Model-Name Gateway** | **Independent** process/plugin — Profiles only write local config, Gateway explicitly publishes at most two fixed providers (`pi-switch-res` / `pi-switch-chat`) to `~/.pi/agent/models.json` via `Current vs Proposed` preview & `Apply to Pi`; stateless bare-model routing, SSE streaming, User-Agent disguise, OpenAI ↔ Anthropic & Responses ↔ Chat Completions, circuit breaker |
 | 🗂️ **Model Catalog** | Fill missing model metadata (cost/limit/reasoning/input/name) from https://models.dev snapshot cached at `~/.pi-switch/cache/models-dev.json` (24h TTL, stale fallback with warning): fetch-time enrich via per-profile `modelsDevProvider` mapping, plus gateway preview/publish fill-missing (existing values win, pools untouched, ambiguous names skipped) |
@@ -152,24 +152,11 @@ pi-switch stats                                     # Not implemented — exits 
 
 ---
 
-## ⇥ Import from cc-switch
+## ⇥ Import from cc-switch — not implemented
 
-Already using [cc-switch](https://github.com/farion1231/cc-switch)? You can import its providers into pi-switch with one command instead of re-adding them by hand:
+Importing providers from [cc-switch](https://github.com/farion1231/cc-switch) is **not implemented in the Go build**. There is no CLI command, no TUI entry, and no WebUI entry; `pi-switch ccs import` and `POST /api/ccswitch/import` both refuse rather than reporting a successful import of nothing.
 
-```bash
-pi-switch import ccswitch                 # interactive selection
-pi-switch import ccswitch --all           # import everything new
-pi-switch import ccswitch --path /path/to/cc-switch.db   # custom db location
-```
-
-- Reads `~/.cc-switch/cc-switch.db` (SQLite, read-only — cc-switch is never modified)
-- Maps the three common client types: **Claude** → `anthropic-messages`, **Codex** → `openai-responses`, **Gemini** → `google-generative-ai`
-- Official presets (e.g. `claude-official`) are skipped
-- **Dedup by base URL**: providers already in pi-switch are flagged as existing and skipped (use `--force` to overwrite)
-- Name collisions resolve to `name (cc)` instead of silently overwriting
-- If the default db path is missing, you are prompted for the path to `cc-switch.db` (or you can cancel)
-
-Available in all three UIs: CLI (`pi-switch import ccswitch`), TUI (Profiles → `i`), WebUI (Profiles → *Import from cc-switch*).
+The legacy JavaScript implementation (`src/commands.js`, not published in the npm `files` list) did read `~/.cc-switch/cc-switch.db` read-only and map Claude/Codex/Gemini to the corresponding APIs. If that capability is wanted, it needs its own spec; the old behaviour is not available from this build.
 
 ---
 
