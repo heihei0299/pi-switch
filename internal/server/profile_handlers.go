@@ -873,14 +873,19 @@ func handleGetCredits(c *gin.Context) {
 	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": percent, "usage": usage, "raw": gin.H{}})
 }
 
-func handlePresets(c *gin.Context) {
-	presets := []map[string]interface{}{
+// ProviderPresets is the single source of the static provider preset list,
+// shared by GET /api/presets and `pi-switch preset`.
+func ProviderPresets() []map[string]interface{} {
+	return []map[string]interface{}{
 		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": "openai-completions", "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
 		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": "anthropic-messages", "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
 		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": "google-generative-ai", "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
 		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": "openai-completions", "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
 	}
-	c.JSON(200, presets)
+}
+
+func handlePresets(c *gin.Context) {
+	c.JSON(200, ProviderPresets())
 }
 func handlePresetDetail(c *gin.Context) {
 	c.JSON(404, gin.H{"error": "not found"})

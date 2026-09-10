@@ -139,6 +139,37 @@ func TestMgmtAuth_WildcardBindsAreNotLoopback(t *testing.T) {
 	}
 }
 
+// B4b: host classification must handle the spellings an operator actually
+// passes, including a loopback address carrying a port. Shortening this rule
+// once made "[::1]:43110" non-loopback; pin the cases either way.
+func TestIsLoopback_RecognizesSpellings(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"127.0.0.1:43110", true},
+		{"localhost", true},
+		{"localhost:43110", true},
+		{"::1", true},
+		{"[::1]", true},
+		{"[::1]:43110", true},
+		{"LOCALHOST", true},
+		{"", false},
+		{"   ", false},
+		{"0.0.0.0", false},
+		{"::", false},
+		{"0.0.0.0:43110", false},
+		{"192.168.1.10", false},
+		{"example.com:43110", false},
+	}
+	for _, tc := range cases {
+		if got := IsLoopback(tc.host); got != tc.want {
+			t.Errorf("IsLoopback(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
 // B5: health probes stay reachable so an exposed-but-misconfigured listener is
 // still diagnosable without credentials.
 func TestMgmtAuth_HealthProbeStaysReachable(t *testing.T) {
@@ -291,7 +322,7 @@ func TestGenerateAndStorePassword_WritesPrivateFile(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0600 {
 		t.Fatalf("password file mode = %o, want 600", perm)
 	}
-	if stored := storedWebUIPassword(); stored != first {
+	if stored := StoredWebUIPassword(); stored != first {
 		t.Fatalf("persisted %q does not match the generated %q", stored, first)
 	}
 

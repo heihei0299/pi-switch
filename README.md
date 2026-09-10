@@ -108,27 +108,27 @@ pi-switch proxy status
 
 # Package management
 pi-switch package list                             # List installed packages
-pi-switch package add <id> <name> <version>        # Add a new package
-pi-switch package toggle <id>                      # Enable/disable package
+pi-switch package add <spec> [--disabled]          # Add a package; spec is ONE token, e.g. npm:pkg or ./dir
 pi-switch package remove <id>                      # Remove package
 pi-switch package show <id>                        # Show package details
+pi-switch package import                           # Import packages found in the pi agent directory
 
 # In WebUI: Packages → Add / Toggle / Remove
 
 # WebUI (browser config) — always use --daemon so it runs in the
-# background and can be stopped with `pi-switch webui stop`
-pi-switch webui start --daemon [--host <ip>] [--port <port>]
+# background and can be stopped with `pi-switch webui stop`.
+# Binding a non-loopback --host requires a password: set
+# PI_SWITCH_WEBUI_PASSWORD, or pass --generate-password to have one written to
+# ~/.pi-switch/webui_password (0600); otherwise startup is refused.
+pi-switch webui start --daemon [--host <ip>] [--port <port>] [--generate-password]
 pi-switch webui status
 pi-switch webui stop
 
 # Other
-pi-switch presets list                             # List built-in presets
-pi-switch config show                               # Display current config
-pi-switch config backups                            # List backup files
-pi-switch config export <passphrase>                # Encrypted export
-pi-switch config import <path> <passphrase>         # Encrypted import
-pi-switch import ccswitch [--path <db>] [--all] [--force]  # Import providers from cc-switch
-pi-switch stats                                     # View request statistics
+pi-switch presets                                   # List built-in presets
+pi-switch presets show <id>                         # Show one preset
+pi-switch config show                               # Display current config path
+pi-switch stats                                     # Not implemented — exits non-zero
 ```
 
 ---

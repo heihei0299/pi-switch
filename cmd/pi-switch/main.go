@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
@@ -40,14 +43,14 @@ Usage:
 
 Commands:
   proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon]
-  webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon]
+  webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> | delete <name> | duplicate <name> --as <new>
-  package   Package management — list | add <spec> | sync | import | show <id> | delete <id>
-  ccs       cc-switch import — list | import [--all] [--force]
+  package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
+  ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
   gateway   Gateway — gateway publish | gateway status | gateway preview
-  stats     Show stats brief — stats
+  stats     Not implemented — request stats live in the WebUI and GET /api/stats
   config    Config — config show | config validate | config path
   doctor    Run diagnostics
   build-info Show embedded build identity as JSON
@@ -117,19 +120,19 @@ func main() {
 	case "provider", "providers":
 		handleProvider(args[1:])
 	case "package", "packages":
-		handlePackage(args[1:])
+		os.Exit(handlePackage(args[1:]))
 	case "ccs", "ccswitch", "cc-switch":
-		handleCcs(args[1:])
+		os.Exit(handleCcs(args[1:]))
 	case "presets", "preset":
-		handlePresets(args[1:])
+		os.Exit(handlePresets(args[1:]))
 	case "gateway":
 		handleGatewayCLI(args[1:])
 	case "stats":
-		handleStatsCLI()
+		os.Exit(handleStatsCLI())
 	case "config":
-		handleConfigCLI(args[1:])
+		os.Exit(handleConfigCLI(args[1:]))
 	case "doctor":
-		handleDoctor()
+		os.Exit(handleDoctor())
 	case "--build-info", "build-info":
 		printBuildInfo()
 	default:
@@ -368,68 +371,254 @@ func handleProvider(args []string) {
 	}
 }
 
-func handlePackage(args []string) {
+// handlePackage reports failures by returning a non-zero exit code instead of
+// printing a success payload, so scripts reading stdout cannot mistake a no-op
+// for a completed operation.
+func handlePackage(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch package <list|add|sync|import|show|delete> [args]")
-		os.Exit(0)
+		fmt.Println("Usage: pi-switch package <list|add|import|show|delete> [args]")
+		fmt.Println("  add <spec> [--disabled]   spec is one token, e.g. npm:@scope/pkg or ./local-dir")
+		return 0
 	}
 	switch args[0] {
 	case "list", "ls":
 		packages, err := server.ListInstalledPackages()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "package list failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		b, _ := json.Marshal(map[string]interface{}{"packages": packages})
 		fmt.Println(string(b))
 	case "add":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "package add <spec> required")
-			os.Exit(1)
+		enabled := true
+		var positionals []string
+		for _, a := range args[1:] {
+			if a == "--disabled" || a == "--no-enabled" {
+				enabled = false
+				continue
+			}
+			positionals = append(positionals, a)
 		}
-		fmt.Printf("{\"ok\":true,\"id\":%q}\n", args[1])
+		if len(positionals) == 0 {
+			fmt.Fprintln(os.Stderr, "package add <spec> required")
+			return 1
+		}
+		// Discarding extra arguments silently would persist a record that does
+		// not match what the operator asked for.
+		if len(positionals) > 1 {
+			fmt.Fprintf(os.Stderr, "package add takes one spec, got %d (%q); a spec is a single token such as npm:pkg or ./dir\n", len(positionals), positionals)
+			return 1
+		}
+		spec := positionals[0]
+		if err := server.AddInstalledPackage(spec, enabled); err != nil {
+			fmt.Fprintf(os.Stderr, "package add failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("{\"ok\":true,\"id\":%q}\n", strings.TrimSpace(spec))
 	case "sync":
-		fmt.Println(`{"ok":true,"message":"sync done"}`)
+		// Importing pi packages is the only real sync this CLI has; do not
+		// report success for a mode that does nothing.
+		fmt.Fprintln(os.Stderr, `package sync is not implemented; use "pi-switch package import" to sync packages from the pi agent directory`)
+		return 2
 	case "import":
 		result, err := server.ImportPiPackages()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "package import failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		b, _ := json.Marshal(result)
 		fmt.Println(string(b))
 	case "show":
-		fmt.Println(`{"error":"not found"}`)
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "package show <id> required")
+			return 1
+		}
+		m, err := server.GetInstalledPackage(args[1])
+		if err != nil {
+			if errors.Is(err, server.ErrPackageNotFound) {
+				fmt.Fprintf(os.Stderr, "package %q not found\n", args[1])
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "package show failed: %v\n", err)
+			return 1
+		}
+		b, _ := json.MarshalIndent(m, "", "  ")
+		fmt.Println(string(b))
 	case "delete", "remove", "rm":
-		fmt.Println(`{"ok":true}`)
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "package delete <id> required")
+			return 1
+		}
+		if err := server.DeleteInstalledPackage(args[1]); err != nil {
+			if errors.Is(err, server.ErrPackageNotFound) {
+				fmt.Fprintf(os.Stderr, "package %q not found\n", args[1])
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "package delete failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("{\"ok\":true,\"id\":%q}\n", args[1])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown package subcommand %q\n", args[0])
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func handleCcs(args []string) {
+func handleCcs(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println("Usage: pi-switch ccs <list|import> [options]")
-		os.Exit(0)
+		return 0
 	}
 	switch args[0] {
 	case "list", "ls":
+		// No CCS provider store exists, so the empty list is the real answer and
+		// claims nothing happened.
 		fmt.Println(`{"providers":[]}`)
 	case "import":
-		fmt.Println(`{"ok":true,"imported":0,"results":[]}`)
+		// Claiming "imported" without importing anything is the defect this
+		// ticket removes; say so and fail instead.
+		fmt.Fprintln(os.Stderr, `ccs import is not implemented: pi-switch can read neither the ccs configuration nor its provider store`)
+		return 2
 	default:
 		fmt.Fprintf(os.Stderr, "unknown ccs subcommand %q\n", args[0])
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func handlePresets(args []string) {
-	if len(args) > 0 && (args[0] == "show") {
-		fmt.Println(`{"error":"not found"}`)
-		os.Exit(1)
+func handlePresets(args []string) int {
+	var id string
+	if len(args) > 0 {
+		id = args[0]
 	}
-	fmt.Println(`[]`)
+	switch id {
+	case "-h", "--help", "list", "ls":
+		// `presets list` is the documented spelling; treat it as the no-arg form.
+		id = ""
+	case "show":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "preset show <id> required")
+			return 1
+		}
+		id = args[1]
+	}
+	presets := server.ProviderPresets()
+	if id == "" {
+		b, _ := json.Marshal(presets)
+		fmt.Println(string(b))
+		return 0
+	}
+	for _, p := range presets {
+		if p["id"] == id {
+			b, _ := json.MarshalIndent(p, "", "  ")
+			fmt.Println(string(b))
+			return 0
+		}
+	}
+	fmt.Fprintf(os.Stderr, "unknown preset %q\n", id)
+	return 1
+}
+
+func handleStatsCLI() int {
+	fmt.Fprintln(os.Stderr, `stats is not implemented in the CLI; the aggregated numbers live in the WebUI and in GET /api/stats while "pi-switch webui start" is running`)
+	return 2
+}
+
+// handleDoctor probes real state. It exits non-zero only for conditions that are
+// genuinely broken (unreadable config, unusable database, an exposed WebUI with
+// no password); a missing config or a stopped daemon is reported as a fact, not
+// a failure.
+func handleDoctor() int {
+	cfgPath := config.ResolvePath()
+	problems := 0
+
+	if _, err := os.Stat(cfgPath); err != nil {
+		fmt.Printf("config: %s (not created yet)\n", cfgPath)
+	} else if err := configFileProblem(cfgPath); err != nil {
+		// LoadConfigAtPath tolerates unparsable JSON by returning defaults, so a
+		// corrupt config would otherwise look healthy to this probe.
+		fmt.Printf("config: %s unreadable: %v\n", cfgPath, err)
+		problems++
+	} else {
+		// LoadConfigAtPath never returns a non-nil error today (it falls back to
+		// defaults), so its source string is the honest diagnostic to report
+		// rather than an error branch that can never run.
+		cfg, source, _ := config.LoadConfigAtPath(cfgPath)
+		fmt.Printf("config: %s (%d profiles, %s)\n", cfgPath, len(cfg.Profiles), source)
+	}
+
+	dbPath := server.PiSwitchDBPath()
+	if _, err := os.Stat(dbPath); err != nil {
+		fmt.Printf("database: %s (not created yet)\n", dbPath)
+	} else if db, err := sql.Open("sqlite", dbPath); err != nil {
+		fmt.Printf("database: %s unreadable: %v\n", dbPath, err)
+		problems++
+	} else {
+		err = db.Ping()
+		_ = db.Close()
+		if err != nil {
+			fmt.Printf("database: %s unreadable: %v\n", dbPath, err)
+			problems++
+		} else {
+			fmt.Printf("database: %s readable\n", dbPath)
+		}
+	}
+
+	proxyRes, _ := daemon.Status(daemon.Proxy)
+	fmt.Printf("proxy daemon: %s\n", daemonSummary(proxyRes))
+	// An already-running listener bound beyond loopback without a password is a
+	// real exposure; anything else is just a fact to report.
+	webRes, _ := daemon.Status(daemon.WebUI)
+	if webRes.Running && !server.IsLoopback(derefString(webRes.Host)) && server.WebUIPasswordConfigured() == "" {
+		fmt.Printf("webui daemon: running on %s with no password, so the management API is exposed\n", derefString(webRes.Host))
+		problems++
+	} else {
+		fmt.Printf("webui daemon: %s\n", daemonSummary(webRes))
+	}
+
+	if problems > 0 {
+		fmt.Fprintf(os.Stderr, "doctor: %d problem(s) found\n", problems)
+		return 1
+	}
+	fmt.Println("doctor: ok")
+	return 0
+}
+
+// daemonSummary reports the daemon state without printing pointer addresses and
+// without discarding the explanation Status computed (it returns Running=false
+// with a reason when the process is alive but its port does not answer).
+func daemonSummary(res daemon.DaemonResult) string {
+	if !res.Running {
+		if res.Message != "" {
+			return "not running: " + res.Message
+		}
+		return "not running"
+	}
+	if res.Pid != nil {
+		return fmt.Sprintf("running (pid %d)", *res.Pid)
+	}
+	return "running"
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// configFileProblem reports whether an existing config file is unusable. The
+// loader is deliberately tolerant, so the probe has to check the bytes itself.
+func configFileProblem(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !json.Valid(b) {
+		return errors.New("config file is not valid JSON")
+	}
+	return nil
 }
 
 func handleGatewayCLI(args []string) {
@@ -459,22 +648,24 @@ func handleGatewayCLI(args []string) {
 	}
 }
 
-func handleStatsCLI() {
-	fmt.Println("stats: use webui or /api/stats")
-}
-
-func handleConfigCLI(args []string) {
+func handleConfigCLI(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println("Usage: pi-switch config <show|validate|path>")
-		os.Exit(0)
+		return 0
 	}
 	cfgPath := config.ResolvePath()
 	switch args[0] {
 	case "show", "path":
 		fmt.Println(cfgPath)
 	case "validate":
+		// A corrupt file must not be reported as valid: LoadConfigAtPath falls
+		// back to a default config that has a placeholder profile, so checking
+		// the parsed result alone would always look healthy.
+		if err := configFileProblem(cfgPath); err != nil {
+			fmt.Fprintf(os.Stderr, "config invalid: %v\n", err)
+			return 1
+		}
 		cfg, _, _ := config.LoadConfigAtPath(cfgPath)
-		// simple validation
 		if len(cfg.Profiles) == 0 {
 			fmt.Println("warning: no profiles")
 		} else {
@@ -482,15 +673,9 @@ func handleConfigCLI(args []string) {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown config subcommand %q\n", args[0])
-		os.Exit(1)
+		return 1
 	}
-}
-
-func handleDoctor() {
-	cfgPath := config.ResolvePath()
-	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
-	fmt.Printf("config: %s (%d profiles)\n", cfgPath, len(cfg.Profiles))
-	fmt.Println("doctor: ok")
+	return 0
 }
 
 func saveConfigFile(cfg config.PiSwitchConfig, path string) error {

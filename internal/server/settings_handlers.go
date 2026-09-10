@@ -40,7 +40,7 @@ func handleWebUIInfo(c *gin.Context) {
 	// Report the posture this listener actually enforces; the config file does
 	// not know the bind address, so deriving it there misreports exposed setups.
 	auth := requestAuthOptions(c)
-	c.JSON(200, gin.H{"authRequired": !isLoopback(effectiveBindHost(auth.BindHost))})
+	c.JSON(200, gin.H{"authRequired": !IsLoopback(effectiveBindHost(auth.BindHost))})
 }
 
 func handleInit(c *gin.Context) { c.JSON(200, gin.H{"messages": []string{"init ok"}}) }

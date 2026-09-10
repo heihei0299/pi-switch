@@ -13,7 +13,8 @@
 5. **可实现性分级**（决定每项是"接线"还是"501"）：
    - 已有真实实现、可接线：`package add/show/delete`（服务端 `handlePackageAdd`/`handlePackageGet`/`handlePackageDelete` 均真实）、`handleDoctor`（可真实探测）。
    - 无实现：config export/import/restore、`/api/backups`、ccs POST import。
-   - 空数组是**真值**，不算假成功：ccs GET providers、`handlePresets`、`handlePackagesList`。
+   - 空数组是**真值**，不算假成功：ccs GET providers、`handlePackagesList`。
+   - **勘误（03 实施时发现）**：`handlePresets` 不属此列。服务端 `handlePresets` 返回 openai/anthropic/google/deepseek 四条真实静态预设（旧 Node 实现 `src/commands.js` 的 `preset list` 同样返回真实目录），旧的 Go CLI 打印 `[]` 并让 `preset show <id>` 对已存在的 id 也报 not found，属**失真**而非空真值。故 CLI 侧已接线到真实目录（见 03），票 04 不得按"presets 恒空、保留 200 空数组"的前提去改。
    - 语义不明：`handleInit`。
 6. **判据核心**：只有**声称发生了副作用**的响应才算假成功。GET 返回空集合没声称任何副作用，保留 200；POST 声称"已导入/已导出/已恢复"而实际无操作，必须改 501。
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,7 +14,8 @@ import (
 	"github.com/heihei0299/pi-switch/internal/piagent"
 )
 
-func piSwitchDBPath() string {
+// PiSwitchDBPath resolves the SQLite path used for packages and request facts.
+func PiSwitchDBPath() string {
 	if p := os.Getenv("PI_SWITCH_DB"); p != "" {
 		return filepath.Join(filepath.Dir(p), "pi-switch.db")
 	}
@@ -25,7 +27,7 @@ func piSwitchDBPath() string {
 }
 
 func openPiSwitchDB() (*sql.DB, error) {
-	path := piSwitchDBPath()
+	path := PiSwitchDBPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
@@ -182,6 +184,93 @@ func ListInstalledPackages() ([]map[string]interface{}, error) {
 	return out, nil
 }
 
+// ErrPackageNotFound is returned by the package operations when the requested
+// id has no installed row. It is a sentinel so callers (the HTTP handler and the
+// CLI) can both map it to their own "not found" answer instead of guessing from
+// a database error string.
+var ErrPackageNotFound = errors.New("package not found")
+
+// AddInstalledPackage records a package spec as installed. It is the single
+// implementation behind POST /api/packages and `pi-switch package add`.
+func AddInstalledPackage(spec string, enabled bool) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return errors.New("spec required")
+	}
+	typ, name := parsePackageSpec(spec)
+	db, err := openPiSwitchDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	now := time.Now().UnixMilli()
+	_, err = db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at, origin) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET spec=excluded.spec, type=excluded.type, name=excluded.name, installed=1, enabled=excluded.enabled, updated_at=excluded.updated_at, origin='manual'`, spec, spec, typ, name, 1, enabledInt, now, now, "manual")
+	return err
+}
+
+// GetInstalledPackage returns one installed package row. ErrPackageNotFound
+// means the id has no installed row.
+func GetInstalledPackage(id string) (map[string]interface{}, error) {
+	db, err := openPiSwitchDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	var dbId, spec, typ, name, version, description, homepage, origin sql.NullString
+	var hasExt, hasSkills, hasPrompts, hasThemes, installed, enabled sql.NullInt64
+	var installedAt sql.NullInt64
+	err = db.QueryRow(`SELECT id, spec, type, name, version, description, homepage, origin, has_extensions, has_skills, has_prompts, has_themes, installed, enabled, installed_at FROM packages WHERE id=?`, id).Scan(&dbId, &spec, &typ, &name, &version, &description, &homepage, &origin, &hasExt, &hasSkills, &hasPrompts, &hasThemes, &installed, &enabled, &installedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPackageNotFound
+		}
+		return nil, err
+	}
+	m := map[string]interface{}{"id": dbId.String, "spec": spec.String, "type": typ.String, "name": name.String, "version": version.String, "description": description.String, "homepage": homepage.String, "origin": origin.String, "hasExtensions": hasExt.Int64 == 1, "hasSkills": hasSkills.Int64 == 1, "hasPrompts": hasPrompts.Int64 == 1, "hasThemes": hasThemes.Int64 == 1, "installed": installed.Int64 == 1, "enabled": enabled.Int64 == 1}
+	if installedAt.Valid && installedAt.Int64 != 0 {
+		var t time.Time
+		if installedAt.Int64 > 1e12 {
+			sec := installedAt.Int64 / 1000
+			nsec := (installedAt.Int64 % 1000) * int64(time.Millisecond)
+			t = time.Unix(sec, nsec)
+		} else {
+			t = time.Unix(installedAt.Int64, 0)
+		}
+		m["installedAt"] = t.Format(time.RFC3339)
+	}
+	return m, nil
+}
+
+// DeleteInstalledPackage marks an installed package as removed. It is the single
+// implementation behind DELETE /api/packages/:id and `pi-switch package delete`;
+// ErrPackageNotFound means nothing was installed under that id.
+func DeleteInstalledPackage(id string) error {
+	if id == "" {
+		return errors.New("package id is required")
+	}
+	db, err := openPiSwitchDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	result, err := db.Exec(`UPDATE packages SET installed=0, updated_at=? WHERE id=? AND installed=1`, time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrPackageNotFound
+	}
+	return nil
+}
+
 func handlePackagesList(c *gin.Context) {
 	out, err := ListInstalledPackages()
 	if err != nil {
@@ -199,25 +288,15 @@ func handlePackageAdd(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "spec required"})
 		return
 	}
-	spec := strings.TrimSpace(body.Spec)
-	typ, name := parsePackageSpec(spec)
-	db, err := openPiSwitchDB()
-	if err != nil {
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	if err := AddInstalledPackage(body.Spec, enabled); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	defer db.Close()
-	enabled := 1
-	if body.Enabled != nil && !*body.Enabled {
-		enabled = 0
-	}
-	now := time.Now().UnixMilli()
-	_, err = db.Exec(`INSERT INTO packages(id, spec, type, name, installed, enabled, installed_at, updated_at, origin) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET spec=excluded.spec, type=excluded.type, name=excluded.name, installed=1, enabled=excluded.enabled, updated_at=excluded.updated_at, origin='manual'`, spec, spec, typ, name, 1, enabled, now, now, "manual")
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(200, gin.H{"ok": true, "id": spec})
+	c.JSON(200, gin.H{"ok": true, "id": strings.TrimSpace(body.Spec)})
 }
 func ImportPiPackages() (piagent.ImportResult, error) {
 	result, err := piagent.DiscoverPackages()
@@ -307,32 +386,14 @@ func handlePackageImport(c *gin.Context) {
 	c.JSON(200, result)
 }
 func handlePackageGet(c *gin.Context) {
-	id := c.Param("id")
-	db, err := openPiSwitchDB()
+	m, err := GetInstalledPackage(c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrPackageNotFound) {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
-	}
-	defer db.Close()
-	var dbId, spec, typ, name, version, description, homepage, origin sql.NullString
-	var hasExt, hasSkills, hasPrompts, hasThemes, installed, enabled sql.NullInt64
-	var installedAt sql.NullInt64
-	err = db.QueryRow(`SELECT id, spec, type, name, version, description, homepage, origin, has_extensions, has_skills, has_prompts, has_themes, installed, enabled, installed_at FROM packages WHERE id=?`, id).Scan(&dbId, &spec, &typ, &name, &version, &description, &homepage, &origin, &hasExt, &hasSkills, &hasPrompts, &hasThemes, &installed, &enabled, &installedAt)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	m := map[string]interface{}{"id": dbId.String, "spec": spec.String, "type": typ.String, "name": name.String, "version": version.String, "description": description.String, "homepage": homepage.String, "origin": origin.String, "hasExtensions": hasExt.Int64 == 1, "hasSkills": hasSkills.Int64 == 1, "hasPrompts": hasPrompts.Int64 == 1, "hasThemes": hasThemes.Int64 == 1, "installed": installed.Int64 == 1, "enabled": enabled.Int64 == 1}
-	if installedAt.Valid && installedAt.Int64 != 0 {
-		var t time.Time
-		if installedAt.Int64 > 1e12 {
-			sec := installedAt.Int64 / 1000
-			nsec := (installedAt.Int64 % 1000) * int64(time.Millisecond)
-			t = time.Unix(sec, nsec)
-		} else {
-			t = time.Unix(installedAt.Int64, 0)
-		}
-		m["installedAt"] = t.Format(time.RFC3339)
 	}
 	c.JSON(200, m)
 }
@@ -348,25 +409,12 @@ func handlePackageDelete(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "package id is required"})
 		return
 	}
-
-	db, err := openPiSwitchDB()
-	if err != nil {
+	if err := DeleteInstalledPackage(id); err != nil {
+		if errors.Is(err, ErrPackageNotFound) {
+			c.JSON(404, gin.H{"error": "package not found"})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	defer db.Close()
-	result, err := db.Exec(`UPDATE packages SET installed=0, updated_at=? WHERE id=? AND installed=1`, time.Now().UnixMilli(), id)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	if affected == 0 {
-		c.JSON(404, gin.H{"error": "package not found"})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +186,7 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	// exposed listener that cannot authenticate must not serve openly at all.
 	// Startup validation normally refuses this state before binding; installing
 	// the guard anyway means reaching it cannot silently fail open.
-	if !isLoopback(opts.BindHost) {
+	if !IsLoopback(opts.BindHost) {
 		r.Use(basicAuthMiddleware(opts.Password))
 	}
 	// Record the enforced mode for handlers that report it back to clients.
@@ -271,14 +272,21 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 // local" must say 127.0.0.1 explicitly. Wildcard addresses (0.0.0.0, ::) are
 // likewise not loopback — they mean "listen on every interface", the opposite
 // of local-only.
-func isLoopback(host string) bool {
+func IsLoopback(host string) bool {
 	h := strings.ToLower(strings.TrimSpace(host))
 	if h == "::1" || h == "[::1]" {
 		return true
 	}
-	// strip a trailing :port from the IPv4 / hostname forms
-	if idx := strings.LastIndex(h, ":"); idx >= 0 && !strings.Contains(h[idx+1:], "]") {
-		h = h[:idx]
+	// bracketed IPv6 keeps its port after the closing bracket
+	if i := strings.LastIndex(h, "]"); i >= 0 {
+		h = h[:i+1]
+	} else if idx := strings.LastIndex(h, ":"); idx >= 0 {
+		// bare "::1:port" is ambiguous, so only strip a numeric port
+		if port := h[idx+1:]; port != "" && !strings.Contains(port, ":") {
+			if _, err := strconv.Atoi(port); err == nil {
+				h = h[:idx]
+			}
+		}
 	}
 	return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
 }
@@ -346,7 +354,7 @@ type MgmtAuthOptions struct {
 // every interface. GeneratePassword is the explicit opt-in that makes the
 // operator's choice visible instead of silently inventing credentials.
 func ValidateBindAuth(opts MgmtAuthOptions) error {
-	if isLoopback(opts.BindHost) || strings.TrimSpace(opts.Password) != "" || opts.GeneratePassword {
+	if IsLoopback(opts.BindHost) || strings.TrimSpace(opts.Password) != "" || opts.GeneratePassword {
 		return nil
 	}
 	return errors.New("refusing to start on non-loopback host " + opts.BindHost +
@@ -377,14 +385,24 @@ func GenerateAndStorePassword() (string, error) {
 // password is the only secret. Kept next to the middleware that enforces it.
 const adminUser = "admin"
 
-// storedWebUIPassword reads the persisted credential only, ignoring the
+// StoredWebUIPassword reads the persisted credential only, ignoring the
 // environment.
-func storedWebUIPassword() string {
+func StoredWebUIPassword() string {
 	b, err := os.ReadFile(webUIPasswordPath())
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// WebUIPasswordConfigured reports the credential a listener would enforce right
+// now: the persisted file first, then the environment. Read-only callers such as
+// `pi-switch doctor` use it instead of re-deriving the rule.
+func WebUIPasswordConfigured() string {
+	if pw := StoredWebUIPassword(); pw != "" {
+		return pw
+	}
+	return strings.TrimSpace(os.Getenv("PI_SWITCH_WEBUI_PASSWORD"))
 }
 
 // ResolveAuthOptions turns the actual bind address into the auth options the
@@ -408,7 +426,7 @@ func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (
 			announce("generated WebUI password (also stored in " + webUIPasswordPath() + "): " + pw)
 		}
 	default:
-		password = storedWebUIPassword()
+		password = StoredWebUIPassword()
 		if password == "" {
 			password = strings.TrimSpace(os.Getenv("PI_SWITCH_WEBUI_PASSWORD"))
 		}

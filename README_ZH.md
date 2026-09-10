@@ -108,27 +108,27 @@ pi-switch proxy status
 
 # Package 管理
 pi-switch package list                             # 列出已安装的包
-pi-switch package add <id> <名称> <版本>            # 添加新包
-pi-switch package toggle <id>                      # 启用/禁用包
+pi-switch package add <spec> [--disabled]          # 添加包；spec 是单个 token，例如 npm:pkg 或 ./目录
 pi-switch package remove <id>                      # 删除包
 pi-switch package show <id>                        # 显示包详情
+pi-switch package import                           # 从 pi agent 目录导入已发现的包
 
 # WebUI：Packages → Add / Toggle / Remove
 
 # WebUI（浏览器配置）——建议始终使用 --daemon 后台运行，
-# 这样可以用 `pi-switch webui stop` 停止
-pi-switch webui start --daemon [--host <ip>] [--port <端口>]
+# 这样可以用 `pi-switch webui stop` 停止。
+# 绑定非 loopback 的 --host 需要密码：设置 PI_SWITCH_WEBUI_PASSWORD，
+# 或用 --generate-password 生成到 ~/.pi-switch/webui_password（0600）；
+# 否则拒绝启动。
+pi-switch webui start --daemon [--host <ip>] [--port <端口>] [--generate-password]
 pi-switch webui status
 pi-switch webui stop
 
 # 其他
-pi-switch presets list                             # 列出内置预设
-pi-switch config show                               # 显示当前配置
-pi-switch config backups                            # 列出备份文件
-pi-switch config export <密码>                      # 加密导出
-pi-switch config import <路径> <密码>                # 加密导入
-pi-switch import ccswitch [--path <db>] [--all] [--force]  # 从 cc-switch 导入 provider
-pi-switch stats                                     # 查看请求统计
+pi-switch presets                                   # 列出内置预设
+pi-switch presets show <id>                         # 显示单个预设
+pi-switch config show                               # 显示当前配置路径
+pi-switch stats                                     # 未实现——退出码非零
 ```
 
 ---

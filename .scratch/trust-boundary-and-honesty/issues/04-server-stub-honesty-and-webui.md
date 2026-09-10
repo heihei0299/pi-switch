@@ -13,7 +13,7 @@
 | `handleCcsImport`（POST） | `200 {ok:true, imported:0}` | **501** |
 | `handleInit` | `200 {messages:["init ok"]}` | **501**（spec D3：语义不明，不编造行为） |
 | `handleCcsProviders`（GET） | `200 {providers:[]}` | **保留 200**——空集合是真值，未声称副作用 |
-| `handlePresets`（GET） | 恒空 | 同 `handleCcsProviders` 的判据 |
+| `handlePresets`（GET） | **勘误：并非恒空**，返回 4 条真实静态预设 | **保持 200 且保留目录**——这是真值，不是假成功 |
 
 **实现要点**：
 
@@ -26,7 +26,7 @@
 **Status:** ready-for-agent
 
 - [ ] export/import/restore、`/api/backups`、ccs POST import、`handleInit` 全部返回 501 且带 `not_implemented` 标识
-- [ ] GET 类空集合端点（ccs providers、presets）保持 200——空集合是真值，不算假成功
+- [ ] GET 类空集合端点保持 200——`handleCcsProviders` 返回空数组是真值；`handlePresets` **返回真实目录**（04 写入时勘误：它不恒空），二者都不得为"看起来非空"而改动
 - [ ] WebUI 不再展示上述端点的成功路径（入口隐藏或禁用并说明原因）
 - [ ] `tui_release_test.go` 的 ccs import 断言更新为 501，并新增"声称副作用的端点不得返回 200"的断言
 - [ ] 前端契约文件（`apiSchema.ts`/`api.ts`）与新响应一致
