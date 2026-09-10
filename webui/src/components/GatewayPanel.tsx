@@ -25,6 +25,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [backendDiff, setBackendDiff] = useState<GatewayDiff>({ added: [], removed: [], changed: [] });
   const [canonicalDraft, setCanonicalDraft] = useState<Record<string, unknown> | null>(null);
   const [proposedDraft, setProposedDraft] = useState<Record<string, unknown> | null>(null);
+  const [fullProposedDraft, setFullProposedDraft] = useState<Record<string, unknown> | null>(null);
   const [draftView, setDraftView] = useState<"current" | "proposed">("current");
   const [loading, setLoading] = useState(true);
   const [lastPublishAt, setLastPublishAt] = useState<string | null>(() => {
@@ -79,6 +80,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     const nextProposed = prop ?? {};
     const nextDisplayed = view === "current" ? cur ?? {} : nextProposed;
     setCurrent(cur);
+    if (view === "current") setFullProposedDraft(nextProposed);
     setProposedDraft(nextProposed);
     setDraftView(view);
     setCanonicalDraft(nextDisplayed);
@@ -119,8 +121,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const load = async (selection?: Set<string>) => {
     setLoading(true);
     try {
-      const draft = !rawDraftDirty && proposedDraft
-        ? { providers: proposedDraft }
+      const draft = !rawDraftDirty && fullProposedDraft
+        ? { providers: fullProposedDraft }
         : rawValidation.ok && rawValidation.value
           ? rawValidation.value
           : undefined;
@@ -217,8 +219,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       };
       if (rawDraftDirty && rawValidation.ok && rawValidation.value) {
         previewInput.draft = rawValidation.value;
-      } else if (proposedDraft) {
-        previewInput.draft = { providers: proposedDraft };
+      } else if (fullProposedDraft) {
+        previewInput.draft = { providers: fullProposedDraft };
       }
       const preview = await api.previewGateway(previewInput);
       applyPreview(preview, next, "proposed");
@@ -261,9 +263,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       setLastPublishAt(now);
       toast("ok", t("Saved") || "Saved");
       await mutateAfterGatewayPublish();
-      // GET preview intentionally rebuilds every exposed candidate; preserve the
-      // transient subset for the post-publish view instead of widening it again.
-      await load(selection);
+      // Reload current plus the full proposal so a later selection can add another model.
+      await load();
       await refresh();
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));

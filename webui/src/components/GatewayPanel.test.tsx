@@ -314,6 +314,49 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
+  it("keeps the full proposal while adding multiple pending models", async () => {
+    const models = [{ id: "m1" }, { id: "m2" }];
+    const groups = [{
+      supplier: "sup",
+      channel: "main",
+      gatewayProvider: "pi-switch-chat",
+      models: models.map((model) => ({ ...model, status: "pending" as const })),
+    }];
+    const preview = vi.spyOn(api, "previewGateway").mockImplementation(async (input) => {
+      const selected = input?.selected ?? [];
+      const selectedIds = new Set(selected.map((item) => item.model));
+      const selectedModels = selected.length === 0
+        ? models
+        : models.filter((model) => selectedIds.has(model.id));
+      return {
+        current: {},
+        proposed: {
+          "sup/main": {
+            api: "openai-completions",
+            baseUrl: "http://127.0.0.1:43112/v1",
+            models: selectedModels,
+            proxy: false,
+          },
+        },
+        conflicts: [],
+        pending_count: selectedModels.length,
+        diff: { added: [], removed: [], changed: [] },
+        groups,
+        removed: [],
+      } as any;
+    });
+    renderGateway();
+
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "sup/main/m1" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: "sup/main/m1" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "sup/main/m1" })).toBeChecked());
+    fireEvent.click(screen.getByRole("checkbox", { name: "sup/main/m2" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "sup/main/m2" })).toBeChecked());
+
+    const secondToggle = preview.mock.calls[2][0] as any;
+    expect(secondToggle.draft.providers["sup/main"].models).toEqual(models);
+  });
+
   it("subset pending follows the selection", async () => {
     renderGrouped();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
