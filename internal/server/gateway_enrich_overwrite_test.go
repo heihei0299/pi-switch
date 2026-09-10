@@ -48,6 +48,10 @@ func TestGatewayEnrich_OverwriteDefault(t *testing.T) {
 	if m["maxTokens"] != float64(384000) {
 		t.Fatalf("maxTokens = %v want 384000", m["maxTokens"])
 	}
+	compat, _ := m["compat"].(map[string]interface{})
+	if compat["supportsDeveloperRole"] != false {
+		t.Fatalf("compat.supportsDeveloperRole = %v want false", compat["supportsDeveloperRole"])
+	}
 	// enriched should be 1
 	enrich, _ := resp["enrich"].(map[string]interface{})
 	if enrich["enriched"] != float64(1) {

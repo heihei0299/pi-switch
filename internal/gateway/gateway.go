@@ -882,8 +882,44 @@ func buildCanonicalProposedGateway(cfg config.PiSwitchConfig, current, edited ma
 		}
 		propProvs[key] = value
 	}
+	normalizeFixedGatewayModelCompat(merged)
 	return merged
 }
+
+func normalizeFixedGatewayModelCompat(gateway map[string]interface{}) {
+	for providerKey, rawProvider := range getProviders(gateway) {
+		if !IsFixedGatewayProvider(providerKey) {
+			continue
+		}
+		provider, ok := rawProvider.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		models, _ := provider["models"].([]interface{})
+		for _, rawModel := range models {
+			model, ok := rawModel.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			reasoning, _ := model["reasoning"].(bool)
+			if !reasoning {
+				continue
+			}
+			compat, ok := model["compat"].(map[string]interface{})
+			if !ok {
+				if model["compat"] != nil {
+					continue
+				}
+				compat = map[string]interface{}{}
+				model["compat"] = compat
+			}
+			if _, exists := compat["supportsDeveloperRole"]; !exists {
+				compat["supportsDeveloperRole"] = false
+			}
+		}
+	}
+}
+
 func validateGatewayDraft(edited map[string]interface{}) error {
 	if edited == nil {
 		return nil
