@@ -54,6 +54,12 @@
 
 **域文件相互依赖检查**：6 个域文件之间零内部依赖，全部只引用 kernel、三个豁免文件（`retry.go`/`outbound.go`/`legacy_log.go`）与自身。已用「按符号名收集引用方文件」机械枚举，非人工扫读。
 
+**D1 导出符号核验（机械对比，非声明）**：把搬迁前 `46d8153` 与当前 HEAD 的 `internal/server` 非测试文件按 `^(func|type|var|const) [A-Z]` 提取导出符号名并取集合：
+
+- 搬迁前：`ImportPiPackages`、`ListInstalledPackages`、`NewMgmtRouter`、`NewProxyRouter`（4 个）
+- 搬迁后：上述 4 个 **完全一致**，另有 `BuildOutboundRequest`、`BuiltOutboundRequest`、`ImportLegacyNow`、`ImportLegacyOnStartup`、`OutboundRequestMetadata`、`OutboundRequestPlan` —— 这 6 个来自本 spec 明确不动的 `outbound.go` 与 `legacy_log.go`，不是拆分引入
+- 即：**六个域文件合计新增导出符号 0 个**。`package_handlers.go` 的 2 个导出符号（`ListInstalledPackages`、`ImportPiPackages`）是被 `cmd/pi-switch/main.go` 调用的既有导出 API，搬迁前就在 `server.go` 中导出，拆分保留了这一契约；本 spec 未把它们改名为小写，因为那会构成对 `cmd` 的破坏性接口变更，超出 spec D10 的零行为变更范围
+
 **验收命令**：`go build ./...` 通过；`go test ./...` 全绿；`gofmt -l` 无输出。
 
 **遗留候选（不在本 spec 范围）**：`effectiveConversationID`（零调用者）；`dump400` + `/api/dumps`（生产者零调用者，端点保留但目录恒空）。
