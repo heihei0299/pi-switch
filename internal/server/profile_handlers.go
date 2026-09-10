@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,6 +107,53 @@ func validateProfileResponsesMode(api, mode string) error {
 	return nil
 }
 
+// isPersistError distinguishes a failed write from a rejected input, so the
+// handler can keep answering 400 for validation and 500 for storage.
+func isPersistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return true
+	}
+	// Rename failures come back as *os.LinkError, not *os.PathError.
+	var linkErr *os.LinkError
+	return errors.As(err, &linkErr)
+}
+
+// CreateProfile is the single implementation behind POST /api/profiles and
+// `pi-switch provider add`: it validates the profile (responsesMode
+// compatibility, shape, retry knobs) and refuses to overwrite an existing
+// supplier. Callers map its errors to their own surface (400/500 for HTTP,
+// exit code + stderr for the CLI).
+func CreateProfile(name string, prof config.ProviderProfile) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("name required")
+	}
+	if err := validateResponsesMode(prof); err != nil {
+		return err
+	}
+	if err := validateProviderProfile(prof); err != nil {
+		return err
+	}
+	if err := validateRetryFields(prof); err != nil {
+		return err
+	}
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]config.ProviderProfile{}
+	}
+	if _, exists := cfg.Profiles[name]; exists {
+		return errors.New("profile already exists")
+	}
+	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
+	// 与"空 exposed = 不暴露"一致。
+	cfg.Profiles[name] = prof
+	return saveConfig(cfg)
+}
+
 func handlePostProfile(c *gin.Context) {
 	var body struct {
 		Name    string          `json:"name"`
@@ -168,34 +216,14 @@ func handlePostProfile(c *gin.Context) {
 		return
 	}
 	// validate responsesMode compatibility
-	if err := validateResponsesMode(prof); err != nil {
+	// 校验、重名与落盘都在 CreateProfile 里（与 CLI 共用一份实现），
+	// handler 只负责把它映射成 HTTP 错误码：校验类 400、落盘失败 500。
+	if err := CreateProfile(body.Name, prof); err != nil {
+		if isPersistError(err) {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	// preset 仅是“预填模板 + 模型目录推断”提示，允许为空：
-	// WebUI 明确提供“无”选项，自定义上游不应被强制套模板；
-	// 为空时模型目录推断走 modelsDevProvider（为空则 enrich 跳过并告警，不致命）。
-	if err := validateProviderProfile(prof); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := validateRetryFields(prof); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
-	// 与“空 exposed = 不暴露”一致。
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]config.ProviderProfile{}
-	}
-	if _, exists := cfg.Profiles[body.Name]; exists {
-		c.JSON(400, gin.H{"error": "profile already exists"})
-		return
-	}
-	cfg.Profiles[body.Name] = prof
-	if err := saveConfig(cfg); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})

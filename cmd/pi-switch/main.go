@@ -45,7 +45,8 @@ Commands:
   proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
-  provider  Manage suppliers — list | show <name> | add <name> | delete <name> | duplicate <name> --as <new>
+  provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] | use <name> | delete <name>
+            duplicate | test | fetch-models are not wired to the CLI yet
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
@@ -315,9 +316,73 @@ func handleWebUI(args []string) {
 	}
 }
 
+// providerAddFlags carries the knobs `provider add` accepts. Values are taken
+// from flags rather than an interactive picker so the command stays scriptable.
+type providerAddFlags struct {
+	preset  string
+	apiKey  string
+	baseURL string
+	api     string
+}
+
+// parseProviderAddArgs expects exactly one positional name; unknown flags are
+// rejected rather than ignored, so a typo cannot create an unintended profile.
+func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
+	flags := providerAddFlags{api: "openai-responses"}
+	name := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		takeValue := func() (string, error) {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("provider add: %s requires a value", a)
+			}
+			i++
+			return args[i], nil
+		}
+		switch a {
+		case "--preset":
+			v, err := takeValue()
+			if err != nil {
+				return "", flags, err
+			}
+			flags.preset = v
+		case "--api-key":
+			v, err := takeValue()
+			if err != nil {
+				return "", flags, err
+			}
+			flags.apiKey = v
+		case "--base-url":
+			v, err := takeValue()
+			if err != nil {
+				return "", flags, err
+			}
+			flags.baseURL = v
+		case "--api":
+			v, err := takeValue()
+			if err != nil {
+				return "", flags, err
+			}
+			flags.api = v
+		default:
+			if strings.HasPrefix(a, "-") {
+				return "", flags, fmt.Errorf("provider add: unknown flag %q", a)
+			}
+			if name != "" {
+				return "", flags, fmt.Errorf("provider add takes one name, got %q and %q", name, a)
+			}
+			name = a
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", flags, fmt.Errorf("provider add <name> required")
+	}
+	return name, flags, nil
+}
+
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|delete|duplicate|use|test|fetch-models> [name]")
+		fmt.Println("Usage: pi-switch provider <list|show|add|use|delete> [name]")
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -335,6 +400,22 @@ func handleProvider(args []string) int {
 			}
 			fmt.Printf("%s %s\n", mark, name)
 		}
+	case "add":
+		// 与服务端 POST /api/profiles 共用 CreateProfile，校验与落盘只有一份实现。
+		name, flags, err := parseProviderAddArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		prof := config.ProviderProfile{API: flags.api, BaseURL: flags.baseURL, APIKey: flags.apiKey}
+		if flags.preset != "" {
+			prof.Preset = &flags.preset
+		}
+		if err := server.CreateProfile(name, prof); err != nil {
+			fmt.Fprintf(os.Stderr, "provider add failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Added %s\n", name)
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")
