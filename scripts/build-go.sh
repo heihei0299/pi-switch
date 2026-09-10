@@ -7,7 +7,7 @@ cd "$ROOT"
 mkdir -p "$(dirname "$OUT")"
 
 VER=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
-COMMIT=$(git rev-parse HEAD 2>/dev/null || printf 'unknown')
+COMMIT=$(git rev-parse --short=7 HEAD 2>/dev/null || printf 'unknown')
 if git diff --quiet -- . ':!bin'; then
   DIRTY=false
 else
