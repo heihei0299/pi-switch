@@ -79,7 +79,7 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **证据（拆分前）**：3645 行、118 个函数；最近 50 个提交中 20 次改动该文件（40% 命中率）；`retry.go`/`outbound.go`/`legacy_log.go` 已证明同包拆文件可行。
 - **影响**：评审成本与变更碰撞集中在 gateway/proxy/stats/packages 四类 handler 上。
 - **动作**：**同 package 拆文件，零接口变更**；路由注册保留在 `server.go`。不换包、不引入 service 接口层。
-- **完成情况**：`server.go` 收至 523 行 / 18 个函数，只剩 router、auth、静态资源、构建信息与 kernel helper（`configPath`、`saveConfig`、`resolveModelsDevProvider`、`sessionScanCandidates`、`conversationCandidates`）。六个域文件为 `proxy_handlers.go`（含 `handleChatCompletions`/`handleStream`/`resolveRoute`/`clampBody`）、`profile_handlers.go`、`gateway_handlers.go`、`package_handlers.go`、`settings_handlers.go`、`stats_handlers.go`。被 2+ 域调用的 helper 留在 kernel，域文件之间无内部依赖。
+- **完成情况**：`server.go` 收至 522 行 / 18 个函数，只剩 router、auth、静态资源、构建信息与 kernel helper（`configPath`、`saveConfig`、`resolveModelsDevProvider`、`sessionScanCandidates`、`conversationCandidates`）。六个域文件为 `proxy_handlers.go`（含 `handleChatCompletions`/`handleStream`/`resolveRoute`/`clampBody`）、`profile_handlers.go`、`gateway_handlers.go`、`package_handlers.go`、`settings_handlers.go`、`stats_handlers.go`。被 2+ 域调用的 helper 留在 kernel，域文件之间无内部依赖。
 - **完成判据**：`server.go` 只剩 router/auth/静态资源/横切工具；测试文件一行不改仍全绿。二者均已满足。拆分方法、逐票证据与偏差裁决见 `.scratch/split-server-handlers/`。
 
 ### A4 [P1/可发现性] 标注 `retry.go` 为休眠原语

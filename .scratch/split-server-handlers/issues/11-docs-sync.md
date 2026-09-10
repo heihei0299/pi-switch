@@ -25,7 +25,7 @@
   - 「Proxy 入口对应代码」补 kernel + 六域文件结构图与「2+ 域 helper 留 kernel、域文件互不调用」的规则，并把 `BuildOutboundRequest`/`PlanRequest` 从 `server.go` 块中移出到各自真实文件（`internal/server/outbound.go`、`internal/translator/translator.go`）
   - WebUI 调用链里的 `internal/server/server.go` 补注「kernel：NewMgmtRouter 注册 /api/*」
 - `docs/architecture-review.md`（该文件此前未纳入版本控制，本票一并提交）：
-  - A3 标题标 `✅ 已完成`，把原「动作」里过时的文件名（`handler_gateway.go` 等）改为最终落地的六个文件名，新增「完成情况」段记录 `server.go` 523 → 实测 522 行 / 18 个函数与 kernel 残余，指向 `.scratch/split-server-handlers/` 取逐票证据
+  - A3 标题标 `✅ 已完成`，把原「动作」里过时的文件名（`handler_gateway.go` 等）改为最终落地的六个文件名，新增「完成情况」段记录 `server.go` 522 行 / 18 个函数与 kernel 残余，指向 `.scratch/split-server-handlers/` 取逐票证据
   - 行号型证据全部改为符号引用：A1（`server.go:authMiddleware`/`isLoopback`）、§2.3 第 2 条（`proxy_handlers.go:resolveRoute`）、A2（`cmd/pi-switch/main.go` 的五个命令符号，去掉 `:355` 等行号）、A4（`proxy_handlers.go:resolveRoute` 的单候选 + `settings_handlers.go:handlePutFailover` 的 410，取代 `server.go:2986`/`:3213`）、A6（`proxy_handlers.go:handleChatCompletions` 取代 `server.go:2950 附近`）、§2.2 拓扑图两处 router 行号
   - §2.2 依赖方向补上 `server.go` kernel、`*_handlers.go` 六域与三个横切文件三行
 - 符号可检索性已逐条机械校验：文档出现的 `resolveRoute`、`clampBody`、`handleChatCompletions`、`handleStream`、`handlePutFailover`、`authMiddleware`、`isLoopback`、`NewMgmtRouter`、`NewProxyRouter` 全部落在真实文件；文档涉及的文件路径 9/9 存在
