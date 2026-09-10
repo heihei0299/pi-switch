@@ -2,16 +2,17 @@ package proxy
 
 import "github.com/heihei0299/pi-switch/internal/config"
 
-// CalcCost computes cost stub: (prompt-cached)*input + cached*cacheRead + completion*output divided by 1M.
-// Returns nil when ModelEntry has no cost (unknown).
-func CalcCost(m config.ModelEntry, prompt, completion, cached int) *float64 {
-	if m.Cost == nil {
+// CalcCost is the single implementation of request cost:
+// (prompt-cached)*input + cached*cacheRead + completion*output, divided by 1M.
+// Returns nil when entry is nil or has no cost (unknown).
+func CalcCost(entry *config.ModelEntry, prompt, completion, cached int) *float64 {
+	if entry == nil || entry.Cost == nil {
 		return nil
 	}
 	// Rates are per 1M tokens.
-	input := m.Cost.Input
-	output := m.Cost.Output
-	cacheRead := m.Cost.CacheRead
+	input := entry.Cost.Input
+	output := entry.Cost.Output
+	cacheRead := entry.Cost.CacheRead
 	// When rates are zero and not set, still treat as valid (cost may be 0); only nil cost yields unknown.
 	nonCached := prompt - cached
 	if nonCached < 0 {

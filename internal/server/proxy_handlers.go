@@ -16,6 +16,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/limit"
+	"github.com/heihei0299/pi-switch/internal/proxy"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/translator"
 	"github.com/heihei0299/pi-switch/internal/usage"
@@ -431,7 +432,7 @@ func handleChatCompletions(c *gin.Context) {
 									usageReasoning = int(s.ReasoningTokens)
 								}
 							}
-							cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
+							cost := proxy.CalcCost(modelEntry, usagePrompt, usageCompletion, usageCached)
 							latMs := time.Since(start).Milliseconds()
 							logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
 							for k, vv := range finalHeaders2 {
@@ -483,7 +484,7 @@ func handleChatCompletions(c *gin.Context) {
 			usageReasoning = int(s.ReasoningTokens)
 		}
 	}
-	cost := computeCost(modelEntry, usagePrompt, usageCompletion, usageCached)
+	cost := proxy.CalcCost(modelEntry, usagePrompt, usageCompletion, usageCached)
 	latMs := time.Since(start).Milliseconds()
 	logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
 	for k, vv := range finalHeaders {
@@ -661,12 +662,12 @@ func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel 
 		completion = int(usageSum.CompletionTokens)
 		cached = int(usageSum.CachedTokens)
 		reasoning = int(usageSum.ReasoningTokens)
-		cost = computeCost(modelEntry, prompt, completion, cached)
+		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	} else {
 		var respObj map[string]interface{}
 		_ = json.Unmarshal(totalBytes.Bytes(), &respObj)
 		prompt, completion, cached, reasoning = extractUsage(respObj)
-		cost = computeCost(modelEntry, prompt, completion, cached)
+		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	}
 	latMs := time.Since(start).Milliseconds()
 	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "", requestURLOf(resp))
@@ -767,14 +768,14 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		completion = int(usageSum.CompletionTokens)
 		cached = int(usageSum.CachedTokens)
 		reasoning = int(usageSum.ReasoningTokens)
-		cost = computeCost(modelEntry, prompt, completion, cached)
+		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	} else if m, ok := conv.UsagePayload().(map[string]interface{}); ok {
 		if s := usage.ExtractUsage(map[string]interface{}{"usage": m}); s != nil {
 			prompt = int(s.PromptTokens)
 			completion = int(s.CompletionTokens)
 			cached = int(s.CachedTokens)
 			reasoning = int(s.ReasoningTokens)
-			cost = computeCost(modelEntry, prompt, completion, cached)
+			cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 		}
 	}
 	statusCode := resp.StatusCode
@@ -800,21 +801,6 @@ func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reas
 		return 0, 0, 0, 0
 	}
 	return int(summary.PromptTokens), int(summary.CompletionTokens), int(summary.CachedTokens), int(summary.ReasoningTokens)
-}
-
-func computeCost(entry *config.ModelEntry, prompt, completion, cached int) *float64 {
-	if entry == nil || entry.Cost == nil {
-		return nil
-	}
-	inputPrice := entry.Cost.Input
-	outputPrice := entry.Cost.Output
-	cacheReadPrice := entry.Cost.CacheRead
-	promptNonCached := prompt - cached
-	if promptNonCached < 0 {
-		promptNonCached = 0
-	}
-	cost := float64(promptNonCached)*inputPrice/1_000_000 + float64(cached)*cacheReadPrice/1_000_000 + float64(completion)*outputPrice/1_000_000
-	return &cost
 }
 
 func logRequest(provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
