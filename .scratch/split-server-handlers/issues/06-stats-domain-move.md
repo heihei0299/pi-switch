@@ -25,6 +25,7 @@
 
 ## 实施记录
 
+- 提交：`9028028`
 - 交付：`internal/server/stats_handlers.go`（新增 374 行 / 9 个符号 + `window` 类型）、`internal/server/server.go`（914 → 544 行 / 28 → 19 个符号）
 - 9 个函数一次切出：`normalizeRange`、`parseWindowQuery`、`statsWindowFor`、`statsPageLimit`、`newStatsService`、`handleStats`、`handleStatsConversations`、`handleConversationRequests`、`handleLogsExport`
 - `window` 类型（`type window struct{ from, to int64 }`）一并迁出并从 kernel 删除

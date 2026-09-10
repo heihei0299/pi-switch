@@ -15,7 +15,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** resolved (commit 5da6a14, 2026-09-11)
+**Status:** resolved (commit b3c93e8, 2026-09-11)
 
 - [x] 上述符号全部位于 `proxy_handlers.go`，保留原 `internal/server` package，不新增子包、不导出符号（spec D1）
 - [x] `server.go` 不再声明上述符号；被 2+ 域调用的 helper 不出现在 `proxy_handlers.go`，而是留在 kernel（spec D3）
@@ -28,7 +28,7 @@
 
 ## 实施记录
 
-- 提交：`5da6a14` — refactor(server): extract proxy handlers into proxy_handlers.go
+- 提交：`b3c93e8` — refactor(server): extract proxy handlers into proxy_handlers.go（曾 amend，旧哈希 `5da6a14` 已不可达）
 - 交付：`internal/server/proxy_handlers.go`（新增 889 行 / 20 个符号）、`internal/server/server.go`（3645 → 2774 行 / 118 → 98 个符号）
 - 搬迁块实测 **867 行**（2718-2804 共 87 行 + 2814-3593 共 780 行），含 19 个空行；889 = 867 + 头 22 行（package/import 20 行 + 空行 2）
 - 纯移动证据（按强度排序）：

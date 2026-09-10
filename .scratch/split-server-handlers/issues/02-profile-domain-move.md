@@ -15,7 +15,7 @@
 
 **Blocked by:** 01: proxy 域 handler 迁出 kernel
 
-**Status:** resolved (commit 见下, 2026-09-11)
+**Status:** resolved (commit c769d52, 2026-09-11)
 
 - [x] 上述符号全部位于 `profile_handlers.go`，保留原 `internal/server` package，不新增子包、不导出符号（spec D1）
 - [x] `server.go` 不再声明上述符号；被 2+ 域调用的 helper（如 `resolveModelsDevProvider`）留在 kernel（spec D3）
@@ -27,6 +27,7 @@
 
 ## 实施记录
 
+- 提交：`c769d52`
 - 交付：`internal/server/profile_handlers.go`（新增 1093 行 / 33 个符号）、`internal/server/server.go`（2774 → 1697 行 / 98 → 65 个符号）
 - 搬迁来源为两段非连续区间：主体 `handleGetConfig`..`handleValidate` 连续段，加 `handleCcsProviders`/`handleCcsImport`（这两者被 `handlePackageToggle` 与 `handleInit` 夹在 package 域与 settings 域之间；spec D2 把 CCS 归 profile 域，故一并迁出）
 - 随搬迁移出 kernel 的 import：`io`、`net/http`（profile 块是它们最后的用户）

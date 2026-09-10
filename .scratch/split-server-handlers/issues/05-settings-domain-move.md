@@ -24,6 +24,7 @@
 
 ## 实施记录
 
+- 提交：`10efe82`
 - 交付：`internal/server/settings_handlers.go`（新增 161 行 / 13 个符号）、`internal/server/server.go`（1065 → 914 行 / 41 → 28 个符号）
 - 13 个符号一次切出：`handleBackups`、`handleProxyStatus`、`handleWebUIInfo`、`handleBuildInfo`、`handleInit`、`handleProxyStart/Stop`、`handlePutFailover`、`handleGet/PutSettings`、三个 config export/import/restore stub
 - `handleBuildInfo` 迁出，但 `Version`/`BuildTime`/`BuildCommit`/`BuildTarget`/`BuildDirty` 与 `embed` 变量仍留 kernel（handler 读取它们，同 package 可见）

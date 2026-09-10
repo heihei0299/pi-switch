@@ -20,6 +20,7 @@
 
 ## 实施记录
 
+- 提交：`b203c71 + d2d0e6b`
 - `docs/architecture.md`：
   - 入口表两行改为指向新文件——WebUI 管理 API 的「继续阅读」列出五个域文件，Proxy 入口写 `proxy_handlers.go:handleChatCompletions`、`handleStream`
   - 「Proxy 入口对应代码」补 kernel + 六域文件结构图与「2+ 域 helper 留 kernel、域文件互不调用」的规则，并把 `BuildOutboundRequest`/`PlanRequest` 从 `server.go` 块中移出到各自真实文件（`internal/server/outbound.go`、`internal/translator/translator.go`）

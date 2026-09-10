@@ -22,6 +22,7 @@
 
 ## 实施记录
 
+- 提交：`5fb5c76（与 07 合并提交）`
 - `modelsDevCatalog` 位于 `profile_handlers.go`（票 02 随 profile 域迁出后落点），`contains` 位于 `server.go`（票 10 之前一直留在 kernel）
 - 删除前独立确认零引用：`contains` 全仓仅 1 处命中即其自身定义（其余命中是英文 "contains" 出现在注释/测试串里）；`modelsDevCatalog` 全仓仅 1 处命中即其自身定义
 - `server.go`：544 → 535 行；`profile_handlers.go` −9 行

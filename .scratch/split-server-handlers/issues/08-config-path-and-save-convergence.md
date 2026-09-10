@@ -24,6 +24,7 @@
 
 ## 实施记录
 
+- 提交：`9d2bc0a`
 - `internal/config/config.go` 新增 `ResolvePath()` 与 `SaveAtPath(cfg, path)`，紧随 `MigratedForSave`：
   - `ResolvePath`：`PI_SWITCH_CONFIG` > `~/.pi-switch/config.json` > `/tmp/pi-switch-config.json`
   - `SaveAtPath`：内部先 `MigratedForSave`，建父目录，`MarshalIndent` + 尾随换行，临时文件 + rename

@@ -24,6 +24,7 @@
 
 ## 实施记录
 
+- 提交：`efa42ab`
 - `internal/proxy/cost.go`：`CalcCost` 改为 `entry *config.ModelEntry` 指针入参，nil entry 与 nil cost 均返回 nil，成为唯一实现
 - `internal/server/proxy_handlers.go`：6 个调用点直连 `proxy.CalcCost`（`handleChatCompletions` 2 处、`handleStream` 2 处、`streamPassthrough` 1 处、`streamConvert` 1 处），删除 `server.computeCost`，新增 `internal/proxy` import
 - `internal/proxy/cost_test.go`：3 处调用改为 `&me`；新增 `TestCalcCost_NilEntryYieldsNil` 覆盖新增的指针语义；原有 nil cost / 负值裁剪 / 常规折算三个 case 全部保留并通过

@@ -24,6 +24,7 @@
 
 ## 实施记录
 
+- 提交：`660a56c`
 - 交付：`internal/server/package_handlers.go`（新增 394 行 / 14 个符号）、`internal/server/server.go`（1446 → 1065 行 / 55 → 41 个符号）
 - 14 个符号一次切出（8 个 DB/路径/解析 helper + 6 个 `handlePackage*`），搬迁块内被 `handlePackageToggle`/`handleInit` 与 settings 域分隔的情形已由按名定位工具正确处理
 - import 转移：`net/url` 从 server.go 移入 package_handlers.go（`ListInstalledPackages` 的 `url.PathUnescape`）；`piagent` 随 `ImportPiPackages` 迁出

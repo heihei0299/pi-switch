@@ -23,6 +23,7 @@
 
 ## 实施记录
 
+- 提交：`b7abcad`
 - 交付：`internal/server/gateway_handlers.go`（新增 / 10 个符号，含 `gatewayPreviewRequest` 类型）、`internal/server/server.go`（1697 → 1447 行 / 65 → 55 个符号）
 - 随搬迁移出 kernel 的 import：`catalog`（首个被迁空其用途的 import）
 - 纯移动证据：函数级逐字节比对 **65/65 IDENT，0 CHANGED / 0 LOST / 0 DUP**
