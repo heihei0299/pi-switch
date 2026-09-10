@@ -13,7 +13,7 @@
 
 - **P0 信任边界与诚实性（5 项，✅ 全部已完成 2026-09-11）**：A1 管理面认证缺口、A8 密码无生成路径、A9 Proxy 无认证且请求体无上限（一票：`.scratch/trust-boundary-and-honesty/issues/01`、`02`）、A2 CLI 假成功（`03`）、A7 服务端假成功 API 且 WebUI 已接线（`04`）。逐票证据、review 与验证见该 spec 的 `progress.md`。
 - **P1 结构与工程（4 项，✅ 全部已完成）**：A3 handler 拆分、A4 retry 休眠标注、A10 保存失败静默吞掉、A11 CI Go 版本与 go.mod 不匹配（后四项一票：`.scratch/arch-review-eng-batch/issues/02`、`01`、`03`）。
-- **P2 决策与卫生（6 项）**：A5 遗留 JS 归属、A6 config 读取缓存（触发式）、A12 前端组件单体（观察）、A15 工作区残留；A13 ADR 编号重复与 A14 README 版本徽章漂移✅ 已完成（`.scratch/arch-review-eng-batch/issues/04`、`05`）。
+- **P2 决策与卫生（6 项）**：A6 config 读取缓存（触发式）、A12 前端组件单体（观察）；A5 遗留 JS 归属与 A15 工作区残留✅ 已完成（`.scratch/arch-review-eng-batch` 后续，2026-09-11）；A13 ADR 编号重复与 A14 README 版本徽章漂移✅ 已完成（`.scratch/arch-review-eng-batch/issues/04`、`05`）。
 
 **明确不做**见 §4。
 
@@ -99,11 +99,13 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **完成判据**：文件头注释 + 架构文档一句话，且 `retry.go` 无生产调用点的事实有出处可查。
 - **完成情况**：文件头加了 DORMANT 说明，并**区分了两件事**——调度引擎（`expandAttempts`/`admitForRound`/`waitForRound`/`classifyUpstreamError` 等）在非测试代码中零调用，而校验函数（`validateRetryFields`/`validateSettingsRetry`）仍被 profile 与 settings handler 调用；说明同时给出 `remove-failover-chain/spec.md` D1 的出处与"不要期望此处改动影响生产、未经确认不要删除"的告警。`docs/architecture.md` 已补同一事实。
 
-### A5 [P2/决策] 遗留 JS 层归属
+### A5 [P2/决策] 遗留 JS 层归属 —— ✅ 已完成（2026-09-11）
 
 - **证据**：`package.json:32-35` 的 `pi.extensions` 指向 `./extensions/index.ts`，但 `files`（:9-14）不含 `extensions/` 与 `src/`，发布包中该入口不存在；该扩展 import `../src/commands.js`（旧 Node 实现，含空函数体）。
 - **动作**：产品决策二选一——恢复（补 `files` 并接入 Go 核心理念的新实现）或摘除 `pi.extensions` 字段并归档 `extensions/`、`src/`。
 - **完成判据**：npm 包内容与 manifest 一致，不存在悬空入口。
+- **完成情况（用户裁决：摘除并归档）**：`package.json` 的 `pi.extensions` 字段已移除（该字段指向 `./extensions/index.ts`，而该路径从未出现在 `files` 中，属悬空入口）；`src/` 与 `extensions/` 用 `git mv` 移入 `legacy/` 并加 `legacy/README.md` 说明。**核验**：`npm pack --dry-run` 的包内条目里 `legacy/` 为 0，`files` 仍为 `bin/`、`webui/dist/`、两个 README；`scripts/build-go.sh` 与 `bin/pi-switch.js` 均不引用这两个目录，移动后 `go build`/`vet`/`go test` 全绿。
+- **归档而非删除的理由**（已写入 `legacy/README.md`）：`legacy/src/sync.js` 含有真实的配置加密导出/导入实现，作用于同一个 `~/.pi-switch/config.json`——服务端对应能力目前是 501（见 A7），将来实现时应参考它。
 
 ### A6 [P2/触发式] config 读取缓存
 
@@ -176,12 +178,13 @@ tui / webui                          同一 Go 核心的另外两个视图
 - **完成判据**：两者一致，或不一致会被 CI 检出。
 - **完成情况**：两个 README 的徽章从 `20260902.0.0` 更新为 `20260910.0.2`，与 `package.json` 一致。"不一致会被 CI 检出"未实现，可另立项。
 
-### A15 [P2/卫生] 工作区残留
+### A15 [P2/卫生] 工作区残留 —— ✅ 已完成（2026-09-11，经用户确认）
 
 - **证据**：`target/` 6.9G（ADR 0007 已宣告 Go-only）、`.gocache/` 303M；均被 gitignore。`bin/` 101M 为本地构建产物（仅 `bin/pi-switch.js` 被跟踪），不需处理。
 - **影响**：磁盘占用与工具链认知噪声；新 agent 可能误在 Rust 残留目录中探索。
 - **动作**：删除 `target/` 与 `.gocache/`（属破坏性操作，需用户确认后执行）；`.gitignore` 已覆盖，无需改动。
 - **完成判据**：目录不存在，且 `git status` 不受影响。
+- **完成情况**：删除 `target/`（6.9G，Rust 残留）与 `.gocache/`（303M）。删除前核实二者均被 gitignore、**0 个被跟踪文件**，`target/` 内容为 CACHEDIR.TAG/debug/release/napi-rs 等纯构建产物。删除后 `git status` 干净。**注意**：`df` 的空闲空间读数未出现可见变化（同一挂载点其他写入活动掩盖了差值），故"释放 7.2G"未能从 df 证实，仅以目录消失为凭。
 - **相关**：ADR 0007。
 
 ## 4. 明确不做

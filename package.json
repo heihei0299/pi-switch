@@ -29,11 +29,6 @@
     "models",
     "switch"
   ],
-  "pi": {
-    "extensions": [
-      "./extensions/index.ts"
-    ]
-  },
   "license": "MIT",
   "engines": {
     "node": ">=23.6"
