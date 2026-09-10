@@ -22,7 +22,7 @@ func TestGatewayManualMetadataConvergesAfterReload(t *testing.T) {
 	t.Setenv("PI_SWITCH_MODELS", modelsPath)
 	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
 
-	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"model-a","name":"Model A","contextWindow":1000,"maxTokens":100},{"id":"model-b","name":"Model B Browser Edited","contextWindow":1000,"maxTokens":100,"extra":{"e2e":"browser"}}]}}}`
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[{"id":"model-a","name":"Model A","contextWindow":1000,"maxTokens":100},{"id":"model-b","name":"Model B Browser Edited","contextWindow":2000,"maxTokens":200,"reasoning":true,"input":["text","image"],"thinkingLevelMap":{"high":"medium"},"cost":{"input":0.5,"output":1.5,"cacheRead":0.2,"cacheWrite":0.1},"compat":{"manual":true},"headers":{"X-Model":"browser"},"extra":{"e2e":"browser"}}]}}}`
 	put := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -59,6 +59,24 @@ func TestGatewayManualMetadataConvergesAfterReload(t *testing.T) {
 	}
 	if extra, _ := edited["extra"].(map[string]interface{}); extra["e2e"] != "browser" {
 		t.Fatalf("edited extra was not preserved: %#v", edited["extra"])
+	}
+	if edited["contextWindow"] != float64(2000) || edited["maxTokens"] != float64(200) || edited["reasoning"] != true {
+		t.Fatalf("edited model fields were not preserved: %#v", edited)
+	}
+	if input, _ := edited["input"].([]interface{}); len(input) != 2 || input[1] != "image" {
+		t.Fatalf("edited input was not preserved: %#v", edited["input"])
+	}
+	if thinking, _ := edited["thinkingLevelMap"].(map[string]interface{}); thinking["high"] != "medium" {
+		t.Fatalf("edited thinking levels were not preserved: %#v", edited["thinkingLevelMap"])
+	}
+	if cost, _ := edited["cost"].(map[string]interface{}); cost["input"] != 0.5 {
+		t.Fatalf("edited cost was not preserved: %#v", edited["cost"])
+	}
+	if compat, _ := edited["compat"].(map[string]interface{}); compat["manual"] != true {
+		t.Fatalf("edited compat was not preserved: %#v", edited["compat"])
+	}
+	if headers, _ := edited["headers"].(map[string]interface{}); headers["X-Model"] != "browser" {
+		t.Fatalf("edited headers were not preserved: %#v", edited["headers"])
 	}
 
 	configBytes, err := os.ReadFile(filepath.Join(dir, "config.json"))

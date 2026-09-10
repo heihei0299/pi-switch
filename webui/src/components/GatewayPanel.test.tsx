@@ -314,18 +314,80 @@ describe("GatewayPanel canonical draft", () => {
     window.localStorage?.clear();
   });
 
-  it("renders structured preview read-only and publishes the backend proposal", async () => {
+  it("renders structured preview and publishes the backend proposal", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
       diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
     }) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    expect(screen.getByText("m1")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("m1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "remove" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     expect(apply.mock.calls[0][0]).toEqual({ providers: proposedGw });
+  });
+
+  it("edits gateway and model metadata in the structured view", async () => {
+    const gateway = {
+      "pi-switch-chat": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{
+          id: "m1",
+          name: "Provider name",
+          contextWindow: 100,
+          maxTokens: 10,
+          input: ["text"],
+          reasoning: false,
+          cost: { input: 0.1, output: 0.2, cacheRead: 0.03, cacheWrite: 0 },
+          compat: { supportsDeveloperRole: false },
+          extra: { source: "catalog" },
+        }],
+        proxy: false,
+      },
+    };
+    const preview = vi.spyOn(api, "previewGateway").mockImplementation(async (input) => {
+      const draft = input?.draft && typeof input.draft === "object" && !Array.isArray(input.draft)
+        ? (input.draft as Record<string, unknown>).providers as Record<string, unknown>
+        : gateway;
+      return backendPreview(gateway, draft, { groups: [] }) as any;
+    });
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+
+    renderGateway();
+    await waitFor(() => expect(screen.getByDisplayValue("Provider name")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Toggle model details" }));
+    expect(screen.getByText(/Context window/)).toBeInTheDocument();
+    expect(screen.getByText(/Max tokens/)).toBeInTheDocument();
+    const metadata = screen.getByLabelText("Gateway metadata");
+    fireEvent.change(screen.getByDisplayValue("Provider name"), { target: { value: "Gateway name" } });
+    fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "200" } });
+    fireEvent.change(screen.getByDisplayValue("10"), { target: { value: "20" } });
+    screen.getAllByRole("switch").forEach((control) => fireEvent.click(control));
+    fireEvent.click(screen.getByRole("button", { name: /Cost/ }));
+    fireEvent.change(screen.getByDisplayValue("0.1"), { target: { value: "0.5" } });
+    fireEvent.change(metadata, {
+      target: { value: JSON.stringify({ compat: { custom: true }, extra: { source: "gateway" } }, null, 2) },
+    });
+
+    await waitFor(() => expect((screen.getByLabelText("gateway json") as HTMLTextAreaElement).value).toContain("Gateway name"));
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+
+    const model = (apply.mock.calls[0][0] as any).providers["pi-switch-chat"].models[0];
+    expect(model).toMatchObject({
+      id: "m1",
+      name: "Gateway name",
+      contextWindow: 200,
+      maxTokens: 20,
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0.5, output: 0.2, cacheRead: 0.03, cacheWrite: 0 },
+      compat: { custom: true },
+      extra: { source: "gateway" },
+    });
+    expect(preview).toHaveBeenCalled();
   });
 
   it("sends edited JSON to backend preview before publishing", async () => {
@@ -385,7 +447,7 @@ describe("GatewayPanel canonical draft", () => {
     } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-		expect(screen.getByText("gpt-5.6-luna")).toBeInTheDocument()
+		expect(screen.getByDisplayValue("gpt-5.6-luna")).toBeInTheDocument()
 		expect(screen.queryByText("oc/responses/gpt-5.6-luna")).not.toBeInTheDocument()
   });
 });

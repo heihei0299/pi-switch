@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Button, Input, Switch } from "./ui";
+import { useEffect, useState } from "react";
+import { Button, Input, Switch, Textarea } from "./ui";
 import { useI18n } from "../i18n";
 import {
   PI_THINKING_LEVELS,
@@ -23,17 +23,19 @@ export function ModelCard({
   hideExposed,
   displayId,
   fullId,
+  gatewayOnly,
 }: {
   draft: ModelDraft;
   exposed: boolean;
-  onToggleExposed: () => void;
+  onToggleExposed?: () => void;
   hideExposed?: boolean;
+  gatewayOnly?: boolean;
   // 网关专用：输入框短显示（draft.id 保持全限定，只换渲染文本）
   displayId?: string;
   // 与短显示配套的完整 id 标注；与显示一致时不渲染
   fullId?: string;
   onChange: (next: ModelDraft) => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
 }
@@ -41,6 +43,11 @@ export function ModelCard({
   const { t } = useI18n() as any;
   const [costExpanded, setCostExpanded] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [gatewayMetadataText, setGatewayMetadataText] = useState(() => JSON.stringify(draft.passthrough, null, 2));
+
+  useEffect(() => {
+    if (gatewayOnly) setGatewayMetadataText(JSON.stringify(draft.passthrough, null, 2));
+  }, [draft.key, draft.passthrough, gatewayOnly]);
 
   const thinkingMap: PiThinkingLevelMap | undefined = isPiThinkingLevelMap(draft.thinkingLevelMap)
     ? (draft.thinkingLevelMap as PiThinkingLevelMap)
@@ -54,6 +61,15 @@ export function ModelCard({
 
   function update(fields: Partial<ModelDraft>) {
     onChange({ ...draft, ...fields });
+  }
+
+  function updateGatewayMetadata(text: string) {
+    setGatewayMetadataText(text);
+    try {
+      const value = JSON.parse(text);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      onChange({ ...draft, passthrough: value as Record<string, unknown> });
+    } catch {}
   }
 
   function updateThinkingLevel(level: PiThinkingLevel, mode: "default" | "unsupported" | string) {
@@ -84,7 +100,7 @@ export function ModelCard({
           <span className={`inline-block text-xs transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
         </button>
 
-        {!hideExposed && (
+        {!hideExposed && onToggleExposed && (
           <label className="flex items-center gap-1.5">
           <input
             type="checkbox"
@@ -101,6 +117,7 @@ export function ModelCard({
             id={`model-id-${draft.key}`}
             value={displayId ?? draft.id}
             title={fullId ?? draft.id}
+            readOnly={gatewayOnly}
             onChange={(e) => update({ id: e.target.value })}
             placeholder={t("Model ID")}
             aria-label={t("Model ID")}
@@ -115,14 +132,16 @@ export function ModelCard({
           />
         </div>
 
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label={t("remove")}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-red-500/10 hover:text-red-300"
-        >
-          🗑
-        </button>
+        {!gatewayOnly && onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={t("remove")}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-red-500/10 hover:text-red-300"
+          >
+            🗑
+          </button>
+        )}
       </div>
       {fullId && fullId !== (displayId ?? draft.id) && (
         <div className="px-2 pb-2 font-mono text-[11px] text-zinc-500" title={fullId}>
@@ -133,6 +152,29 @@ export function ModelCard({
       {expanded && (
         <div className="border-t border-white/5 p-3">
           <div className="grid gap-3">
+            {gatewayOnly && (
+              <div className="space-y-2">
+                <label className="mb-1 block text-xs font-medium text-zinc-400">网关元信息（JSON）</label>
+                <Textarea
+                  aria-label="Gateway metadata"
+                  rows={6}
+                  value={gatewayMetadataText}
+                  onChange={(e) => updateGatewayMetadata(e.target.value)}
+                  spellCheck={false}
+                />
+                {(() => {
+                  try {
+                    const value = JSON.parse(gatewayMetadataText);
+                    return value && typeof value === "object" && !Array.isArray(value) ? null : (
+                      <div className="text-xs text-red-300">网关元信息必须是 JSON 对象</div>
+                    );
+                  } catch {
+                    return <div className="text-xs text-red-300">网关元信息 JSON 无效</div>;
+                  }
+                })()}
+                <div className="text-xs text-zinc-500">headers、compat、extra 及其他网关自定义字段。</div>
+              </div>
+            )}
             {/* switches */}
             <div className="flex flex-wrap items-center gap-6">
               <label className="flex items-center gap-2.5 text-sm text-zinc-300">

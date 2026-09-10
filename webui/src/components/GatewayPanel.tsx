@@ -4,11 +4,12 @@ import { Button, Card, SectionTitle } from "./ui";
 import { useI18n } from "../i18n";
 import { useToast } from "./ui";
 import { mutateAfterGatewayPublish } from "../store/swr";
-import { draftFromEntry, type ModelDraft } from "../lib/piModel";
+import { draftFromEntry, modelPreview, type ModelDraft } from "../lib/piModel";
 import { validateGatewayJson } from "../lib/gatewayDiff";
 import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { GatewayDiff, GatewayPreview, GatewaySelection, ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
+import { ModelCard } from "./ModelCard";
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -33,6 +34,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [groups, setGroups] = useState<PreviewGroup[]>([]);
   const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   const selectionKey = (supplier: string, channel: string, model: string) =>
     `${supplier}/${channel}/${model}`;
@@ -40,9 +42,26 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   const drafts = useMemo<ModelDraft[]>(() => Object.entries(canonicalDraft ?? {}).flatMap(([providerKey, entry]) => {
     const models = asRecord(entry).models;
     return Array.isArray(models)
-      ? models.map((model) => ({ ...draftFromEntry(model as ModelEntry), providerKey }))
+      ? models.map((model) => {
+          const id = asRecord(model).id;
+          return { ...draftFromEntry(model as ModelEntry, `${providerKey}/${String(id ?? "")}`), providerKey };
+        })
       : [];
   }), [canonicalDraft]);
+
+  const updateDraft = (next: ModelDraft) => {
+    if (!canonicalDraft || !next.providerKey) return;
+    const providers = JSON.parse(JSON.stringify(canonicalDraft)) as Record<string, unknown>;
+    const provider = asRecord(providers[next.providerKey]);
+    const models = Array.isArray(provider.models) ? provider.models : [];
+    const index = models.findIndex((model) => asRecord(model).id === next.id);
+    if (index < 0) return;
+    models[index] = modelPreview(next);
+    provider.models = models;
+    providers[next.providerKey] = provider;
+    setCanonicalDraft(providers);
+    setRawText(JSON.stringify({ providers }, null, 2));
+  };
 
   const applyPreview = (preview: GatewayPreview, checkedOverride?: Set<string>) => {
     const cur = preview.current;
@@ -320,30 +339,30 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
             <div className="text-sm font-medium text-zinc-200">{t("Model config")}</div>
           </div>
           <div className="mt-1 text-xs text-zinc-500">
-            {t("Structured preview is derived from the backend canonical proposal; edit the JSON below to change it.")}
+            网关模型元信息可直接编辑：显示名称、contextWindow、maxTokens、cost、input、reasoning、headers、compat、extra。
           </div>
 
           <div className="mt-3 space-y-2">
-            <div className="hidden sm:grid grid-cols-[auto_1fr_1fr_auto] gap-2 px-1 text-xs text-zinc-500">
-              <span className="w-9" />
-              <span>{t("Model ID")} *</span>
-              <span>{t("Display name")} *</span>
-              <span className="w-8" />
-            </div>
             {drafts.length === 0 && (
               <div className="rounded-lg border border-dashed border-white/10 p-4 text-center text-sm text-zinc-500">
                 {t("No models configured")}
               </div>
             )}
             {drafts.map((d) => (
-              <div key={d.key} className="rounded-xl border border-white/10 bg-zinc-900/40 px-3 py-2">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-                  <span className="font-mono text-zinc-200">{d.id}</span>
-                  {d.name && <span className="text-zinc-400">{d.name}</span>}
-                  {d.contextWindow && <span className="text-xs text-zinc-500">context {d.contextWindow}</span>}
-                  {d.maxTokens && <span className="text-xs text-zinc-500">max {d.maxTokens}</span>}
-                </div>
-              </div>
+              <ModelCard
+                key={d.key}
+                draft={d}
+                exposed={true}
+                hideExposed
+                gatewayOnly
+                onChange={updateDraft}
+                expanded={expandedKeys.has(d.key)}
+                onToggleExpanded={() => setExpandedKeys((current) => {
+                  const next = new Set(current);
+                  next.has(d.key) ? next.delete(d.key) : next.add(d.key);
+                  return next;
+                })}
+              />
             ))}
           </div>
         </div>

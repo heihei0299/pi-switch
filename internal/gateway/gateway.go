@@ -572,7 +572,7 @@ var generatedKeys = map[string]bool{
 	"proxy":   true,
 }
 
-// MergeGatewayExtra merges non-generated provider and model fields from current
+// MergeGatewayExtra merges Gateway-owned provider and model fields from current
 // into the proposed providers wrapper.
 func MergeGatewayExtra(current, proposed map[string]interface{}) map[string]interface{} {
 	return mergeGatewayExtra(current, proposed, nil, true)
@@ -583,7 +583,7 @@ func MergeGatewayExtraForConfig(cfg config.PiSwitchConfig, current, proposed map
 	return mergeGatewayExtra(current, proposed, managedProviderKeys(cfg), true)
 }
 
-func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[string]bool, preservePublishedName bool) map[string]interface{} {
+func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[string]bool, preservePublishedMetadata bool) map[string]interface{} {
 	if current == nil {
 		return proposed
 	}
@@ -634,9 +634,11 @@ func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[str
 			}
 			id, _ := entry["id"].(string)
 			if old, exists := curByID[id]; exists {
-				if preservePublishedName {
-					if oldName, hasOldName := old["name"]; hasOldName {
-						entry["name"] = oldName
+				if preservePublishedMetadata {
+					for _, field := range []string{"name", "reasoning", "input", "contextWindow", "maxTokens", "thinkingLevelMap", "cost"} {
+						if oldValue, hasOld := old[field]; hasOld {
+							entry[field] = oldValue
+						}
 					}
 				}
 				for _, field := range []string{"headers", "compat", "extra"} {
@@ -659,7 +661,7 @@ func mergeGatewayExtra(current, proposed map[string]interface{}, managed map[str
 						}
 					}
 				}
-				standard := map[string]bool{"id": true, "contextWindow": true, "maxTokens": true, "cost": true, "input": true, "reasoning": true, "name": true, "headers": true, "compat": true, "extra": true}
+				standard := map[string]bool{"id": true, "contextWindow": true, "maxTokens": true, "cost": true, "input": true, "reasoning": true, "name": true, "thinkingLevelMap": true, "headers": true, "compat": true, "extra": true}
 				for field, fieldValue := range old {
 					if !standard[field] {
 						if _, exists := entry[field]; !exists {
@@ -934,7 +936,7 @@ func BuildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[st
 
 // BuildCanonicalGatewayPlanWithPublishedMetadata is used when the server has
 // enriched a generated proposal but still needs current Gateway-owned metadata
-// (for example a hand-edited model name) to remain authoritative.
+// (for example a hand-edited model name or limit) to remain authoritative.
 func BuildCanonicalGatewayPlanWithPublishedMetadata(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
 	return buildCanonicalGatewayPlan(cfg, current, edited, preservePublishedMetadata)
 }

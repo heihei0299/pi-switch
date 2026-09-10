@@ -194,7 +194,7 @@ Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel
 2. `GatewayPanel` shows `Current vs Proposed` and `pending_count`, plus `pending`/`mismatch` banner on first load when `pending_count>0`; it does not auto-apply.
 3. On `Apply to Pi`, `PUT /api/models/gateway` validates and atomically writes `models.json` (merging hand-written `extra` fields), then notifies.
 
-This keeps supplier as the single source of truth, gateway as a read-only derived view, and prevents `models.json` overwrites from discarding manual `headers`/`compat`/`cost`/`extra` fields (merged, not authoritative).
+This keeps supplier as the source for supplier-owned configuration while Gateway model metadata (`name`/`reasoning`/`input`/`contextWindow`/`maxTokens`/`thinkingLevelMap`/`cost`/`headers`/`compat`/`extra`) is edited only through explicit Gateway publish; `models.json` owns those overrides.
 
 ---
 
