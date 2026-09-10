@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -235,7 +236,7 @@ func NewMgmtRouter() *gin.Engine {
 		api.POST("/packages", handlePackageAdd)
 		api.POST("/packages/import", handlePackageImport)
 		api.GET("/packages/:id", handlePackageGet)
-		api.DELETE("/packages/:id", handlePackageDelete)
+		api.DELETE("/packages/*id", handlePackageDelete)
 		api.POST("/packages/:id/toggle", handlePackageToggle)
 		api.GET("/ccswitch/providers", handleCcsProviders)
 		api.POST("/ccswitch/import", handleCcsImport)
@@ -2122,14 +2123,38 @@ func handlePackageGet(c *gin.Context) {
 	c.JSON(200, m)
 }
 func handlePackageDelete(c *gin.Context) {
-	id := c.Param("id")
+	id := strings.TrimPrefix(c.Param("id"), "/")
+	decoded, err := url.PathUnescape(id)
+	if err != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid package id: %v", err)})
+		return
+	}
+	id = decoded
+	if id == "" {
+		c.JSON(400, gin.H{"error": "package id is required"})
+		return
+	}
+
 	db, err := openPiSwitchDB()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	defer db.Close()
-	_, _ = db.Exec(`UPDATE packages SET installed=0, updated_at=? WHERE id=?`, time.Now().UnixMilli(), id)
+	result, err := db.Exec(`UPDATE packages SET installed=0, updated_at=? WHERE id=? AND installed=1`, time.Now().UnixMilli(), id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if affected == 0 {
+		c.JSON(404, gin.H{"error": "package not found"})
+		return
+	}
 	c.JSON(200, gin.H{"ok": true})
 }
 func handlePackageToggle(c *gin.Context) {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,31 +87,35 @@ func settingsPath(root string) string {
 	return filepath.Join(root, "settings.json")
 }
 
-// DiscoverPackages scans configured Pi sources and the managed/auto-discovered
-// resource roots. It never writes files or the pi-switch database.
+// DiscoverPackages resolves the configured Pi sources. It never writes files or the pi-switch database.
 func DiscoverPackages() (ImportResult, error) {
 	root := AgentRoot()
 	state, err := loadSettings(settingsPath(root))
 	if err != nil {
 		return ImportResult{}, err
 	}
-	rootExists := directoryExists(root)
+	if !state.found {
+		return ImportResult{
+			OK:      false,
+			Status:  StatusNotFound,
+			Message: "Pi Agent package settings were not found",
+		}, nil
+	}
 
 	candidatePaths := map[string]bool{}
-	for canonical, source := range state.sources {
-		if path, ok := localSourcePath(source.spec, source.baseDir); ok {
-			candidatePaths[filepath.Clean(path)] = true
+	// The settings packages array is Pi's authoritative package registry. Do
+	// not recursively import every dependency under node_modules; resolve only
+	// the configured npm/git/local sources.
+	for _, source := range state.sources {
+		path, ok := configuredPackagePath(root, source)
+		if !ok {
 			continue
 		}
-		_ = canonical
-	}
-	for _, base := range managedRoots(root) {
-		for _, manifest := range findManifests(base) {
-			candidatePaths[filepath.Dir(manifest)] = true
+		if !directoryExists(path) {
+			state.warns = append(state.warns, fmt.Sprintf("configured Pi package source is not installed: %s", source.spec))
+			continue
 		}
-		for _, candidate := range findPotentialPackageRoots(base) {
-			candidatePaths[candidate] = true
-		}
+		candidatePaths[filepath.Clean(path)] = true
 	}
 
 	paths := make([]string, 0, len(candidatePaths))
@@ -147,12 +150,6 @@ func DiscoverPackages() (ImportResult, error) {
 	sort.Slice(result.Packages, func(i, j int) bool { return result.Packages[i].ID < result.Packages[j].ID })
 	result.Count = len(result.Packages)
 	if result.Count == 0 {
-		if !rootExists && !state.found {
-			result.OK = false
-			result.Status = StatusNotFound
-			result.Message = "Pi Agent package roots were not found"
-			return result, nil
-		}
 		result.Status = StatusEmpty
 		result.Message = "No valid Pi packages were discovered"
 		return result, nil
@@ -226,77 +223,6 @@ func loadSettings(path string) (settingsState, error) {
 		state.sources[canonicalSource(info.spec, baseDir)] = info
 	}
 	return state, nil
-}
-
-func managedRoots(root string) []string {
-	roots := []string{
-		filepath.Join(root, "npm", "node_modules"),
-		filepath.Join(root, "git"),
-		filepath.Join(root, "extensions"),
-		filepath.Join(root, "skills"),
-		filepath.Join(root, "prompts"),
-		filepath.Join(root, "themes"),
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		roots = append(roots, filepath.Join(home, ".agents", "skills"))
-	}
-	return roots
-}
-
-func findManifests(base string) []string {
-	if !directoryExists(base) {
-		return nil
-	}
-	var manifests []string
-	_ = filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if entry.IsDir() {
-			if path != base && (entry.Name() == "node_modules" || entry.Name() == ".git" || strings.HasPrefix(entry.Name(), ".")) {
-				return fs.SkipDir
-			}
-			rel, _ := filepath.Rel(base, path)
-			if rel != "." && strings.Count(rel, string(os.PathSeparator)) > 6 {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if entry.Name() == "package.json" {
-			manifests = append(manifests, path)
-		}
-		return nil
-	})
-	sort.Strings(manifests)
-	return manifests
-}
-
-func findPotentialPackageRoots(base string) []string {
-	if !strings.Contains(filepath.ToSlash(base), "/node_modules") || !directoryExists(base) {
-		return nil
-	}
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return nil
-	}
-	var roots []string
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		path := filepath.Join(base, entry.Name())
-		if strings.HasPrefix(entry.Name(), "@") {
-			children, _ := os.ReadDir(path)
-			for _, child := range children {
-				if child.IsDir() && !strings.HasPrefix(child.Name(), ".") {
-					roots = append(roots, filepath.Join(path, child.Name()))
-				}
-			}
-			continue
-		}
-		roots = append(roots, path)
-	}
-	return roots
 }
 
 func inspectPackage(path string, sources map[string]sourceInfo) (Package, string, bool) {
@@ -462,6 +388,22 @@ func mergePackage(left, right Package) Package {
 		left.Homepage = right.Homepage
 	}
 	return left
+}
+
+func configuredPackagePath(root string, source sourceInfo) (string, bool) {
+	if path, ok := localSourcePath(source.spec, source.baseDir); ok {
+		return path, true
+	}
+	canonical := canonicalSource(source.spec, source.baseDir)
+	if strings.HasPrefix(canonical, "npm:") {
+		name := strings.TrimPrefix(canonical, "npm:")
+		return filepath.Join(root, "npm", "node_modules", filepath.FromSlash(name)), true
+	}
+	if strings.HasPrefix(canonical, "git:") {
+		name := strings.TrimPrefix(canonical, "git:")
+		return filepath.Join(root, "git", filepath.FromSlash(name)), true
+	}
+	return "", false
 }
 
 func localSourcePath(spec, baseDir string) (string, bool) {

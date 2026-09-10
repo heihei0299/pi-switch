@@ -17,9 +17,15 @@ func writePiManifest(t *testing.T, root, manifest string) {
 	}
 }
 
-func TestDiscoverPackagesScansManagedRootWithoutSettings(t *testing.T) {
+func TestDiscoverPackagesImportsConfiguredPackageFromManagedRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".pi", "agent")
 	t.Setenv("PI_AGENT_ROOT", root)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"packages":["npm:demo-pi"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	pkgRoot := filepath.Join(root, "npm", "node_modules", "demo-pi")
 	writePiManifest(t, pkgRoot, `{"name":"demo-pi","version":"1.2.3","description":"demo","pi":{"extensions":["./extensions/index.ts"],"skills":["./skills"]}}`)
 
@@ -59,11 +65,35 @@ func TestDiscoverPackagesRespectsAutoloadAndDeduplicatesIdentity(t *testing.T) {
 	}
 }
 
+func TestDiscoverPackagesUsesSettingsAsPackageRegistry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".pi", "agent")
+	t.Setenv("PI_AGENT_ROOT", root)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"packages":["npm:configured"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writePiManifest(t, filepath.Join(root, "npm", "node_modules", "configured"), `{"name":"configured","version":"1.0.0","pi":{"extensions":["./index.ts"]}}`)
+	writePiManifest(t, filepath.Join(root, "npm", "node_modules", "transitive-dependency"), `{"name":"transitive-dependency","version":"9.9.9","pi":{"extensions":["./index.ts"]}}`)
+
+	result, err := DiscoverPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 || result.Packages[0].ID != "npm:configured" {
+		t.Fatalf("settings registry was not authoritative: %+v", result)
+	}
+}
+
 func TestDiscoverPackagesDistinguishesMissingManifestAndMissingRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".pi", "agent")
 	t.Setenv("PI_AGENT_ROOT", root)
 	missing := filepath.Join(root, "npm", "node_modules", "missing-manifest")
 	if err := os.MkdirAll(missing, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"packages":["npm:missing-manifest"]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	result, err := DiscoverPackages()
@@ -87,6 +117,12 @@ func TestDiscoverPackagesDistinguishesMissingManifestAndMissingRoot(t *testing.T
 func TestDiscoverPackagesStoresNormalizedManifest(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".pi", "agent")
 	t.Setenv("PI_AGENT_ROOT", root)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"packages":["git:github.com/user/demo"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	pkgRoot := filepath.Join(root, "git", "github.com", "user", "demo")
 	writePiManifest(t, pkgRoot, `{"name":"demo","version":"0.1.0","pi":{"themes":["./themes"]}}`)
 
@@ -103,5 +139,21 @@ func TestDiscoverPackagesStoresNormalizedManifest(t *testing.T) {
 	}
 	if manifest["name"] != "demo" {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+}
+
+func TestDiscoverPackagesDoesNotGuessNodeModulesWithoutSettings(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".pi", "agent")
+	t.Setenv("PI_AGENT_ROOT", root)
+	for _, name := range []string{"active-looking", "transitive-a", "transitive-b"} {
+		writePiManifest(t, filepath.Join(root, "npm", "node_modules", name), `{"name":"`+name+`","version":"1.0.0","pi":{"extensions":["./index.ts"]}}`)
+	}
+
+	result, err := DiscoverPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusNotFound || result.OK || result.Count != 0 {
+		t.Fatalf("missing settings must not import guessed packages: %+v", result)
 	}
 }
