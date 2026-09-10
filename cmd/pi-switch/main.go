@@ -46,7 +46,6 @@ Commands:
   webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] | use <name> | delete <name>
-            fetch-models is not wired to the CLI yet
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
@@ -382,7 +381,7 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|use|delete> [name]")
+		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|fetch-models|use|delete> [name]")
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -452,6 +451,23 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		fmt.Printf("%s: %s (%dms)\n", args[1], message, ms)
+	case "fetch-models":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "provider fetch-models <name> required")
+			return 1
+		}
+		prof, ok := cfg.Profiles[args[1]]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
+			return 1
+		}
+		ids, lastErr := server.FetchUpstreamModelIDs(prof)
+		if lastErr != "" {
+			fmt.Fprintf(os.Stderr, "provider fetch-models %s: %s\n", args[1], lastErr)
+			return 1
+		}
+		b, _ := json.Marshal(map[string]interface{}{"models": ids})
+		fmt.Println(string(b))
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")

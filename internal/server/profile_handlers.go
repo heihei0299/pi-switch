@@ -378,6 +378,15 @@ func handleDuplicateProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
+// FetchUpstreamModelIDs lists the models a profile's primary upstream reports.
+// It is the read-only half of POST /api/profiles/:name/fetch-models (the handler
+// additionally enriches and persists for channel-directed fetches) and the whole
+// of `pi-switch provider fetch-models`. Returns a human-readable reason instead
+// of an error so callers can surface it as their own kind of failure.
+func FetchUpstreamModelIDs(prof config.ProviderProfile) ([]string, string) {
+	return fetchUpstreamIDs(prof.PrimaryBaseURL(), prof.PrimaryAPIKey(), nil)
+}
+
 // TestProfileUpstream performs the read-only upstream probe behind
 // POST /api/profiles/:name/test and `pi-switch provider test`: it GETs the
 // smallest models endpoint, never writes, and never touches request stats.
