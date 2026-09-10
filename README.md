@@ -297,7 +297,7 @@ pi-switch/
 **Config files:**
 - `~/.pi-switch/config.json` — profiles and proxy settings
 - `~/.pi-switch/requests.db` — SQLite (modernc) per-request log (status, latency, token usage, cost, conversation) — zero-migration from old requests.log + .db
-- `~/.pi-switch/backups/` — timestamped auto-backups on every mutation
+- `~/.pi-switch/backups/` — timestamped backups written by the legacy JS implementation; **the Go build has no backup implementation** (`GET /api/backups` and config export/import/restore all answer 501)
 - `~/.pi/agent/models.json` — pi's provider registry (pi-switch writes at most the fixed `pi-switch-res` and `pi-switch-chat` providers)
 
 For the WebUI's thin-adapter architecture, the 4-step recipe for adding operations, and the REST ↔ core map, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — that guide is the thick reference; this README stays thin.

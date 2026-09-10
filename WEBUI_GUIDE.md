@@ -96,9 +96,14 @@ npm run dev:webui        # http://localhost:43111
 ## Security
 
 - **Loopback binds run open** (`127.0.0.1`/`localhost`/`::1`) — intended for local use.
-- **Non-loopback binds require HTTP Basic auth** (user `admin`). A password is
-  auto-generated on first start and stored in `~/.pi-switch/webui_password`; the
-  browser prompts for it natively.
+- **Non-loopback binds require HTTP Basic auth** (user `admin`). The password is
+  read from `~/.pi-switch/webui_password` (0600) or `PI_SWITCH_WEBUI_PASSWORD`.
+  Without one, startup is **refused** rather than silently served: either create
+  the file, export the variable, or pass `--generate-password` to have a random
+  one written to that path and printed once. The browser prompts for it natively.
+- **The bind address decides this, not `config.json`.** `--host` (including an
+  empty `--host ""`, which binds every interface) is the only input the guard
+  trusts; `settings.web.host` is not consulted.
 - For public exposure, put the server behind a TLS reverse proxy (Nginx/Caddy/Cloudflare).
 
 ---

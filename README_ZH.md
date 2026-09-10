@@ -293,7 +293,7 @@ pi-switch/
 **配置文件：**
 - `~/.pi-switch/config.json` — profiles、代理设置、故障转移链
 - `~/.pi-switch/requests.db` — SQLite（modernc）按请求日志（状态、延迟、token 使用量、消费、对话）— 从旧 requests.log + .db 零迁移
-- `~/.pi-switch/backups/` — 每次修改自动生成带时间戳的备份
+- `~/.pi-switch/backups/` — 旧 JS 实现写入的带时间戳备份；**Go 版本没有任何备份实现**（`GET /api/backups` 与 config 导出/导入/恢复均返回 501）
 - `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 写入单个网关 provider）
 
 WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — 该指南是厚参考，本 README 保持轻量。
