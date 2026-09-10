@@ -91,12 +91,14 @@ pi-switch doctor                # Run environment diagnostics
 
 ```bash
 # Provider management (CLI)
-pi-switch provider add <name> [--preset <id>] [--api-key <key>]
 pi-switch provider list
 pi-switch provider show <name>
+pi-switch provider add <name> [--preset <id>] [--api-key <key>] [--base-url <url>] [--api <kind>] [--models <id,id>]
+pi-switch provider duplicate <name> --as <new>
+pi-switch provider test <name>                     # Probe the upstream (read-only)
+pi-switch provider fetch-models <name>             # List the models the upstream reports
+pi-switch provider use <name>
 pi-switch provider delete <name>
-pi-switch provider expose <name> <model-ids...>    # Expose models to pi agent
-pi-switch provider fetch-models <name>             # Fetch models from API
 
 # In WebUI: Profiles → + Add profile → Edit → Expose
 
@@ -215,7 +217,7 @@ _TUI: `Profiles → a → fill form → Ctrl+S` still works as a terminal altern
 **2. Expose models to pi agent** — WebUI: `Profiles → select provider → Models → check → Save` (writes only `~/.pi-switch/config.json`); or CLI:
 
 ```bash
-pi-switch provider expose provider-a gpt-5.4
+pi-switch provider expose provider-a gpt-5.4 --channel main
 ```
 
 **2.5 Publish to Pi** — Gateway explicitly writes at most two fixed providers: `pi-switch-res` (Responses) and `pi-switch-chat` (Chat). Models are aggregated by their exposed Channel API contract.
@@ -301,7 +303,7 @@ In pi, open `/model`, select the published `pi-switch-res` or `pi-switch-chat` p
 
 To add more models, expose them in WebUI (`Profiles → select provider → Models`) or via CLI:
 ```bash
-pi-switch provider expose <name> <model-id>...
+pi-switch provider expose <name> <model-id>... --channel <channel>
 ```
 
 </details>
@@ -329,7 +331,7 @@ The proxy publishes two fixed providers: `pi-switch-res` for Responses models an
 
 ```bash
 # 1. Expose models (per channel)
-pi-switch provider expose provider-a gpt-5.4
+pi-switch provider expose provider-a gpt-5.4 --channel main
 pi-switch provider expose provider-b gpt-5.4
 
 # 2. Start proxy daemon

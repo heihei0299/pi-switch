@@ -95,7 +95,7 @@ pi-switch provider add <名称> [--preset <id>] [--api-key <key>]
 pi-switch provider list
 pi-switch provider show <名称>
 pi-switch provider delete <名称>
-pi-switch provider expose <名称> <model-ids...>    # 暴露模型到 pi agent
+pi-switch provider expose <名称> <model-ids...> --channel main    # 暴露模型到 pi agent
 pi-switch provider fetch-models <名称>             # 从 API 抓取模型列表
 
 # WebUI：Profiles → + Add profile → Edit → Expose
@@ -219,7 +219,7 @@ _TUI：`Profiles → a → 填写表单 → Ctrl+S` 仍作为终端备选。_
 **2. 暴露模型到 pi agent** — WebUI：`Profiles → 选择 provider → Models → 勾选 → Save`（仅写 `~/.pi-switch/config.json`）；或 CLI：
 
 ```bash
-pi-switch provider expose provider-a gpt-5.4
+pi-switch provider expose provider-a gpt-5.4 --channel main
 ```
 
 **2.5 发布到 Pi** — WebUI：`Gateway → Current vs Proposed → Apply to Pi`（显式发布，展示差异并支持回滚）；或 `PUT /api/models/gateway`。供应商与网关隔离保证 Profiles 的修改不会自动覆写 `~/.pi/agent/models.json`，必须显式发布。
@@ -297,7 +297,7 @@ WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心�
 
 要添加更多模型，在 WebUI 中暴露（`Profiles → 选择 provider → Models`）或使用 CLI：
 ```bash
-pi-switch provider expose <名称> <model-id>...
+pi-switch provider expose <名称> <model-id>... --channel <渠道> --channel main
 ```
 
 </details>
@@ -325,8 +325,8 @@ pi-switch provider expose <名称> <model-id>...
 
 ```bash
 # 1. 暴露模型（按 profile）
-pi-switch provider expose provider-a gpt-5.4
-pi-switch provider expose provider-b gpt-5.4
+pi-switch provider expose provider-a gpt-5.4 --channel main
+pi-switch provider expose provider-b gpt-5.4 --channel main
 
 # 2. （故障转移已移除）
 

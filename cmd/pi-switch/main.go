@@ -322,6 +322,17 @@ type providerAddFlags struct {
 	apiKey  string
 	baseURL string
 	api     string
+	models  []string
+}
+
+// modelEntries turns CLI model ids into the config shape; context/maxTokens are
+// left to the catalog enricher (same as the WebUI, where a bare id is normal).
+func modelEntries(ids []string) []config.ModelEntry {
+	out := make([]config.ModelEntry, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, config.ModelEntry{ID: id})
+	}
+	return out
 }
 
 // parseProviderAddArgs expects exactly one positional name; unknown flags are
@@ -363,6 +374,16 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 				return "", flags, err
 			}
 			flags.api = v
+		case "--models":
+			v, err := takeValue()
+			if err != nil {
+				return "", flags, err
+			}
+			for _, id := range strings.Split(v, ",") {
+				if id = strings.TrimSpace(id); id != "" {
+					flags.models = append(flags.models, id)
+				}
+			}
 		default:
 			if strings.HasPrefix(a, "-") {
 				return "", flags, fmt.Errorf("provider add: unknown flag %q", a)
@@ -381,7 +402,7 @@ func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
 
 func handleProvider(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|fetch-models|use|delete> [name]")
+		fmt.Println("Usage: pi-switch provider <list|show|add|duplicate|test|fetch-models|expose|use|delete> [name]")
 		return 0
 	}
 	cfgPath := config.ResolvePath()
@@ -409,6 +430,20 @@ func handleProvider(args []string) int {
 		prof := config.ProviderProfile{API: flags.api, BaseURL: flags.baseURL, APIKey: flags.apiKey}
 		if flags.preset != "" {
 			prof.Preset = &flags.preset
+		}
+		// 顶层 baseUrl 不构成可路由的渠道：路由与 expose 都以 upstreams[] 为单位。
+		// 给了 --base-url 就同时建一个名为 main 的渠道，使新增的供应商立刻可用
+		// （fetch-models/expose 都需要渠道）。
+		if flags.baseURL != "" {
+			channel := "main"
+			prof.Upstreams = []config.Upstream{{
+				Name:          &channel,
+				API:           flags.api,
+				BaseURL:       flags.baseURL,
+				APIKey:        flags.apiKey,
+				Models:        modelEntries(flags.models),
+				ExposedModels: []string{},
+			}}
 		}
 		if err := server.CreateProfile(name, prof); err != nil {
 			fmt.Fprintf(os.Stderr, "provider add failed: %v\n", err)
@@ -468,6 +503,41 @@ func handleProvider(args []string) int {
 		}
 		b, _ := json.Marshal(map[string]interface{}{"models": ids})
 		fmt.Println(string(b))
+	case "expose":
+		// README 一直写着 `provider expose <name> <model-id>...`，此处按该形态接线；
+		// 服务端要求渠道显式指定，故新增 --channel（默认取第一个渠道的语义见下）。
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "provider expose <name> <model-id>... --channel <channel> required")
+			return 1
+		}
+		channel := ""
+		var ids []string
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--channel" && i+1 < len(args) {
+				channel = args[i+1]
+				i++
+				continue
+			}
+			ids = append(ids, args[i])
+		}
+		prof, ok := cfg.Profiles[args[1]]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
+			return 1
+		}
+		if channel == "" && len(prof.Upstreams) == 1 {
+			// 单渠道 profile 无需显式指定，按唯一渠道推断；多渠道时要求显式。
+			channel = prof.ChannelName(0)
+		}
+		if channel == "" {
+			fmt.Fprintln(os.Stderr, "provider expose: --channel <channel> required (profile has multiple channels)")
+			return 1
+		}
+		if err := server.SetExposedModels(args[1], channel, ids); err != nil {
+			fmt.Fprintf(os.Stderr, "provider expose failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Exposed %d model(s) on %s/%s\n", len(ids), args[1], channel)
 	case "show":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "provider show <name> required")

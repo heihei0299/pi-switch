@@ -826,6 +826,38 @@ func handlePutModels(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true, "backup": nil, "enrich": gin.H{"enriched": 0}})
 }
 
+// SetExposedModels replaces the exposed model list of one channel. It is the
+// single implementation behind PUT /api/profiles/:name/expose and
+// `pi-switch provider expose`, and it refuses to expose an id that the channel
+// does not actually carry (which would make routing claim a model it cannot
+// serve).
+func SetExposedModels(name, channel string, modelIDs []string) error {
+	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		return fmt.Errorf("profile %q not found", name)
+	}
+	if channel == "" {
+		return errors.New("channel is required")
+	}
+	idx := ensureMutationChannel(&prof, channel)
+	if idx < 0 {
+		return fmt.Errorf("unknown channel %q", channel)
+	}
+	seen := map[string]bool{}
+	for _, m := range prof.Upstreams[idx].Models {
+		seen[m.ID] = true
+	}
+	for _, eid := range modelIDs {
+		if !seen[eid] {
+			return fmt.Errorf("exposedModels references unknown model %q in channel %q", eid, channel)
+		}
+	}
+	prof.Upstreams[idx].ExposedModels = modelIDs
+	cfg.Profiles[name] = prof
+	return saveConfig(cfg)
+}
+
 func handlePutExpose(c *gin.Context) {
 	name := c.Param("name")
 	var body struct {
@@ -833,36 +865,17 @@ func handlePutExpose(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
+	// prof 由 SetExposedModels 内部加载，handler 只负责取 channel 与映射错误。
 	channel := c.Query("channel")
-	if channel == "" {
-		c.JSON(400, gin.H{"error": "channel is required"})
-		return
-	}
-	idx := ensureMutationChannel(&prof, channel)
-	if idx < 0 {
-		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", channel)})
-		return
-	}
-	seen := map[string]bool{}
-	for _, m := range prof.Upstreams[idx].Models {
-		seen[m.ID] = true
-	}
-	for _, eid := range body.ModelIds {
-		if !seen[eid] {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("exposedModels references unknown model %q in channel %q", eid, channel)})
-			return
+	if err := SetExposedModels(name, channel, body.ModelIds); err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			c.JSON(404, gin.H{"error": "not found"})
+		case isPersistError(err):
+			c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
+		default:
+			c.JSON(400, gin.H{"error": err.Error()})
 		}
-	}
-	prof.Upstreams[idx].ExposedModels = body.ModelIds
-	cfg.Profiles[name] = prof
-	if err := saveConfig(cfg); err != nil {
-		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
