@@ -292,6 +292,28 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     expect(allIds).not.toContain("ghost/x");
   });
 
+  it("rejects publishing an empty selection when no gateway model is published", async () => {
+    const preview = {
+      ...groupedPreview,
+      current: {},
+      pending_count: 2,
+      diff: { added: ["sup/main/m1", "sup/bk/b1"], removed: [], changed: [] },
+      groups: groupedPreview.groups.map((group) => ({
+        ...group,
+        models: group.models.map((model) => ({ ...model, status: "pending" as const })),
+      })),
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue(preview as any);
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    renderGateway();
+
+    await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
+
+    await waitFor(() => expect(screen.getByText("请先勾选至少一个模型")).toBeInTheDocument());
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it("subset pending follows the selection", async () => {
     renderGrouped();
     await waitFor(() => expect(screen.getByText("sup / bk")).toBeInTheDocument());

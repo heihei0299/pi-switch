@@ -233,6 +233,14 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         throw new Error(rawValidation.error ?? "Invalid JSON");
       }
       const selection = !rawDraftDirty && groups.length > 0 ? checked : undefined;
+      const hasCurrentGatewayModels = Object.entries(current ?? {}).some(([providerKey, entry]) => {
+        if (providerKey !== "pi-switch-res" && providerKey !== "pi-switch-chat") return false;
+        const models = asRecord(entry).models;
+        return Array.isArray(models) && models.length > 0;
+      });
+      if (selection && selection.size === 0 && groups.some((group) => group.models.length > 0) && !hasCurrentGatewayModels) {
+        throw new Error("请先勾选至少一个模型");
+      }
       const draft = !rawDraftDirty && proposedDraft
         ? { providers: proposedDraft }
         : rawValidation.value;
