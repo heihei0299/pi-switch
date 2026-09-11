@@ -157,7 +157,7 @@ pi-switch stats                                     # Not implemented — exits 
 | 🖥️ **TUI (secondary)** | charmbracelet/bubbletea + lipgloss + bubbles — profile list/switch, gateway publish, stats (totalCost ` - ` / `$0.00` / `$1.2K`), full parity with WebUI/CLI |
 | 🌐 **Bilingual** | English / 中文, persisted to config, toggle in Settings |
 | 📊 **Usage Stats** | Per-provider, per-model request metrics & latency; four-dimension token totals (input/output/cached/reasoning), cache hit rate, time-window queries (today/24h/7d/custom), per-conversation breakdown — see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) for the data model |
-| 💾 **Backup & Sync** | Auto-backup on mutation, AES-256-CBC encrypted export/import |
+| 💾 **Backup & Sync** | **Not implemented**: no auto-backup, and config export/import/restore answer 501 (only the legacy JS layer under `legacy/` has a reference implementation) |
 | 🩺 **Diagnostics** | `doctor` command checks config, models.json, structure |
 
 ---
@@ -275,6 +275,8 @@ pi-switch/
 ├── internal/
 │   ├── config/              # Config load/save, types, per-request hot reload, v1→v2 migration
 │   ├── gateway/             # Gateway publish (models.json: fixed pi-switch-res/pi-switch-chat providers)
+│   ├── profile/             # Shared supplier business (Create/Duplicate/FetchModels/Expose/Test) for HTTP + CLI
+│   ├── protocol/            # API identities + capabilities (IsKnown/CanProxy/CanGateway, responsesMode rule)
 │   ├── proxy/               # Proxy helpers (cost, limit clamp)
 │   ├── limit/               # contextWindow/maxTokens clamp (est=ceil(jsonLen/4), reserve 4096)
 │   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses conversion (native/convert via responsesMode)

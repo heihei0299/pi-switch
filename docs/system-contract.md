@@ -121,6 +121,7 @@
 | conflict/validation 非空时零写入 | §2.3 conflict | IMP-05 | failure atomicity tests | 冲突前后 models.json 字节不变 |
 | 同一 canonical plan 连续 publish 幂等 | §2.3 idempotency | IMP-05 | golden/idempotency tests | 第二次 publish 后 `pending_count=0` |
 | responsesMode 只按声明 api 决定 passthrough/convert | §2.4.1/2 | IMP-04 | table-driven PlanRequest tests | Responses/Chat provider 实际 endpoint 与事件语义一致 |
+| responsesMode 规则与 API 能力只有一份 `internal/protocol`，WebUI 从 `/api/state` 读取 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol 规则用例 + WebUI fixture parity 用例 | `/api/state.protocol.apis` 实际驱动下拉与校验 |
 | 不兼容组合发送 upstream 前失败，不探测/降级/failover | §2.4.3 | IMP-04 | preflight rejection tests | upstream 捕获不到不兼容请求，客户端得到明确错误 |
 | 三个 max key、/3、encrypted compensation、safety、16 floor、maxTokens 只有一套 | §2.4.4/5；§2.4.6 | IMP-02 | limit/server retry/stream tests | 长会话真实 upstream 不触发已知 context 400 |
 | 首次、stream、retry 共享 URL/header/affinity/UA builder | §2.4.4；追踪矩阵 outbound | IMP-03 | httptest 完整 header 比较 | opencode.ai 实际收到 affinity、UA、channel headers |
@@ -137,6 +138,8 @@
 | spawn 后先保存真实 PID，health 失败 kill 并清理 | §2.7.2 | 后续 IMP-13 | process lifecycle tests | PID 文件 PID 等于真实子进程，失败无残留 |
 | PID 文件不是 running 证明，stop 幂等且不误杀 | §2.7.3/5 | 后续 IMP-13 | stale PID/port conflict tests | stale、重复 stop、端口冲突实际结果正确 |
 | 固定 pid 文件只支持一个受管 Proxy/WebUI，多实例明确提示 | §2.7.4 | 后续 IMP-13 | multiple-listener tests | Status 提示 unmanaged/multiple listener |
+
+| HTTP 错误信封按面固定：管理面 `{"error": string}`，推理面 OpenAI 对象（含 401/404/panic） | §2.8 | 后续 IMP-14 | 管理/推理信封 contract tests | 真实 401/404/500 响应体形状 |
 
 ## 4. 变更纪律
 

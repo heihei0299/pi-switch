@@ -107,11 +107,15 @@ CanGateway(...)
 
 第一阶段完成后应满足：
 
-- [ ] Config 错误不再被当成默认配置。
-- [ ] `config.json` 新建权限为 0600。
-- [ ] Config 保存只有一个实现。
-- [ ] Gateway Generated / Draft 语义显式。
-- [ ] CLI / TUI / WebUI Generated Gateway 行为一致。
-- [ ] TUI 不直接访问 SQLite。
+- [x] Config 错误不再被当成默认配置。
+- [x] `config.json` 新建权限为 0600。
+- [x] Config 保存只有一个实现。
+- [x] Gateway Generated / Draft 语义显式。
+- [x] CLI / TUI / WebUI Generated Gateway 行为一致。
+- [x] TUI 不直接访问 SQLite。
 
 达到以上状态后先复评，再决定是否继续 Profile / Protocol 收敛。
+
+复评已完成：六条完成标准全部满足（见 `docs/maintainability-plan.md` 的第一检查点）。
+Profile / Protocol 收敛随后作为 ARCH-07/08 执行，并额外完成两轴 review 驱动的
+「HTTP 错误信封」（§2.8）与「responsesMode / API 能力单一来源」两项。

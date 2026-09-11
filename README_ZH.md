@@ -145,16 +145,16 @@ pi-switch stats                                     # 未实现——退出码�
 | 分类 | 亮点 |
 |------|------|
 | 🌐 **WebUI（主界面）** | 浏览器控制面板 `http://127.0.0.1:43110` — Profiles 增删改查、Gateway `Current vs Proposed` 差异与 `Apply to Pi`、Proxy 启停、Stats 仪表（时间窗口/自动刷新）、Packages、Settings、Doctor。Daemon 托管（独立 pid/log/port），本地回环免认证、非回环 Basic 认证。 |
-| 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、暴露到 pi agent、配置 Responses API 透传/转换模式 |
+| 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、**多渠道**（`upstreams[]` 含 api/baseUrl/apiKey/headers/weight/name，每条渠道拥有自己的 `models`/`exposedModels` 分区）、按渠道 fetch/expose、网关发布与二级模型选择、配置 Responses API 透传/转换模式 |
 | ⇥ **cc-switch 导入** | **未实现**：Go 版本没有该能力，CLI/TUI/WebUI 均无入口，相关端点返回 501 |
 | 💡 **内置预设** | OpenRouter、Anthropic、DeepSeek、SiliconFlow、OpenAI — 一键创建配置 |
-| 🌉 **模型名网关** | 无状态按 `profile/model` 路由、SSE 流式、User-Agent 伪装、请求体过滤、OpenAI ↔ Anthropic 转换、Responses ↔ Chat Completions 转换（含 function tools）、原生 OpenAI Responses 透传、故障转移、断路器 |
+| 🌉 **模型名网关** | **独立**进程/插件 — Profiles 只写本地配置，Gateway 通过 `Current vs Proposed` 预览与 `Apply to Pi` 显式把最多两个固定 provider（`pi-switch-res` / `pi-switch-chat`）发布到 `~/.pi/agent/models.json`；无状态裸模型名路由、SSE 流式、User-Agent 伪装、OpenAI ↔ Anthropic 与 Responses ↔ Chat Completions 转换、断路器 |
 | 🗂️ **模型目录** | 用 https://models.dev 快照补齐缺失模型元数据（cost/limit/reasoning/input/name），缓存在 `~/.pi-switch/cache/models-dev.json`（24h TTL，过期降级告警）：拉取时按 profile 的 `modelsDevProvider` 映射 enrich，网关预览/发布时只补缺失（已有值优先，不写回池，重名跳过） |
 | 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |
 | 🖥️ **TUI（次要）** | charmbracelet/bubbletea + lipgloss + bubbles — profile 列表/切换、网关发布、统计（totalCost `-` / `$0.00` / `$1.2K`），与 WebUI/CLI 全量对齐 |
 | 🌐 **双语支持** | English / 中文，持久化到配置，Settings 中切换 |
 | 📊 **使用统计** | 按 provider、按模型的请求指标与延迟；四维度 token 总量（输入/输出/缓存/推理）、缓存命中率、时间窗口查询（当天/24h/7 天/自定义）、按对话统计 — 数据模型见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) |
-| 💾 **备份与同步** | 每次修改自动备份、AES-256-CBC 加密导出/导入 |
+| 💾 **备份与同步** | **未实现**：不做自动备份，config 导出/导入/恢复均为 501（仅 `legacy/` 下的旧 JS 实现可参考） |
 | 🩺 **诊断工具** | `doctor` 命令检查配置、models.json、结构完整性 |
 
 ---
@@ -186,18 +186,14 @@ graph LR
     subgraph Setup["⚙️ 配置阶段"]
         A[添加 Provider] --> B[配置模型]
         B --> C[暴露给 Pi]
-        C --> D[设置故障转移链]
     end
 
     subgraph Runtime["🚀 运行阶段"]
-        E["请求<br/>model: provider-a/gpt-5.4"] --> F{解析路由}
-        F --> G[尝试 provider-a]
+        E["请求<br/>model: gpt-5.4"] --> F{解析路由}
+        F --> G[定位唯一暴露的渠道]
         G --> H{成功？}
         H -->|✓| I[响应]
-        H -->|✗ 429/5xx| J[尝试 provider-b]
-        J --> K{成功？}
-        K -->|✓| I
-        K -->|✗| L[断路器]
+        H -->|✗| L[错误透传]
         L --> M[60s 冷却]
         M --> N[半开探测]
         N -->|✓| G
@@ -229,32 +225,41 @@ _TUI：`Profiles → a → 填写表单 → Ctrl+S` 仍作为终端备选。_
 pi-switch provider expose provider-a gpt-5.4 --channel main
 ```
 
-**2.5 发布到 Pi** — WebUI：`Gateway → Current vs Proposed → Apply to Pi`（显式发布，展示差异并支持回滚）；或 `PUT /api/models/gateway`。供应商与网关隔离保证 Profiles 的修改不会自动覆写 `~/.pi/agent/models.json`，必须显式发布。
+**2.5 发布到 Pi** — Gateway 显式写入最多两个固定 provider：`pi-switch-res`（Responses）与 `pi-switch-chat`（Chat）。模型按暴露渠道的 API contract 聚合。
 
-**3. 启动代理** — 读取已发布的 `pi-switch` 网关 provider：
+```bash
+# WebUI：Gateway → Current vs Proposed → Apply to Pi
+# 或通过 API：PUT /api/models/gateway
+```
+
+WebUI 里是 `Gateway → Apply to Pi`（展示 pending 差异，支持回滚）。供应商与网关隔离保证 Profiles 的修改绝不自动写入 `~/.pi/agent/models.json` — 必须显式发布。
+
+**3. 启动代理** — 读取已发布的固定网关 provider
 
 ```bash
 pi-switch proxy start --daemon
 ```
 
-_WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）_
+_WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）。_
 
-**4. 在 pi 中使用** — 选择 `pi-switch` provider，然后选 `provider-a/gpt-5.4` 这样的模型
+**4. 在 pi 中使用** — Responses 模型选 `pi-switch-res`，Chat 模型选 `pi-switch-chat`，再挑一个裸模型 ID（如 `gpt-5.4`）
 
 ### 网关路由原理
 
-请求按 body 中的模型名路由 — 无需额外状态，没有"当前目标"概念：
+请求按 body 中的模型名路由 — 无带外状态，没有"当前目标"概念：
 
-- **模型名路由** — `"model": "provider-a/gpt-5.4"` 解析为 profile `provider-a`、真实模型 `gpt-5.4`；转发前代理将 body.model 改回真实 ID
-- **渠道精确路由** — 已分区供应商的模型形如 `provider-a/main/gpt-5.4`（`供应商/渠道/模型`），精确打到该渠道凭证，不跨供应商 failover
-- **单个网关 provider** — pi 只看到一个 `pi-switch` provider，下面列出所有暴露模型（未分区格式 `profile/真实模型ID`，已分区格式 `profile/渠道/真实模型ID`）；在 pi 中切换模型 = 发送不同的 model 字符串 = 即时路由切换
-- **自动故障转移** — 429/5xx 或网络错误时，按配置链进行同模型 fallback
-- **断路器保护** — 连续 3 次失败后进入 60s 冷却，半开探测成功后自动恢复
-- **流式（SSE）** — 同格式请求（openai→openai、anthropic→anthropic）逐字流式转发；保留上游响应头（Content-Type 等）
+- **裸模型名路由** — `"model": "gpt-5.4"` 解析到唯一暴露它的供应商/渠道；重复暴露的裸 ID 会被网关校验拒绝，无法消歧时返回 ambiguity 错误
+- **固定网关 provider** — pi 最多看到 `pi-switch-res` 与 `pi-switch-chat`，模型列表按渠道 API contract 聚合
+- **网关校验** — 不支持的渠道 API 在预览中给出 diagnostic 并跳过；重复暴露的裸 ID 与额外使用 `pi-switch-proxy` 的 provider 会被原子拒绝，第三方 provider 原样保留
+- **旧 provider 迁移** — 首次固定 provider 发布会移除旧的 pi-switch Supplier/Channel 条目、迁移唯一归属的模型级字段、优先保留已有固定 provider 编辑，并保留第三方 provider
+- **来源路由** — 代理保存 Supplier/Channel 凭证，把每个裸模型 id 路由到唯一暴露的来源
+- **断路器** — 连续 3 次失败后进入 60s 冷却，半开探测成功后自动恢复
+- **流式（SSE）** — 同格式请求（openai→openai、anthropic→anthropic）逐字流式；Responses↔Chat 跨格式路由也支持（双向转换）；保留上游响应头（Content-Type 等）
 - **OpenAI ↔ Anthropic** — 自动在 chat completions 和 messages API 间转换
-- **User-Agent 伪装** — 内置 Claude Code / Codex / Gemini 预设，发送对应客户端的真实 User-Agent（及 `anthropic-beta` 等头）以通过上游客户端校验；支持全局或按 profile 设置
+- **User-Agent 伪装** — 内置 Claude Code / Codex / Gemini 预设发送对应客户端的真实 User-Agent（及 `anthropic-beta` 等头）以通过上游客户端校验；支持全局或按 profile 设置
 
 > **已知限制** — OpenAI ↔ Anthropic **转换**路径无法流式：它需要解析完整 JSON 来转换格式。如果 pi 发 `stream: true` 但模型路由到跨格式上游（OpenAI 请求 → Anthropic 上游，或反之），响应会以单次非流式返回。同格式路由正常流式。
+
 
 ---
 
@@ -268,6 +273,8 @@ pi-switch/
 ├── internal/
 │   ├── config/              # 配置加载/保存、类型、per-request 热重载、v1→v2 迁移
 │   ├── gateway/             # 网关发布（models.json:providers[pi-switch]）
+│   ├── profile/             # HTTP 与 CLI 共用的供应商业务（Create/Duplicate/FetchModels/Expose/Test）
+│   ├── protocol/            # API 身份与能力（IsKnown/CanProxy/CanGateway、responsesMode 规则）
 │   ├── proxy/               # 代理辅助（cost、limit 钳制）
 │   ├── limit/               # contextWindow/maxTokens 钳制（估算=ceil(jsonLen/4)，预留 4096）
 │   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses 转换（native/convert via responsesMode）
@@ -285,10 +292,10 @@ pi-switch/
 ```
 
 **配置文件：**
-- `~/.pi-switch/config.json` — profiles、代理设置、故障转移链
+- `~/.pi-switch/config.json` — profiles、渠道/模型池、代理设置
 - `~/.pi-switch/requests.db` — SQLite（modernc）按请求日志（状态、延迟、token 使用量、消费、对话）— 从旧 requests.log + .db 零迁移
 - `~/.pi-switch/backups/` — 旧 JS 实现写入的带时间戳备份；**Go 版本没有任何备份实现**（`GET /api/backups` 与 config 导出/导入/恢复均返回 501）
-- `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 写入单个网关 provider）
+- `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 只发布固定的 `pi-switch-res` / `pi-switch-chat` provider）
 
 WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — 该指南是厚参考，本 README 保持轻量。
 
@@ -300,7 +307,7 @@ WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心�
 <summary><b>如何在 pi 中切换模型？</b></summary>
 <br>
 
-在 pi 中打开 `/model`，选择任意 `profile/model`（如 `provider-a/gpt-5.4`）。代理按每个请求的模型名路由 — 无需额外操作。
+在 pi 中打开 `/model`，选择已发布的 `pi-switch-res` 或 `pi-switch-chat` provider，再挑一个裸模型 ID（如 `gpt-5.4`）。代理按每个请求的模型名路由 — 无需额外操作。
 
 要添加更多模型，在 WebUI 中暴露（`Profiles → 选择 provider → Models`）或使用 CLI：
 ```bash
@@ -316,7 +323,7 @@ pi-switch provider expose <名称> <model-id>... --channel <渠道>
 
 `[proxy]` 徽章表示该 profile 是一个元 profile（`"proxy": true`），用于在 pi 中注册指向本地网关的 provider，不参与上游路由。
 
-在当前的网关模式下，通常不需要 proxy profile — 代理读取已发布的 `pi-switch` 网关 provider（路径 `~/.pi/agent/models.json`，需通过 **Gateway → 应用到 Pi** 显式发布，启动时不再自动写）。
+在当前的网关模式下，通常不需要 proxy profile — 代理读取发布到 `~/.pi/agent/models.json` 的固定 provider（通过 **Gateway → Apply to Pi** 显式发布，启动时不再自动写）。
 
 </details>
 
@@ -324,24 +331,22 @@ pi-switch provider expose <名称> <model-id>... --channel <渠道>
 <summary><b>网关路由如何工作？</b></summary>
 <br>
 
-代理在一个 `pi-switch` provider 下以 `profile/真实模型ID` 格式列出所有暴露模型。当 pi 发送 `"model": "provider-a/gpt-5.4"` 的请求时：
+代理发布两个固定 provider：Responses 模型走 `pi-switch-res`，Chat 模型走 `pi-switch-chat`。当 pi 发送 `"model": "gpt-5.4"` 的请求时，代理会：
 
-1. 按第一个 `/` 拆分 — profile `provider-a`，真实模型 `gpt-5.4`
-2. 路由到 `provider-a` profile 的上游，将 `body.model` 改为 `gpt-5.4`
-3. 失败（429/5xx）时直接透传错误，不进行故障转移（单候选直通）
+1. 找到唯一暴露 `gpt-5.4` 的供应商/渠道
+2. 用该渠道的凭证转发，且不改动裸模型 ID
+3. 多个渠道暴露同一裸 ID 时返回 ambiguity 错误
 
 ```bash
-# 1. 暴露模型（按 profile）
+# 1. 暴露模型（按渠道）
 pi-switch provider expose provider-a gpt-5.4 --channel main
 pi-switch provider expose provider-b gpt-5.4 --channel main
 
-# 2. （故障转移已移除）
-
-# 3. 启动代理守护进程
+# 2. 启动代理守护进程
 pi-switch proxy start --daemon
 ```
 
-在 pi 中选择 `pi-switch` provider，然后选 `provider-a/gpt-5.4`。每个请求的模型名决定路由 — 不需要管理"target"。
+在 pi 中按模型的 API contract 选择 `pi-switch-res` 或 `pi-switch-chat`，然后挑 `gpt-5.4`。每个请求的模型名决定路由 — 不需要管理"target"。
 
 </details>
 
@@ -355,23 +360,23 @@ pi-switch proxy start --daemon
 400: messages[0].role: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`
 ```
 
-**修复 — 修改 pi 的配置文件 `~/.pi/agent/models.json`**：在 `pi-switch` provider 下每个报错模型条目上加 `"compat": { "supportsDeveloperRole": false }`，pi 会改用 `system` role 发送，思考功能保留：
+**修复 — 修改 pi 的配置文件 `~/.pi/agent/models.json`**：在 `pi-switch-res` 或 `pi-switch-chat` 里对应模型条目上加 `"compat": { "supportsDeveloperRole": false }`，pi 会改用 `system` role 发送，思考功能保留：
 
 ```json
 {
-  "id": "opencode-go/deepseek-v4-flash",
+  "id": "deepseek-v4-flash",
   "reasoning": true,
   "compat": { "supportsDeveloperRole": false }
 }
 ```
 
-**注意** — 下次网页/CLI sync 会重建 `pi-switch` provider 条目，抹掉对 models.json 的手动修改。想持久化，把同样的 compat 写进 `~/.pi-switch/config.json` 对应 profile 的 models 条目（id 不带 `profile/` 前缀）即可——sync 会原样透传。
+**注意** — 下一次 Gateway 发布会重建相关的固定 provider 条目，抹掉对 models.json 的手动修改。想持久化，把同样的 compat 写进 `~/.pi-switch/config.json` 里对应的模型条目——发布会原样透传。
 
-参考 — opencode 上游的 `pi-switch` provider 条目（脱敏示例）：
+参考 — 带 opencode 上游的固定 Chat provider 条目（脱敏示例）：
 
 ```json
 {
-  "pi-switch": {
+  "pi-switch-chat": {
     "api": "openai-completions",
     "apiKey": "pi-switch-proxy",
     "baseUrl": "http://127.0.0.1:43112/v1",
@@ -380,7 +385,7 @@ pi-switch proxy start --daemon
         "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.0028, "cacheWrite": 0.0, "input": 0.14, "output": 0.28 },
-        "id": "opencode-go/deepseek-v4-flash",
+        "id": "deepseek-v4-flash",
         "input": ["text"],
         "maxTokens": 384000,
         "name": "DeepSeek V4 Flash",
@@ -391,7 +396,7 @@ pi-switch proxy start --daemon
         "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.0145, "cacheWrite": 0.0, "input": 1.74, "output": 3.48 },
-        "id": "opencode-go/deepseek-v4-pro",
+        "id": "deepseek-v4-pro",
         "input": ["text"],
         "maxTokens": 384000,
         "name": "DeepSeek V4 Pro",
@@ -401,7 +406,7 @@ pi-switch proxy start --daemon
       {
         "contextWindow": 1000000,
         "cost": { "cacheRead": 0.08, "cacheWrite": 0.0, "input": 0.4, "output": 2.0 },
-        "id": "opencode-go/mimo-v2.5",
+        "id": "mimo-v2.5",
         "input": ["text", "image"],
         "maxTokens": 1000000,
         "name": "MiMo V2.5",

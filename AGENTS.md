@@ -52,6 +52,7 @@ codegraph explore "<问题>"
 * 仅在需要用户判断或授权时中断闭环。
 ## 验证
 服从全局授权规则。
+* 编译/测试默认限并发：Go 构建走 `scripts/build-go.sh`（默认 `-p 1` + `GOMAXPROCS=2`），测试走 `scripts/test-limited.sh`（cgroup 限额 + `-p 1 -parallel 2`）；需要全速时用 `GO_BUILD_PARALLEL` / `GO_MAXPROCS` 显式放开。
 * 已授权时执行能证明本次改动正确的最小验证。
 * bug 验证原复现路径；性能问题使用可测量指标。
 * 根据验证反馈修正，不重复等价检查或自动增加 review / CI。

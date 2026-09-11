@@ -14,7 +14,9 @@
 | WebUI 管理 API | `internal/server/server.go:NewMgmtRouter` | `profile_handlers.go`、`settings_handlers.go`、`stats_handlers.go`、`package_handlers.go`、`gateway_handlers.go` |
 | Proxy 请求入口 | `internal/server/server.go:NewProxyRouter` | `proxy_handlers.go:handleChatCompletions`、`handleStream` |
 | 供应商/渠道/模型 | `internal/config/config.go:PiSwitchConfig` | `ProviderProfile`、`Upstream`、`ModelEntry` |
-| Gateway 预览与发布 | `internal/gateway/gateway.go:BuildCanonicalGatewayPlan` | `BuildProposedGatewayEntry`、`PublishPlan` |
+| Gateway 预览与发布 | `internal/gateway/gateway.go:BuildGeneratedPlan` / `BuildDraftPlan` | `BuildEnrichedGeneratedPlan`、`PublishPlan` |
+| 供应商业务（HTTP + CLI 共用） | `internal/profile/profile.go:CreateProfile` | `DuplicateProfile`、`FetchChannelModels`、`SetExposedModels`、`TestProfileUpstream` |
+| API 身份与能力 | `internal/protocol/protocol.go:Capabilities` | `IsKnown`、`CanProxy`、`CanGateway`、`ValidateResponsesMode` |
 | 协议转换 | `internal/translator/translator.go:PlanRequest` | `TransformRequest`、stream converter |
 | Token 限制 | `internal/limit/` | request body clamp |
 | 请求落库与统计 | `internal/store/`、`internal/stats/` | `logRequest`、Stats service |
@@ -39,6 +41,8 @@ flowchart TB
         Config["config"]
         Gateway["gateway"]
         Translator["translator"]
+        Profile["profile"]
+        Protocol["protocol"]
         Limit["limit"]
         Store["store / stats"]
         Catalog["catalog"]
@@ -48,9 +52,15 @@ flowchart TB
 
     Mgmt --> Config
     Mgmt --> Gateway
+    Mgmt --> Profile
     Mgmt --> Store
     Mgmt --> Catalog
     Mgmt --> PiAgent
+    Main --> Profile
+
+    Config --> Protocol
+    Gateway --> Protocol
+    Translator --> Protocol
 
     Proxy --> Config
     Proxy --> Translator
@@ -130,7 +140,8 @@ translator.PlanRequest
 
 ```text
 internal/server/server.go             kernel：路由注册、认证、静态资源、构建信息、
-                                      configPath/saveConfig/resolveModelsDevProvider
+                                      configPath/saveConfig/loadConfig
+internal/server/error_envelope.go     kernel：管理面/推理面错误信封
 ├── proxy_handlers.go                 handleChatCompletions、handleStream
 ├── profile_handlers.go               供应商/渠道/模型 profile 管理
 ├── gateway_handlers.go               gateway 预览与发布
@@ -178,7 +189,7 @@ config.json: upstream.exposedModels
 ## 4. Gateway 预览与发布入口
 
 ```go
-BuildCanonicalGatewayPlan
+BuildGeneratedPlan / BuildDraftPlan / BuildEnrichedGeneratedPlan
 ```
 
 ```text
@@ -302,3 +313,6 @@ bin/pi-switch
 4. 改上下文/输出限制：从 `internal/limit` 入手，不在各协议 handler 内分别 clamp。
 5. 改统计展示：读取 `requests.db` 的事实，不反向修改请求 row。
 6. 改 WebUI：优先经过 `webui/src/api.ts` 和 API decoder，不在组件内直接 `fetch`。
+7. 改供应商业务（Create / Duplicate / FetchModels / Expose / Test）：从 `internal/profile` 入手；HTTP handler 与 CLI 只做错误码/文案映射，不复制业务规则。
+8. 改受支持的 API 或支持能力：只改 `internal/protocol`（身份、`IsKnown` / `CanProxy` / `CanGateway`、`ValidateResponsesMode`）。WebUI 从 `GET /api/state` 的 `protocol.apis` 读取，本地只保留由 Go 测试校验的 fixture，不另写一份规则。
+9. HTTP 错误信封按面固定：管理面 `{"error":"<message>"}`，推理面 OpenAI `{"error":{"message","type"}}`；新增 handler 不得混用，契约见 `docs/system-contract.md` §2.8。

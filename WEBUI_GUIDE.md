@@ -33,9 +33,11 @@ TUI screenshot remains at `assets/main.png` for terminal reference.
 ```
                  ┌──────────── shared Go core ────────────┐
    WebUI(gin)  ─►│  server.go   (REST + reads/shaping)    │
-   CLI (node) ──►│  config.go   (ProviderProfile)         │──► ~/.pi-switch/config.json
-   TUI (go)   ──►│  gateway.go  (gateway publish)         │──► ~/.pi/agent/models.json
-                 │  proxy/      (forward/failover/limit)  │
+   CLI (node) ──►│  profile.go  (Create/Duplicate/...)    │──► ~/.pi-switch/config.json
+   TUI (go)   ──►│  config.go   (ProviderProfile)         │
+                 │  gateway.go  (gateway publish)         │──► ~/.pi/agent/models.json
+                 │  protocol.go (api identity/capability) │
+                 │  proxy/      (forward/limit)           │
                  └────────────────────────────────────────┘
         ▲                    ▲                      ▲
    webui/src           bin/pi-switch.js         internal/tui/  ← REST /api/* + embedded webui/dist
@@ -132,7 +134,7 @@ Every proxied request is appended to `~/.pi-switch/requests.log` as a JSON line.
 }
 ```
 
-Only successful (`ok: true`, not `retry`) rows with both `promptTokens` and `completionTokens` count towards token totals; failover/retry intermediate rows and old log lines without token fields are excluded gracefully.
+Only successful rows with both `promptTokens` and `completionTokens` count towards token totals; rows with partial usage and old log lines without token fields are excluded gracefully.
 
 ### WebUI dashboard
 
@@ -179,21 +181,23 @@ change only if the feature has a TUI screen.
 | `GET /api/models/gateway/preview` | `gateway::preview` (dry-run, merges hand-written extra) |
 | `PUT /api/models/gateway` | `gateway::apply` (validated write) |
 | `GET /api/doctor` · `/config/validate` | `doctor` |
-| `GET /api/backups` · `/stats` | `store::backups` · `stats` |
-| `POST /api/profiles` · `PUT /api/profiles/:name` | `config::upsert` |
+| `GET /api/backups` · `/stats` | `501 (not implemented)` · `stats` |
+| `POST /api/profiles` | `profile::create` |
+| `PUT /api/profiles/:name` | `config::upsert` |
 | `DELETE /api/profiles/:name` | `config::remove` |
-| `POST /api/profiles/:name/{duplicate,test,fetch-models}` | `config::*` |
-| `PUT /api/profiles/:name/{models,expose,spoof}` | `config::*` |
+| `POST /api/profiles/:name/{duplicate,test,fetch-models}` | `profile::*` |
+| `PUT /api/profiles/:name/models` · `/spoof` | `config::*` |
+| `PUT /api/profiles/:name/expose` | `profile::set_exposed_models` |
 | `GET /api/profiles/:name/credits` | `credits` (5s 超时, 仅主上游) |
 | `POST /api/proxy/{start,stop}` | `daemon::proxy` |
-| `PUT /api/proxy/failover` | `config::set_failover` |
+| `PUT /api/proxy/failover` | removed (410) |
 | `PUT /api/settings` | `config::update_settings` |
-| `POST /api/config/{export,import,restore}` | `sync` |
+| `POST /api/config/{export,import,restore}` | `501 (not implemented)` |
 | `POST /api/init` | `config::init` |
 
 ### Gateway explicit publish (supplier-gateway isolation)
 
-Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel` failover) only write `~/.pi-switch/config.json` and never auto-write `~/.pi/agent/models.json`. They show a toast "已保存到本地，需到网关发布" and leave `GET /api/models/gateway/preview` to reflect the pending diff.
+Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel` settings) only write `~/.pi-switch/config.json` and never auto-write `~/.pi/agent/models.json`. They show a toast "已保存到本地，需到网关发布" and leave `GET /api/models/gateway/preview` to reflect the pending diff.
 
 1. `GET /api/models/gateway/preview` — dry-run, returns `{ current, proposed, conflicts, pending_count }` without writing; `current` is the last published gateway, `proposed` is built from current `config.json`.
 2. `GatewayPanel` shows `Current vs Proposed` and `pending_count`, plus `pending`/`mismatch` banner on first load when `pending_count>0`; it does not auto-apply.
@@ -202,6 +206,25 @@ Supplier mutations (`ProfilesPanel`, `SettingsPanel`, `ModelsModal`, `ProxyPanel
 This keeps supplier as the source for supplier-owned configuration while Gateway model metadata (`name`/`reasoning`/`input`/`contextWindow`/`maxTokens`/`thinkingLevelMap`/`cost`/`headers`/`compat`/`extra`) is edited only through explicit Gateway publish; `models.json` owns those overrides.
 
 ---
+
+## API capability & responsesMode (backend-owned)
+
+The api list, each api's allowed `responsesMode` values, and its default mode come
+from `internal/protocol` and are exposed by `GET /api/state` as `protocol.apis`.
+The WebUI must not keep its own list or rule:
+
+- `webui/src/lib/protocol-capabilities.json` is the pre-fetch fallback and test
+  fixture. A Go test (`TestCapabilitiesMatchWebUIFallbackFixture`) keeps it
+  byte-identical to `protocol.Capabilities()`; change the Go side and the test
+  prints the JSON to write back.
+- `webui/src/lib/protocolCapabilities.ts` + `protocolContext.tsx` deliver the value
+  through React context; `responsesMode.ts`, `piModel.ts`, and `ProfilesPanel`
+  (api select, mode select, validation) read it.
+- Adding an api or changing a mode: edit `internal/protocol` only, then refresh the
+  fixture as the parity test instructs.
+
+Adding a new operation still follows the 4-step recipe above; the capability rule
+above is the one place that is not per-operation.
 
 ## Type sync (frontend ↔ Go)
 

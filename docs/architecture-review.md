@@ -5,6 +5,10 @@
 - **定位**：本文是评估结论与行动清单。架构导航以 `docs/architecture.md` 为准；边界不变量以 `docs/system-contract.md` 与 `docs/adr/` 为准，本文不重复定义。
 - **复审**：完成行动项或触发 §5 条件时更新。
 
+> **后续进展**：本文行动项已由 `docs/maintainability-plan.md` 的 ARCH-01～08 及其后的两轴 review 收敛项承接
+> （HTTP 错误信封契约见 `docs/system-contract.md` §2.8，responsesMode / API 能力单一下发见 `internal/protocol`
+> 与 `WEBUI_GUIDE.md`）。本文保留为 `46d8153` 基线的评估记录，其中的代码位置叙述以当时为准。
+
 ## 1. 结论
 
 **不需要全面重构。** 分层（`server → 领域包 → config` 单向无环）、事实来源分离（config.json / models.json / requests.db）、协议转换注册表、显式发布边界、60+ Go 测试文件 + vitest/Playwright 覆盖，都是资产，重写会全部赔掉。
