@@ -20,7 +20,7 @@
     "build:go:current": "bash scripts/build-go.sh bin/pi-switch-$(go env GOOS)-$(go env GOARCH)",
     "dev:webui": "npm --prefix webui run dev",
     "doctor": "node ./bin/pi-switch.js doctor",
-    "test": "go test ./...",
+    "test": "go test -p 1 -parallel 2 ./...",
     "test:webui": "NODE_ENV=test npm --prefix webui run test"
   },
   "keywords": [
