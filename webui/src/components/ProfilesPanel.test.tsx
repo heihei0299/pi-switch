@@ -132,6 +132,12 @@ describe("API type human-readable labels", () => {
       "Google Gemini",
     ]);
     expect(apiSelect.value).toBe("openai-responses");
+    // 不可代理的 api 仍可见（旧 profile 要能显示自己的值），但不可选：写入口会拒绝它。
+    const byValue = new Map(options.map((o) => [o.value, o]));
+    expect((byValue.get("google-generative-ai") as HTMLOptionElement).disabled).toBe(true);
+    for (const proxyable of ["openai-completions", "openai-responses", "anthropic-messages"]) {
+      expect((byValue.get(proxyable) as HTMLOptionElement).disabled).toBe(false);
+    }
   });
 
   it("echoes the existing provider api correctly", async () => {
@@ -143,6 +149,8 @@ describe("API type human-readable labels", () => {
     const apiSelect = screen.getAllByRole("combobox")[1] as HTMLSelectElement;
     const selected = apiSelect.options[apiSelect.selectedIndex];
     expect(selected.textContent?.trim()).toBe("Google Gemini");
+    // 旧 profile 仍能显示并保留自己的值——只是这个选项不能再被重新选中。
+    expect(selected.disabled).toBe(true);
   });
 
   it("builds profile with the selected api id on save without gateway preview", async () => {

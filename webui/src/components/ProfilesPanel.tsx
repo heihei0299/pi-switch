@@ -32,8 +32,12 @@ import { mergePreviewHeaders } from "../lib/previewHeaders";
 import { mutateAfterProfilePut } from "../store/swr";
 // Api list and labels come from the backend capability set (GET /api/state),
 // never from a local copy; the fallback keeps rendering before the first fetch.
-function apiTypeOptions(caps: readonly ProtocolApiCapability[]): ReadonlyArray<{ value: string; label: string }> {
-  return protocolCapabilities(caps).map((c) => ({ value: c.id, label: c.label }));
+// An api the proxy cannot serve yet stays visible but not selectable: the write
+// doors reject it (system-contract §2.2), so offering it would only produce a
+// failed save. It has to stay visible rather than be filtered out, because a
+// profile already using it must still render its own value.
+function apiTypeOptions(caps: readonly ProtocolApiCapability[]): ReadonlyArray<{ value: string; label: string; disabled: boolean }> {
+  return protocolCapabilities(caps).map((c) => ({ value: c.id, label: c.label, disabled: !c.canProxy }));
 }
 
 function responsesModeLabel(mode: ResponsesMode, t: (key: string) => string): string {
@@ -423,7 +427,7 @@ function ProfileForm({
             <Field label={t("API type")}>
               <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
                 {apiTypeOptions(caps).map((o) => (
-                  <option key={o.value} value={o.value}>
+                  <option key={o.value} value={o.value} disabled={o.disabled}>
                     {o.label}
                   </option>
                 ))}
@@ -543,7 +547,7 @@ function ProfileForm({
                         </Field>
                         <Field label={t("API type")}>
                           <Select value={u.api} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, api: e.target.value } : x))}>
-                            {apiTypeOptions(caps).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {apiTypeOptions(caps).map((o) => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
                           </Select>
                         </Field>
                       </div>

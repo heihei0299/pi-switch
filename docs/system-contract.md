@@ -48,7 +48,8 @@
 3. Profile CRUD 是「手写一个 profile」，可以也应该严格拒收。
 4. 整文件门的 channel 判定不比 runtime 严：按 channel 的 effective 组合，channel 覆盖了 profile 的组合时以 channel 为准，channel 未声明 api 时按 profile api 判定——要求每个 channel 自带 api 属于 CRUD 门（`ValidateUpstreamAPI`）的规则。门唯一比 runtime 严的地方是**保留的 profile 顶层组合检查**：profile 自身声明了不兼容组合时就拒绝，即使每个 channel 都覆盖了它（配置自身必须自洽）。
 5. `ResolvedUpstreams` 与 runtime 共享的是 **effective upstream fallback 语义**（api/baseUrl/apiKey 的取值来源），不是「合成出的 channel 一定能走完 route resolution」——route resolution 只遍历 `prof.Upstreams` 与 `ExposedModels`，所以 legacy flat profile 的可用性不由本节断言。
-6. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
+6. 旧配置的逃生通道：若磁盘上的配置含不可代理 API，整文件门会拒绝保存并点名 profile/字段，但 **Profile CRUD 仍然可用**（`PUT /api/profiles/:name` 改成可代理的 api、`DELETE /api/profiles/:name` 删除该 profile），也可以直接编辑磁盘文件；`GET /api/config/validate` 会先一步把问题报出来，WebUI 的 api 选择器把不可代理的 api 显示为不可选（但仍保留旧值）。因此不会出现无法修复的配置。
+7. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 5. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 ### 2.3 Gateway
