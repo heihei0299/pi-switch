@@ -114,13 +114,35 @@ func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
 	return protocol.ValidateResponsesMode(api, u.EffectiveResponsesMode(profile.ResponsesMode))
 }
 
-// ValidateEffectiveFlatAPI judges the api/mode pair of a profile that resolves to no
-// channel at all — no upstreams and no baseUrl/apiKey/headers. There the profile's own
-// api is the effective one, exactly as it is for a synthesized legacy channel, so this
-// is ValidateEffectiveChannelAPI with the empty channel named: callers judge the flat
-// shape without passing `Upstream{}` and guessing what it stands for.
+// ValidateEffectiveFlatAPI judges the api/mode pair of a profile when nothing resolves to
+// a channel, so the profile's own api is the effective one — exactly what a synthesized
+// legacy channel would have been judged with. Callers use it once they know the profile
+// has no resolved channel (ValidateProfile's flat branch, ValidateResolvedCapability, the
+// advisory door) instead of passing `Upstream{}` and guessing what it stands for.
 func ValidateEffectiveFlatAPI(profile ProviderProfile) error {
 	return ValidateEffectiveChannelAPI(Upstream{}, profile)
+}
+
+// ValidateResolvedCapability is the capability judgement of one whole profile, in the
+// shape the runtime resolves it: every channel from ResolvedUpstreams(), and — when
+// nothing resolves to a channel — the profile's own api. A profile that declares no api
+// anywhere has no pair to judge and passes.
+//
+// It is the rule the whole-file config door applies to a profile being stored, and the
+// rule DuplicateProfile applies before copying one, so a copy can never be a profile that
+// door would refuse. Shape, model-name and retry rules are deliberately not part of it:
+// those belong to the authoring doors.
+func ValidateResolvedCapability(profile ProviderProfile) error {
+	resolved := profile.ResolvedUpstreams()
+	for idx, u := range resolved {
+		if err := ValidateEffectiveChannelAPI(u, profile); err != nil {
+			return fmt.Errorf("upstreams[%d]: %w", idx, err)
+		}
+	}
+	if len(resolved) == 0 && profile.API != "" {
+		return ValidateEffectiveFlatAPI(profile)
+	}
+	return nil
 }
 
 // ValidateUpstreamAPI checks one channel of a profile that is being authored, so it

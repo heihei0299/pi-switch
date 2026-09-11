@@ -114,11 +114,11 @@ func TestCreateProfileFlatProfileObeysCapabilityContract(t *testing.T) {
 	}
 }
 
-// DuplicateProfile 逐字复制既有 profile，但复制不能成为绕过 capability 的途径：flat profile
-// 的 api 就是它的 effective pair，把一条跑不起来的 legacy profile 再复制一份，同样是让 CRUD
-// 产出一个必失败配置。这些源只可能来自遗留配置或手工编辑（三个授权门已经拒收这个形状），所以
-// 用直接写盘来构造。
-func TestDuplicateProfileRefusesUnproxyableFlatSource(t *testing.T) {
+// DuplicateProfile 逐字复制既有 profile，但复制不能成为绕过 capability 的途径：判定与整文件门
+// 共用 config.ValidateResolvedCapability，所以副本不可能是那道门会拒绝的配置——flat 源与 channel
+// 源一视同仁。这些源只可能来自遗留配置或手工编辑（三道授权门已经拒收这些形状），所以用直接写盘
+// 来构造。shape/retry 仍然不判：带这些问题的源必须还能「复制一份再改」。
+func TestDuplicateProfileRefusesUnproxyableSource(t *testing.T) {
 	path := isolate(t)
 	write := func(profile string) {
 		t.Helper()
@@ -126,9 +126,13 @@ func TestDuplicateProfileRefusesUnproxyableFlatSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	channel := func(channelAPI, channelBaseURL string) string {
+		return `{"api":"openai-completions","baseUrl":"https://example.test/v1","apiKey":"k",` +
+			`"upstreams":[{"name":"main","api":"` + channelAPI + `","baseUrl":"` + channelBaseURL + `","apiKey":"k","models":[{"id":"m1"}]}]}`
+	}
 
 	write(`{"api":"` + protocol.GoogleGenerativeAI + `","baseUrl":"https://example.test/v1","apiKey":"k"}`)
-	if err := DuplicateProfile("legacy", "copy"); err == nil || !strings.Contains(err.Error(), "proxy") {
+	if err := DuplicateProfile("legacy", "copy"); err == nil || !strings.Contains(err.Error(), "not currently proxy-supported") {
 		t.Fatalf("flat unproxyable source = %v, want a proxy-capability error", err)
 	}
 
@@ -137,17 +141,28 @@ func TestDuplicateProfileRefusesUnproxyableFlatSource(t *testing.T) {
 		t.Fatalf("flat unknown source = %v, want an unsupported-api error", err)
 	}
 
-	// shape 不归 duplicate 管：磁盘上 baseUrl 坏的 legacy profile 仍要能复制一份再改，
+	// channel 型源走同一条判定：点名到具体的 channel，而不是只报一个 api。
+	write(channel(protocol.GoogleGenerativeAI, "https://example.test/v1"))
+	err := DuplicateProfile("legacy", "copy")
+	if err == nil || !strings.Contains(err.Error(), "upstreams[0]") || !strings.Contains(err.Error(), "not currently proxy-supported") {
+		t.Fatalf("channel unproxyable source = %v, want an upstreams[0] proxy-capability error", err)
+	}
+
+	write(channel("unknown-api", "https://example.test/v1"))
+	if err := DuplicateProfile("legacy", "copy"); err == nil || !strings.Contains(err.Error(), "unsupported api") {
+		t.Fatalf("channel unknown source = %v, want an unsupported-api error", err)
+	}
+
+	// shape 不归 duplicate 管：磁盘上 baseUrl 坏的源（flat 与 channel 两种）仍要能复制一份再改，
 	// 否则这条修复路径会被 shape 问题一起挡掉。
 	write(`{"api":"openai-completions","baseUrl":"ftp://example.test","apiKey":"k"}`)
 	if err := DuplicateProfile("legacy", "copy"); err != nil {
 		t.Fatalf("a flat source with a shape problem must still be duplicable: %v", err)
 	}
 
-	// 可代理的 flat 源照常复制。
-	write(`{"api":"openai-completions","baseUrl":"https://example.test/v1","apiKey":"k"}`)
+	write(channel("openai-completions", "ftp://example.test"))
 	if err := DuplicateProfile("legacy", "copy2"); err != nil {
-		t.Fatalf("proxyable flat source: %v", err)
+		t.Fatalf("a channel source with a shape problem must still be duplicable: %v", err)
 	}
 }
 

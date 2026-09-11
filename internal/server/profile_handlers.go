@@ -49,28 +49,15 @@ func handlePutConfig(c *gin.Context) {
 			}
 		}
 		// 第二层：与运行期同一口径——请求路径先 narrowToChannel(ResolvedUpstreams()[i])，
-		// 再交给 translator.PlanRequest；所以逐个 channel 判它的 effective api/mode
-		// （channel 声明优先、否则回退 profile）。ResolvedUpstreams 与 runtime 共享的是
-		// effective upstream fallback 语义（api/baseUrl/apiKey 的来源），不表示 legacy
-		// flat profile 一定能走完 route resolution。shape/模型/channel 名校验不在此门
-		// （CRUD 门的规则，见 §2.2）。
-		resolved := prof.ResolvedUpstreams()
-		for idx, u := range resolved {
-			if err := config.ValidateEffectiveChannelAPI(u, prof); err != nil {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: upstreams[%d]: %s", name, idx, err.Error())})
-				return
-			}
-		}
-		// 第三层：ResolvedUpstreams() 为空表示这条 profile 没有任何 channel（无 upstreams 且
-		// 无 baseUrl/apiKey/headers）。此时 profile 自己声明的 api 就是唯一能判的 effective
-		// 组合，按 advisory 门与 CRUD 门同一条规则判一次——否则「无 channel 又无连接信息」
-		// 会成为一个所有门里只有这道门放行的形状。没有声明 api 的 profile 没有任何可判的
-		// 组合，仍然放行（那属于 loader/advisory 的范围）。
-		if len(resolved) == 0 && prof.API != "" {
-			if err := config.ValidateEffectiveFlatAPI(prof); err != nil {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
-				return
-			}
+		// 再交给 translator.PlanRequest；所以逐个 channel 判 effective api/mode（channel
+		// 声明优先、否则回退 profile），而 ResolvedUpstreams() 为空（无 channel 且无
+		// baseUrl/apiKey/headers）时判 profile 自己声明的 api。这条规则收在
+		// config.ValidateResolvedCapability：DuplicateProfile 复制前判的是同一条，所以副本
+		// 不可能是这道门会拒绝的配置。shape/模型/channel 名校验不在此门（CRUD 门的规则，
+		// 见 §2.2）。
+		if err := config.ValidateResolvedCapability(prof); err != nil {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
+			return
 		}
 	}
 	if err := config.SaveAtPath(cfg, configPath()); err != nil {

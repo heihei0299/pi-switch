@@ -22,10 +22,11 @@ import (
 // 写入口，但它复制磁盘上既有的 profile、不从 payload 构造形状，所以单独测（见本文件末尾）。
 func TestDoorParity_CapabilityVerdicts(t *testing.T) {
 	const (
-		shapeFlatNoURL   = "flat-no-url"
-		shapeFlatWithURL = "flat-with-url"
-		shapeChannel     = "channel"
-		shapeEmpty       = "empty"
+		shapeFlatNoURL     = "flat-no-url"
+		shapeFlatWithURL   = "flat-with-url"
+		shapeChannel       = "channel"
+		shapeChannelOwnAPI = "channel-own-api"
+		shapeEmpty         = "empty"
 		// emptyConfig 是每个门自己的起点：拒绝过的 payload 不该留下状态影响下一格。
 		emptyConfig = `{"version":2,"profiles":{}}`
 	)
@@ -38,7 +39,7 @@ func TestDoorParity_CapabilityVerdicts(t *testing.T) {
 		advisory bool // advisory 是否报出 capability 类 error
 		note     string
 	}{
-		{shapeFlatNoURL, protocol.OpenAIChat, true, true, false, "能力上可代理：整文件门不跑 shape 校验，缺 baseUrl 只归 CRUD/advisory 的 shape 规则管"},
+		{shapeFlatNoURL, protocol.OpenAIChat, true, true, false, "能力上可代理：整文件门不跑 shape 校验；缺 baseUrl 只有 advisory 报 error，CRUD 门不要求 flat profile 带 baseUrl"},
 		{shapeFlatNoURL, protocol.GoogleGenerativeAI, false, false, true, "声明了 api 就判，没有 channel 也不例外"},
 		{shapeFlatNoURL, "unknown-api", false, false, true, "同上，未知 api"},
 		{shapeFlatWithURL, protocol.OpenAIChat, true, true, false, "legacy flat profile：合成出的 channel 就是运行期那一个"},
@@ -49,7 +50,11 @@ func TestDoorParity_CapabilityVerdicts(t *testing.T) {
 		{shapeChannel, protocol.GoogleGenerativeAI, false, false, true, "逐 channel 判 effective api"},
 		{shapeChannel, "unknown-api", false, false, true, ""},
 		{shapeChannel, "", false, false, true, "channel 与 profile 都没有 api"},
-		{shapeEmpty, "", true, false, true, "唯一保留的例外：profile 里没有任何可判的 api，整文件门无从判定故放行，CRUD 门与 advisory 拒收/报错"},
+		{shapeChannelOwnAPI, protocol.OpenAIChat, true, true, true, "profile 顶层没有 api 而 channel 自带：两道理性写门按 channel 的 effective api 放行，advisory 仍按 profile 内容报 api required——第二处已记录的分歧"},
+		{shapeChannelOwnAPI, protocol.GoogleGenerativeAI, false, false, true, "同上，但 channel 自己的能力就不可代理：写门也拒"},
+		{shapeChannelOwnAPI, "unknown-api", false, false, true, ""},
+		{shapeFlatNoURL, "", true, false, true, "没有任何可判的 api：整文件门（与 duplicate）放行，CRUD 门与 advisory 拒收/报错"},
+		{shapeEmpty, "", true, false, true, "逐字空的 profile，判定与上一行相同"},
 	}
 
 	for _, tc := range cases {
@@ -116,12 +121,18 @@ func doorParityProfile(shape, api string) string {
 	case "channel":
 		return `{"api":"` + api + `","baseUrl":"https://example.test/v1","apiKey":"k",` +
 			`"upstreams":[{"name":"main","api":"` + api + `","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}`
+	case "channel-own-api":
+		// profile 顶层不声明 api，channel 自带——运行期按 channel 的 api 走。
+		return `{"baseUrl":"https://example.test/v1","apiKey":"k",` +
+			`"upstreams":[{"name":"main","api":"` + api + `","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}`
 	default: // empty：完全空白的 profile
 		return `{}`
 	}
 }
 
 // isCapabilityMessage 只认 advisory 对 api/mode 组合本身的判定：缺失、未知、已知但当前不可代理。
+// 这些串是 advisory 对使用者的话术，属于它的对外契约，所以这里按原话断言；"api required" 用精确
+// 相等而不是前缀匹配，channel 级规则的 "api is required for each upstream" 因此不会被误算进来。
 // 其他 error（缺 baseUrl、channel 名非法等）属于 shape 诊断，不在这张表的口径里。
 func isCapabilityMessage(message string) bool {
 	return message == "api required" ||
@@ -137,24 +148,33 @@ func apiLabel(api string) string {
 }
 
 // duplicate 是第四个写入口，但它不从 payload 构造 profile，而是复制磁盘上既有的一条，所以它的
-// 期望按「源 profile 的形状」声明。它能复制的源只可能来自遗留配置或手工编辑（三个授权门已经拒收
-// 不可代理的 flat 形状），复制不能成为把它们再生一份的途径；同时 shape/retry 不判，否则磁盘上
-// 带 shape 问题的 profile 连「复制一份再改」这条修复路径都会断掉。
+// 期望按「源 profile 的形状」声明。规则是：**副本不能是整文件门会拒绝的配置**——能力判定与那道
+// 门共用 `config.ValidateResolvedCapability`（逐 channel + flat），而 shape/模型/channel 名/retry
+// 一律不判，否则磁盘上带这些问题的 profile 连「复制一份再改」这条修复路径都会断掉。这些源只可能
+// 来自遗留配置或手工编辑（三道授权门已经拒收这些形状），所以用写盘来构造。
 func TestDoorParity_DuplicateSourceVerdicts(t *testing.T) {
-	channelProfile := `{"api":"` + protocol.OpenAIChat + `","baseUrl":"https://example.test/v1","apiKey":"k",` +
-		`"upstreams":[{"name":"main","api":"` + protocol.OpenAIChat + `","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}`
+	channel := func(channelAPI, channelBaseURL string) string {
+		return `{"api":"` + channelAPI + `","baseUrl":"https://example.test/v1","apiKey":"k",` +
+			`"upstreams":[{"name":"main","api":"` + channelAPI + `","baseUrl":"` + channelBaseURL + `","apiKey":"k","models":[{"id":"m1"}]}]}`
+	}
 
 	cases := []struct {
 		name     string
 		source   string
 		wantCode int
+		wantMsg  string // 非空时断言拒绝文案，证明点名的是哪条规则/哪个 channel
 		note     string
 	}{
-		{"flat unproxyable", `{"api":"` + protocol.GoogleGenerativeAI + `","baseUrl":"https://example.test/v1","apiKey":"k"}`, 400, "再复制一份跑不起来的 legacy profile 等于用 CRUD 造一个新的必失败配置"},
-		{"flat unknown api", `{"api":"unknown-api","baseUrl":"https://example.test/v1","apiKey":"k"}`, 400, ""},
-		{"flat proxyable", `{"api":"` + protocol.OpenAIChat + `","baseUrl":"https://example.test/v1","apiKey":"k"}`, 200, "可代理的 legacy profile 照样能复制"},
-		{"flat shape problem", `{"api":"` + protocol.OpenAIChat + `","baseUrl":"ftp://example.test","apiKey":"k"}`, 200, "shape 不归 duplicate 管：坏 baseUrl 的源仍可复制一份再改"},
-		{"channel profile", channelProfile, 200, "channel 型 profile 保持不判"},
+		{"flat unproxyable", `{"api":"` + protocol.GoogleGenerativeAI + `","baseUrl":"https://example.test/v1","apiKey":"k"}`, 400, "not currently proxy-supported", "再复制一份跑不起来的 legacy profile 等于用 CRUD 造一个新的必失败配置"},
+		{"flat unknown api", `{"api":"unknown-api","baseUrl":"https://example.test/v1","apiKey":"k"}`, 400, "unsupported api unknown-api", ""},
+		{"flat api-less with connection info", `{"baseUrl":"https://example.test/v1","apiKey":"k"}`, 400, "api is required", "连接信息在、api 不在：整文件门也会拒（合成 channel 的 effective api 为空）"},
+		{"flat no content at all", `{}`, 200, "", "完全空白的源：没有任何可判的组合，与整文件门同样放行"},
+		{"flat proxyable", `{"api":"` + protocol.OpenAIChat + `","baseUrl":"https://example.test/v1","apiKey":"k"}`, 200, "", "可代理的 legacy profile 照样能复制"},
+		{"flat shape problem", `{"api":"` + protocol.OpenAIChat + `","baseUrl":"ftp://example.test","apiKey":"k"}`, 200, "", "shape 不归 duplicate 管：坏 baseUrl 的源仍可复制一份再改"},
+		{"channel unproxyable", channel(protocol.GoogleGenerativeAI, "https://example.test/v1"), 400, "upstreams[0]: api " + protocol.GoogleGenerativeAI, "channel 型源的能力判定与整文件门同一条（不再是只判 flat）"},
+		{"channel unknown api", channel("unknown-api", "https://example.test/v1"), 400, "unsupported api unknown-api", ""},
+		{"channel proxyable", channel(protocol.OpenAIChat, "https://example.test/v1"), 200, "", "能用的 channel 型源照常复制"},
+		{"channel shape problem", channel(protocol.OpenAIChat, "ftp://example.test"), 200, "", "channel 里 shape 有问题也不挡复制：复制一份再改仍是可走的路径"},
 	}
 
 	for _, tc := range cases {
@@ -163,6 +183,9 @@ func TestDoorParity_DuplicateSourceVerdicts(t *testing.T) {
 			w := callMgmt(NewMgmtRouter(), http.MethodPost, "/api/profiles/src/duplicate", `{"as":"copy"}`)
 			if w.Code != tc.wantCode {
 				t.Fatalf("duplicate 源为 %s = %d (%s), want %d；%s", tc.name, w.Code, strings.TrimSpace(w.Body.String()), tc.wantCode, tc.note)
+			}
+			if tc.wantMsg != "" && !strings.Contains(w.Body.String(), tc.wantMsg) {
+				t.Fatalf("duplicate 源为 %s 的拒绝文案 = %s, want 含 %q", tc.name, strings.TrimSpace(w.Body.String()), tc.wantMsg)
 			}
 			raw, err := os.ReadFile(cfgPath)
 			if err != nil {

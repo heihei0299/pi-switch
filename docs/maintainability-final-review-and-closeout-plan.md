@@ -449,9 +449,11 @@ STOP
 满足：
 
 ```text
-[x] Config door 与 Profile CRUD capability 一致（仅剩例外：连 api 都没声明的 profile——它没有任何可判的组合，
-    整文件门放行、CRUD 门与 advisory 门拒收/报错。已记入 system-contract §2.2 第 2 条）
-[x] flat profile 不再绕过 IsKnown / CanProxy（含 `duplicate`：复制 flat 源时按同一条 flat 规则判，channel 型源保持不判，见 §11）
+[x] Config door 与 Profile CRUD capability 一致（两处已记录的有意差异，均不在能力维度：
+    ①连 api 都没声明的 profile——整文件门与 duplicate 放行、CRUD 门与 advisory 拒收/报错；
+    ②profile 顶层无 api 而 channel 自带 api——两个写门按 channel 的 effective api 放行、advisory 报 api required。
+    见 system-contract §2.2 第 2 条）
+[x] flat profile 不再绕过 IsKnown / CanProxy（含 `duplicate`：复制前按 `config.ValidateResolvedCapability` 判，与整文件门同一条；shape/retry 不判，见 §11）
 [x] UI 不提供服务端必拒绝的可选 API
 [x] advisory 继续能诊断历史坏配置
 [x] capability matrix 保持有效
@@ -495,7 +497,7 @@ WebUI 大规模重构
 
 | 项 | 状态 | 落点 | 回归证据 |
 |---|---|---|---|
-| CLOSE-01 Flat Profile capability | 完成 | `internal/profile/validate.go`：`ValidateProfile` 在 `len(p.Upstreams) == 0` 时走 `config.ValidateEffectiveChannelAPI(config.Upstream{}, p)`，有 channel 时保持原路径 | `TestCreateProfileFlatProfileObeysCapabilityContract`、`TestProfileCRUD_CapabilityMatrix`、`TestProfileCRUD_RejectsUnknownAPI`、CLI `TestHandleProvider_AddRefusesUnproxyableFlatAPI` |
+| CLOSE-01 Flat Profile capability | 完成 | `internal/profile/validate.go`：`ValidateProfile` 在 `len(p.Upstreams) == 0` 时走 `config.ValidateEffectiveFlatAPI(p)`（= `ValidateEffectiveChannelAPI(Upstream{}, p)` 的具名形式），有 channel 时保持原路径 | `TestCreateProfileFlatProfileObeysCapabilityContract`、`TestProfileCRUD_CapabilityMatrix`、`TestProfileCRUD_RejectsUnknownAPI`、CLI `TestHandleProvider_AddRefusesUnproxyableFlatAPI` |
 | CLOSE-02 Unknown API UI | 完成 | `webui/src/components/ProfilesPanel.tsx`：unknown 当前值的 fallback option 加 `disabled`（仍可见、仍回显）；同类项一并对齐到 responsesMode 的 fallback option | `ProfilesPanel.test.tsx` "preserves unknown api value without silent fallback" 增加 `disabled === true`；`ProfilesPanel.responsesMode.test.tsx` "shows a legacy incompatible mode but keeps it unselectable" |
 | CLOSE-03 Contract cleanup | 完成 | `docs/system-contract.md` §2.2：删掉重复条目（编号 1..7 连续）；Profile CRUD 行同步 flat profile 的 capability 判定 | — |
 
@@ -505,13 +507,13 @@ WebUI 大规模重构
 
 同类项（已一并处理）：`ProfilesPanel.tsx` 的 responsesMode fallback option 原先也没有 `disabled`，现按同一原则加上。一处诚实修正：它比 api 那个弱——`saveLocal` 先用 `responsesModeError`/`allowedResponsesModes` 拦下保存（客户端给出「passthrough requires openai-responses」这类话术），旧 mode 到不了服务端；而 api 那项此前没有任何客户端规则，unknown 值会一路走到 400。所以这一项是「不提供写入口必拒的可选项」的一致性对齐，不是补一个真实漏洞。
 
-后续 code review（双轴：Standards + Spec；基准 `3a88157`）后的处理记录（三项全部执行）：
+后续 code review（双轴：Standards + Spec；基准 `3a88157`）后的处理记录（三项全部执行；括号内为第二轮增量 review 的修正）：
 
-- **① 整文件门补齐「无 channel 但声明了 api」的形状**：`ResolvedUpstreams()` 为空时按 profile 顶层 api 判一次（`internal/server/profile_handlers.go` 第三层）。与 CRUD 门、advisory 门从此同一条规则；唯一剩下的分歧是**连 api 都没声明**的 profile——它没有任何可判的组合，整文件门放行而另外两个门拒收/报错，已写进 system-contract §2.2 第 2 条。同时把 `config.Upstream{}` 这个读不出意图的哨兵收成具名调用 `config.ValidateEffectiveFlatAPI(profile)`，三个调用点（整文件门、CRUD 门、advisory 门）共用。
-- **② `duplicate` 门补 flat 判定**：`DuplicateProfile` 在复制 flat 源（`len(Upstreams) == 0`）时按同一条 flat 规则判，否则把 legacy/手改的不可代理 profile 再复制一份就等于用 CRUD 重新产出必失败配置。**只判这一格**：shape/retry 仍不判，磁盘上带 shape 问题的 profile 依旧能「复制一份再改」。channel 型源保持不判。
+- **① 整文件门补齐「无 channel 但声明了 api」的形状**：`ResolvedUpstreams()` 为空时按 profile 顶层 api 判一次。与 CRUD 门、advisory 门从此同一条规则。`config.Upstream{}` 这个读不出意图的哨兵收成具名调用 `config.ValidateEffectiveFlatAPI(profile)`：调用点是 CRUD 门的 flat 分支（`internal/profile/validate.go`）、advisory 门（`internal/server/profile_handlers.go`），以及 `ValidateResolvedCapability` 内部。判定的入口统一为 **`config.ValidateResolvedCapability`**（逐 channel + flat 那一格），整文件门与 duplicate 门共用它——共 3 处调用 `ValidateEffectiveFlatAPI` / 2 处调用 `ValidateResolvedCapability`，不是早先写的"三个调用点"。
+- **② `duplicate` 门补能力判定**：`DuplicateProfile` 复制前调 `config.ValidateResolvedCapability`，即**副本不可能是整文件门会拒绝的配置**——flat 源与 channel 源一视同仁。早先只判 flat 是个说不通的中间态（同一个理由一半用一半不用，而且对逐字空的源比整文件门还严）。shape/模型/channel 名/retry 一律不判，磁盘上带这些问题的源仍能「复制一份再改」。
 - **③ 两个 capability matrix 合并为一份共享期望** `capabilityWritePolicy` + `capabilityWriteCases`（`internal/server/config_diagnostics_test.go`）——两个门读同一份「新增 API 必须显式决策」表与同一条 CanProxy 一致性断言，各门仍保留自己的请求与断言逻辑。
-- **不变量固化**：新增 `internal/server/door_parity_test.go`，把「形状 × api → 三个门的判决」逐格声明成表（含上面那格例外），duplicate 那一格按「源形状」单独列表。以后口径漂移会以某一行 diff 出现，而不是等下一轮人工审查发现——这一轮的两个缺口正是这么暴露的。
+- **不变量固化**：`internal/server/door_parity_test.go` 把「形状 × api → 三个门的判决」逐格声明成表——4 个形状（flat-no-url、flat-with-url、channel、channel-own-api）× 4 个 api（可代理、已知不可代理、未知、无 api）= **16 格**（早先写 16 格时表里只有 12 行，第二轮补上了 `flat-no-url × 无 api` 与 `channel-own-api` 三格）；duplicate 另有 10 行按「源形状」声明，含"逐字空的源与整文件门同样放行"。
 
-反证：新表在实现前对 `flat-no-url` + `google-generative-ai` / `unknown-api` 两格与 duplicate 的两格为红（整文件门与 duplicate 都回 200），实现后转绿；把 google 的写策略临时改成 `true`，两个 capability matrix 同时以 `CanProxy is the one source both write doors follow` 失败。
+反证：新表在实现前对 `flat-no-url` + `google-generative-ai` / `unknown-api` 两格、以及 duplicate 的 channel 不可代理 / channel 未知 api / 逐字空源三格为红（整文件门与 duplicate 都回 200，逐字空源那一格反倒是 duplicate 比门更严），实现后转绿；把 google 的写策略临时改成 `true`，两个 capability matrix 同时以 `CanProxy is the one source both write doors follow` 失败。
 
 > **maintainability initiative CLOSED**
