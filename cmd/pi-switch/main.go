@@ -909,7 +909,12 @@ func handleGatewayCLI(args []string) {
 	switch args[0] {
 	case "publish", "apply":
 		toPublish := gateway.BuildProposedGatewayEntry(cfg)
-		if err := gateway.Publish(cfg, toPublish); err != nil {
+		current, err := gateway.ReadCurrent()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
+			os.Exit(1)
+		}
+		if err := gateway.PublishPlan(gateway.BuildGeneratedPlanFromProposal(cfg, current, toPublish)); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -924,8 +929,14 @@ func handleGatewayCLI(args []string) {
 	case "status":
 		fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
 	case "preview":
-		preview := gateway.BuildProposedGatewayEntry(cfg)
-		b, _ := json.MarshalIndent(preview, "", "  ")
+		current, err := gateway.ReadCurrent()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
+			os.Exit(1)
+		}
+		// Same generated flow as publish, so the preview shows what publish writes.
+		plan := gateway.BuildGeneratedPlan(cfg, current)
+		b, _ := json.MarshalIndent(plan.Proposed, "", "  ")
 		fmt.Println(string(b))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown gateway subcommand %q\n", args[0])

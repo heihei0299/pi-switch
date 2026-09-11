@@ -30,7 +30,7 @@ func handleGetGateway(c *gin.Context) {
 }
 
 func handleGatewayPreview(c *gin.Context) {
-	serveGatewayPreview(c, nil)
+	serveGatewayPreview(c, nil, true)
 }
 
 func handleGatewayPreviewPost(c *gin.Context) {
@@ -39,6 +39,7 @@ func handleGatewayPreviewPost(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid gateway preview request"})
 		return
 	}
+	generated := true
 	var edited map[string]interface{}
 	if request.Selected != nil {
 		cfg, configErr := loadConfig()
@@ -56,13 +57,18 @@ func handleGatewayPreviewPost(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		generated = false
 	} else if request.Draft != nil {
 		edited = request.Draft
+		generated = false
 	}
-	serveGatewayPreview(c, edited)
+	serveGatewayPreview(c, edited, generated)
 }
 
-func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
+// serveGatewayPreview renders one preview. generated must be stated by the
+// caller: nil edited only happens for a generated preview, but the plan kind is
+// never inferred from nil.
+func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generated bool) {
 	cfg, configErr := loadConfig()
 	if configErr != nil {
 		c.JSON(500, gin.H{"error": configErr.Error()})
@@ -73,7 +79,13 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	plan, summary := buildGatewayPlan(cfg, current, edited)
+	var plan gateway.CanonicalGatewayPlan
+	var summary catalog.EnrichSummary
+	if generated {
+		plan, summary = buildGeneratedGatewayPlan(cfg, current)
+	} else {
+		plan, summary = buildDraftGatewayPlan(cfg, current, edited)
+	}
 	currentForResp := interface{}(map[string]interface{}{})
 	if provs, ok := plan.Current["providers"].(map[string]interface{}); ok {
 		currentForResp = provs
@@ -95,13 +107,20 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
 		"fixed_providers": gateway.FixedGatewayProviders(),
 	})
 }
-func buildGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	proposal := draft
-	if proposal == nil {
-		proposal = gateway.BuildProposedGatewayEntry(cfg)
-	}
+
+// buildGeneratedGatewayPlan builds the config-derived proposal, enriches it from
+// the catalog, and computes the canonical generated plan from that same proposal.
+func buildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
+	proposal := gateway.BuildProposedGatewayEntry(cfg)
 	summary := enrichProposedModels(cfg, proposal)
-	return gateway.BuildCanonicalGatewayPlanWithPublishedMetadata(cfg, current, proposal, draft == nil), summary
+	return gateway.BuildGeneratedPlanFromProposal(cfg, current, proposal), summary
+}
+
+// buildDraftGatewayPlan builds the canonical plan for a user draft, enriching the
+// draft from the catalog first so the plan's derived views match what is published.
+func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
+	summary := enrichProposedModels(cfg, draft)
+	return gateway.BuildDraftPlan(cfg, current, draft), summary
 }
 
 // enrichProposedModels fills gateway proposed models from the models.dev snapshot.
@@ -268,7 +287,7 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
-	plan, _ := buildGatewayPlan(cfg, current, gw)
+	plan, _ := buildDraftGatewayPlan(cfg, current, gw)
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
@@ -338,17 +357,18 @@ func handleGatewayPublish(c *gin.Context) {
 		return
 	}
 	var toPublish map[string]interface{}
+	var plan gateway.CanonicalGatewayPlan
 	if body != nil && len(body) > 0 {
-		if _, ok := body["providers"]; ok {
-			toPublish = body
-		} else {
+		if _, ok := body["providers"]; !ok {
 			c.JSON(400, gin.H{"error": "providers is required"})
 			return
 		}
+		toPublish = body
+		plan, _ = buildDraftGatewayPlan(cfg, current, toPublish)
 	} else {
 		toPublish = gateway.BuildProposedGatewayEntry(cfg)
+		plan, _ = buildGeneratedGatewayPlan(cfg, current)
 	}
-	plan, _ := buildGatewayPlan(cfg, current, toPublish)
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return

@@ -73,7 +73,9 @@ func New(cfg config.PiSwitchConfig) Model {
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m *Model) refreshGateway() {
-	preview := gateway.BuildProposedGatewayEntry(m.cfg)
+	// The unified generated entry point; nil current means "no published gateway
+	// yet", so the count is the config-derived model total.
+	preview := gateway.BuildGeneratedPlan(m.cfg, nil).Proposed
 	total := 0
 	if provs, ok := preview["providers"].(map[string]interface{}); ok {
 		for _, pv := range provs {
@@ -154,8 +156,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = 2
 			return m, nil
 		case "g":
-			toPublish := gateway.BuildProposedGatewayEntry(m.cfg)
-			if err := gateway.Publish(m.cfg, toPublish); err != nil {
+			current, err := gateway.ReadCurrent()
+			if err != nil {
+				m.statusMsg = "gateway publish failed: " + err.Error()
+				return m, nil
+			}
+			if err := gateway.PublishPlan(gateway.BuildGeneratedPlan(m.cfg, current)); err != nil {
 				m.statusMsg = "gateway publish failed: " + err.Error()
 			} else {
 				m.statusMsg = "gateway published"

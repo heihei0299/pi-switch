@@ -89,7 +89,7 @@ func TestPublishRemovesLegacyProvidersAndKeepsThirdParty(t *testing.T) {
 			"models": []interface{}{map[string]interface{}{"id": "m1"}},
 		},
 	}}
-	if err := Publish(cfg, edited); err != nil {
+	if err := publishDraft(t, cfg, edited); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(modelsPath)

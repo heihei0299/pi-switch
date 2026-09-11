@@ -13,6 +13,17 @@ import (
 func strptr(s string) *string { return &s }
 func boolptr(b bool) *bool    { return &b }
 
+// publishDraft publishes a user draft through the explicit ARCH-04 flow:
+// read current -> BuildDraftPlan -> PublishPlan.
+func publishDraft(t *testing.T, cfg config.PiSwitchConfig, draft map[string]interface{}) error {
+	t.Helper()
+	current, err := ReadCurrent()
+	if err != nil {
+		t.Fatalf("read current: %v", err)
+	}
+	return PublishPlan(BuildDraftPlan(cfg, current, draft))
+}
+
 // Regression: 落盘 cost 含显式 cacheWrite:0（经 webui draft round-trip 写入）
 // 而 BuildProposed 用 *ModelCost（omitempty 省掉 0），导致 models 恒 changed、
 // preview pending 恒=1、“立即同步”点了再进还弹。
@@ -178,7 +189,7 @@ func TestCanonicalGatewayPlanUnifiesViews(t *testing.T) {
 		},
 		"third-party": map[string]interface{}{"api": "openai-completions", "baseUrl": "https://third.example/v1", "apiKey": "third-key", "models": []interface{}{map[string]interface{}{"id": "third-model"}}},
 	}}
-	plan := BuildCanonicalGatewayPlan(cfg, current, nil)
+	plan := BuildGeneratedPlan(cfg, current)
 	if len(plan.Conflicts) != 0 || plan.PendingCount != 0 {
 		t.Fatalf("canonical plan = conflicts=%v pending=%d proposed=%v", plan.Conflicts, plan.PendingCount, plan.Proposed)
 	}
@@ -203,7 +214,7 @@ func TestCanonicalPlanPreservesThirdPartyEntryFromCurrent(t *testing.T) {
 		"third-party": map[string]interface{}{"api": "openai-completions", "apiKey": "tampered", "models": []interface{}{map[string]interface{}{"id": "changed"}}},
 	}}
 	before, _ := json.Marshal(edited)
-	plan := BuildCanonicalGatewayPlan(cfg, current, edited)
+	plan := BuildDraftPlan(cfg, current, edited)
 	providers := plan.Proposed["providers"].(map[string]interface{})
 	after, _ := json.Marshal(edited)
 	if string(after) != string(before) {
@@ -306,7 +317,7 @@ func TestPublishPreservesThirdPartyProviders(t *testing.T) {
 			},
 		},
 	}
-	if err := Publish(cfg, edited); err != nil {
+	if err := publishDraft(t, cfg, edited); err != nil {
 		t.Fatal(err)
 	}
 
@@ -315,7 +326,7 @@ func TestPublishPreservesThirdPartyProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstPublish := string(result)
-	if err := Publish(cfg, edited); err != nil {
+	if err := publishDraft(t, cfg, edited); err != nil {
 		t.Fatal(err)
 	}
 	secondPublish, err := os.ReadFile(modelsPath)
@@ -490,7 +501,7 @@ func TestPublishRejectsInvalidCanonicalPlanWithoutWrite(t *testing.T) {
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "models": []interface{}{map[string]interface{}{"id": "same"}},
 		},
 	}}
-	if err := Publish(cfg, edited); err == nil {
+	if err := publishDraft(t, cfg, edited); err == nil {
 		t.Fatal("Publish accepted duplicate exposed model")
 	}
 	got, err := os.ReadFile(modelsPath)

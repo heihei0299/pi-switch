@@ -933,10 +933,10 @@ func normalizeFixedGatewayModelCompat(gateway map[string]interface{}) {
 	}
 }
 
+// validateGatewayDraft checks the structural contract of the submitted proposal.
+// It no longer treats nil as "generated" — callers state the plan kind explicitly,
+// and a missing providers object is always a conflict.
 func validateGatewayDraft(edited map[string]interface{}) error {
-	if edited == nil {
-		return nil
-	}
 	rawProviders, exists := edited["providers"]
 	if !exists {
 		return fmt.Errorf("providers is required")
@@ -982,7 +982,14 @@ func validateThirdPartyEdits(cfg config.PiSwitchConfig, current, edited map[stri
 // config alone. No user draft exists, so published Gateway metadata stays
 // authoritative wherever the config does not speak. current may be nil.
 func BuildGeneratedPlan(cfg config.PiSwitchConfig, current map[string]interface{}) CanonicalGatewayPlan {
-	return buildCanonicalGatewayPlan(cfg, current, BuildProposedGatewayEntry(cfg), true)
+	return BuildGeneratedPlanFromProposal(cfg, current, BuildProposedGatewayEntry(cfg))
+}
+
+// BuildGeneratedPlanFromProposal is BuildGeneratedPlan over an already-built
+// (and possibly enriched) generated proposal, so the derived diff/conflict/group
+// views are computed from exactly the proposal the caller will publish.
+func BuildGeneratedPlanFromProposal(cfg config.PiSwitchConfig, current, proposal map[string]interface{}) CanonicalGatewayPlan {
+	return buildCanonicalGatewayPlan(cfg, current, proposal, true)
 }
 
 // BuildDraftPlan builds the canonical plan for a user-edited draft. The draft is
@@ -994,26 +1001,6 @@ func BuildDraftPlan(cfg config.PiSwitchConfig, current, draft map[string]interfa
 		draft = map[string]interface{}{}
 	}
 	return buildCanonicalGatewayPlan(cfg, current, draft, false)
-}
-
-// Deprecated: use BuildGeneratedPlan for generated proposals and BuildDraftPlan
-// for user drafts. This shim only exists while the entry points migrate.
-func BuildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}) CanonicalGatewayPlan {
-	if edited == nil {
-		return BuildGeneratedPlan(cfg, current)
-	}
-	return BuildDraftPlan(cfg, current, edited)
-}
-
-// Deprecated: use BuildGeneratedPlan / BuildDraftPlan.
-func BuildCanonicalGatewayPlanWithPublishedMetadata(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
-	if edited == nil {
-		if preservePublishedMetadata {
-			return BuildGeneratedPlan(cfg, current)
-		}
-		edited = map[string]interface{}{}
-	}
-	return buildCanonicalGatewayPlan(cfg, current, edited, preservePublishedMetadata)
 }
 
 func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, submitted map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
@@ -1051,14 +1038,6 @@ func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, submitted map
 		PreviewRemoved: previewRemoved, PendingCount: ComputePendingCount(current, proposed),
 		Conflicts: conflicts, Diagnostics: diagnostics, Groups: groups,
 	}
-}
-
-func Publish(cfg config.PiSwitchConfig, edited map[string]interface{}) error {
-	current, err := ReadCurrent()
-	if err != nil {
-		return err
-	}
-	return PublishPlan(BuildCanonicalGatewayPlan(cfg, current, edited))
 }
 
 // PublishPlan writes the already validated canonical plan without recomputing any projection.
