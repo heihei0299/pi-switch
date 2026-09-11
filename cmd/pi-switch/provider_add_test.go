@@ -111,3 +111,26 @@ func TestHandleProvider_AddValidatesBaseURL(t *testing.T) {
 		t.Fatalf("invalid baseUrl was not reported: %q", errOut)
 	}
 }
+
+// B5: without --base-url `add` writes a flat profile, so the profile's own api is
+// the effective pair and the CLI door must refuse a known-but-unproxyable one
+// instead of storing a supplier every request through it would fail on.
+func TestHandleProvider_AddRefusesUnproxyableFlatAPI(t *testing.T) {
+	isolateCLI(t)
+	cfgPath := os.Getenv("PI_SWITCH_CONFIG")
+
+	code, out, errOut := runCLIStreams(t, func() int {
+		return handleProvider([]string{"add", "cli-google", "--api", "google-generative-ai"})
+	})
+
+	if code == 0 {
+		t.Fatalf("provider add with a known-but-unproxyable api exit = 0 (stdout=%q)", out)
+	}
+	if !strings.Contains(errOut, "google-generative-ai") || !strings.Contains(errOut, "proxy") {
+		t.Fatalf("the refusal must name the api and the capability: %q", errOut)
+	}
+	// 拒绝发生在落盘之前，所以配置可能压根还没被创建。
+	if raw, err := os.ReadFile(cfgPath); err == nil && strings.Contains(string(raw), "cli-google") {
+		t.Fatal("a refused add still wrote the profile")
+	}
+}

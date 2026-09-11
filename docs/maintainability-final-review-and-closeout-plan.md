@@ -485,3 +485,23 @@ WebUI 大规模重构
 后续开发重点应转为：
 
 > 控制新 API / protocol / provider / transport / retry policy 带来的组合复杂度，而不是继续整理架构。
+
+---
+
+# 11. 收尾执行记录（CLOSE-01～03 已完成）
+
+验证：`scripts/test-limited.sh go webui`（`go test ./...` + vitest 全绿）。
+
+| 项 | 状态 | 落点 | 回归证据 |
+|---|---|---|---|
+| CLOSE-01 Flat Profile capability | 完成 | `internal/profile/validate.go`：`ValidateProfile` 在 `len(p.Upstreams) == 0` 时走 `config.ValidateEffectiveChannelAPI(config.Upstream{}, p)`，有 channel 时保持原路径 | `TestCreateProfileFlatProfileObeysCapabilityContract`、`TestProfileCRUD_CapabilityMatrix`、`TestProfileCRUD_RejectsUnknownAPI`、CLI `TestHandleProvider_AddRefusesUnproxyableFlatAPI` |
+| CLOSE-02 Unknown API UI | 完成 | `webui/src/components/ProfilesPanel.tsx`：unknown 当前值的 fallback option 加 `disabled`（仍可见、仍回显） | `ProfilesPanel.test.tsx` "preserves unknown api value without silent fallback" 增加 `disabled === true` |
+| CLOSE-03 Contract cleanup | 完成 | `docs/system-contract.md` §2.2：删掉重复条目（编号 1..7 连续）；Profile CRUD 行同步 flat profile 的 capability 判定 | — |
+
+红→绿反证：把 CLOSE-01 的判定块临时置为不可达时，`TestProfileCRUD_CapabilityMatrix` 的 `POST /api/profiles` 与 `PUT /api/profiles/:name` 对 `google-generative-ai` 都返回 200（期望 400），domain 级 `CreateProfile` 返回 nil；恢复后全部转绿。CLOSE-02 的 `disabled` 断言同样先红后绿。
+
+§7 最终验证清单全部通过：`PUT /api/config` capability matrix、Profile CRUD flat 路径、channel Profile 仍走 `ValidateUpstreamAPI`、advisory 仍能诊断旧配置、Preset 仍只提供可代理 API、WebUI 两种不可用值均 disabled、capability 单一来源仍为 `internal/protocol`、Gateway 仍复用 `Upstream.EffectiveAPI`、`ProfileIssues` 未复制、未新增 service/interface/registry、system-contract 无重复条目。
+
+追加发现（不在本次范围，未改动）：`ProfilesPanel.tsx` 的 responsesMode fallback option（既有代码）同样没有 `disabled`，旧配置里不兼容的 mode 仍可被重新选中而写入口会拒绝保存——与 CLOSE-02 同类，如要收紧应按同一原则处理。
+
+> **maintainability initiative CLOSED**

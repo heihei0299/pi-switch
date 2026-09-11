@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 func isolate(t *testing.T) string {
@@ -72,6 +73,42 @@ func TestValidateProfileCoversAllThreeRuleClasses(t *testing.T) {
 	retry.RequestRetry = &tooManyRetries
 	if err := ValidateProfile(retry); err == nil || !strings.Contains(err.Error(), "requestRetry") {
 		t.Fatalf("retry rule missing: %v", err)
+	}
+}
+
+// A flat profile (no channels) *is* the effective pair, so the create path must
+// judge it by the same capability rule the whole-file config door applies:
+// unknown api rejected, known-but-unproxyable rejected, proxyable accepted.
+// The rule used to live only inside ProfileIssues' channel loop, so an absent
+// `upstreams` meant no verdict at all on this door — a flat google profile was
+// stored even though every request through it fails.
+func TestCreateProfileFlatProfileObeysCapabilityContract(t *testing.T) {
+	isolate(t)
+	flat := func(api string) config.ProviderProfile {
+		return config.ProviderProfile{
+			API:           api,
+			ResponsesMode: "auto",
+			BaseURL:       "https://example.test/v1",
+			APIKey:        "k",
+		}
+	}
+
+	rejected := []struct {
+		api  string
+		want string
+	}{
+		{protocol.GoogleGenerativeAI, "not currently proxy-supported"},
+		{"unknown-api", "unsupported api"},
+	}
+	for _, tc := range rejected {
+		err := CreateProfile("flat-"+tc.api, flat(tc.api))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("flat %s = %v, want an error containing %q", tc.api, err, tc.want)
+		}
+	}
+
+	if err := CreateProfile("flat-ok", flat(protocol.OpenAIResponses)); err != nil {
+		t.Fatalf("flat proxyable api rejected: %v", err)
 	}
 }
 

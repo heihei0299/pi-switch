@@ -432,7 +432,10 @@ function ProfileForm({
                   </option>
                 ))}
                 {!protocolApiIds(caps).includes(apiType) && apiType && (
-                  <option value={apiType}>{apiType}</option>
+                  // 旧配置里的未知值仍要能显示并回显，但不可再选：服务端写入口会拒绝它。
+                  <option value={apiType} disabled>
+                    {apiType}
+                  </option>
                 )}
               </Select>
               <p className="mt-1 text-xs text-zinc-500">{t("Select the API interface format for the AI service.")}</p>

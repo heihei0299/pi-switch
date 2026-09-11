@@ -179,6 +179,10 @@ describe("API type human-readable labels", () => {
     expect(apiSelect.value).toBe("unknown-api");
     const options = Array.from(apiSelect.querySelectorAll("option"));
     expect(options.some((o) => o.value === "unknown-api")).toBe(true);
+    // 与已知但不可代理的 api 一致：旧值可见、可回显，但不能被重新选中——服务端写入口
+    // （PUT /api/config、Profile CRUD）都拒绝对这个值落盘。
+    const current = options.find((o) => o.value === "unknown-api") as HTMLOptionElement;
+    expect(current.disabled).toBe(true);
   });
 
   it("shows help text for the interface format selector", async () => {

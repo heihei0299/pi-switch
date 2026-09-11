@@ -9,13 +9,22 @@ import (
 )
 
 // ValidateProfile is the whole business-rule gate for one profile, in the order the
-// surfaces report it: responsesMode compatibility, then shape, then retry knobs. It
-// is the single sequence behind CreateProfile (POST /api/profiles, `provider add`)
-// and PUT /api/profiles/:name, which overwrites instead of creating and therefore
-// cannot reuse CreateProfile itself.
+// surfaces report it: responsesMode compatibility, the effective channel's api
+// capability, then shape, then retry knobs. It is the single sequence behind
+// CreateProfile (POST /api/profiles, `provider add`) and PUT /api/profiles/:name,
+// which overwrites instead of creating and therefore cannot reuse CreateProfile
+// itself.
 func ValidateProfile(p config.ProviderProfile) error {
 	if err := ValidateResponsesMode(p); err != nil {
 		return err
+	}
+	if len(p.Upstreams) == 0 {
+		// 无 channel 的 flat profile：它的 api/mode 就是 effective pair，和整文件门
+		// （handleValidate、config 写入路径）判定的是同一个 channel。有 channel 时
+		// profile 顶层 api 不参与运行期解析，逐 channel 由 ProfileIssues 判定。
+		if err := config.ValidateEffectiveChannelAPI(config.Upstream{}, p); err != nil {
+			return err
+		}
 	}
 	if err := ValidateProviderProfile(p); err != nil {
 		return err

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +112,88 @@ func TestPutConfig_CapabilityMatrix(t *testing.T) {
 				t.Fatalf("rejection must name the api and the capability: %s", msg)
 			}
 		})
+	}
+}
+
+// CLOSE-01：Profile CRUD 门（POST /api/profiles、PUT /api/profiles/:name）必须与整文件门
+// 对 flat profile 给出同一个 capability 判定。矩阵从 protocol.Capabilities() 派生并且与
+// TestPutConfig_CapabilityMatrix 用同一份期望（两者都由 CanProxy 决定），所以新增 API 时
+// 必须同时为两个门决定写策略。
+func TestProfileCRUD_CapabilityMatrix(t *testing.T) {
+	isolateConfig(t)
+	r := NewMgmtRouter()
+
+	profileWritePolicy := map[string]bool{
+		protocol.OpenAIChat:         true,
+		protocol.OpenAIResponses:    true,
+		protocol.AnthropicMessages:  true,
+		protocol.GoogleGenerativeAI: false,
+	}
+
+	caps := protocol.Capabilities()
+	if len(caps) != len(profileWritePolicy) {
+		t.Fatalf("capability set changed (%d apis); decide the Profile write result for each new api in profileWritePolicy", len(caps))
+	}
+	for _, cap := range caps {
+		allow, decided := profileWritePolicy[cap.ID]
+		if !decided {
+			t.Fatalf("no Profile write policy for api %q (CanProxy=%v CanGateway=%v)", cap.ID, cap.CanProxy, cap.CanGateway)
+		}
+		if allow != cap.CanProxy {
+			t.Fatalf("api %q: Profile write allow=%v, want %v (CanProxy is the one source)", cap.ID, allow, cap.CanProxy)
+		}
+		t.Run(cap.ID, func(t *testing.T) {
+			prof := `{"api":"` + cap.ID + `","responsesMode":"` + cap.DefaultMode + `","baseUrl":"https://example.test/v1","apiKey":"k"}`
+			posted := callMgmt(r, http.MethodPost, "/api/profiles", `{"name":"`+cap.ID+`","profile":`+prof+`}`)
+			put := callMgmt(r, http.MethodPut, "/api/profiles/"+cap.ID+"-copy", `{"profile":`+prof+`}`)
+			if cap.CanProxy {
+				if posted.Code != http.StatusOK {
+					t.Fatalf("POST /api/profiles with api %q = %d, want 200 (proxy-supported APIs must stay writable): %s", cap.ID, posted.Code, posted.Body.String())
+				}
+				if put.Code != http.StatusOK {
+					t.Fatalf("PUT /api/profiles/:name with api %q = %d, want 200: %s", cap.ID, put.Code, put.Body.String())
+				}
+				return
+			}
+			// 两个门一起判定：POST 走 CreateProfile，PUT 覆写所以直接走 ValidateProfile，
+			// 只有两个都拒才算 capability contract 在 CRUD 面上闭合。
+			failed := ""
+			for _, door := range []struct {
+				name string
+				w    *httptest.ResponseRecorder
+			}{
+				{"POST /api/profiles", posted},
+				{"PUT /api/profiles/:name", put},
+			} {
+				if door.w.Code != http.StatusBadRequest {
+					failed += fmt.Sprintf("\n%s with known-but-unproxyable api %q = %d, want 400: %s", door.name, cap.ID, door.w.Code, door.w.Body.String())
+					continue
+				}
+				if msg := door.w.Body.String(); !strings.Contains(msg, cap.ID) || !strings.Contains(msg, "proxy") {
+					failed += fmt.Sprintf("\n%s rejection must name the api and the capability: %s", door.name, msg)
+				}
+			}
+			if failed != "" {
+				t.Fatal(failed)
+			}
+		})
+	}
+}
+
+// 门的 capability 判定来自 protocol.IsKnown：CRUD 门也必须拒掉已知集合之外的值，
+// 否则 Profile 写入口仍比整文件门宽松（advisory 会把它当历史坏配置报出来）。
+func TestProfileCRUD_RejectsUnknownAPI(t *testing.T) {
+	isolateConfig(t)
+	r := NewMgmtRouter()
+	prof := `{"api":"unknown-api","responsesMode":"auto","baseUrl":"https://example.test/v1","apiKey":"k"}`
+
+	posted := callMgmt(r, http.MethodPost, "/api/profiles", `{"name":"p","profile":`+prof+`}`)
+	if posted.Code != http.StatusBadRequest || !strings.Contains(posted.Body.String(), "unsupported api unknown-api") {
+		t.Fatalf("POST /api/profiles with an unknown api = %d (%s), want 400 naming it", posted.Code, posted.Body.String())
+	}
+	put := callMgmt(r, http.MethodPut, "/api/profiles/p", `{"profile":`+prof+`}`)
+	if put.Code != http.StatusBadRequest || !strings.Contains(put.Body.String(), "unsupported api unknown-api") {
+		t.Fatalf("PUT /api/profiles/:name with an unknown api = %d (%s), want 400 naming it", put.Code, put.Body.String())
 	}
 }
 

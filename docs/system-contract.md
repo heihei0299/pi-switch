@@ -38,7 +38,7 @@
 | model `id` 缺失、`null` 或空字符串 | 非法模型项；不生成空 ID 行、不发布、不路由 |
 | model metadata 缺失或 `contextWindow`/`maxTokens` 为 0 | 保留可用的本地模型项；不伪造 context/maxTokens/cost；clamp 不重写请求中的三个 max key，cost 记为 unknown |
 | `PUT /api/config`（整文件写入） | 按运行期同一口径逐个 channel 判定 effective api/responsesMode（channel 声明优先、否则回退 profile；legacy flat profile 走 `ResolvedUpstreams` 的 fallback 语义，因此它的 profile 级 api/baseUrl/apiKey 也参与判定）；被拒绝的 effective api 有三类：缺失、未知、已知但当前不可代理。不跑 shape/模型/channel 名校验 |
-| Profile CRUD（`POST /api/profiles`、`PUT /api/profiles/:name`、CLI `provider add`） | 跑完整 `profile.ValidateProfile`：responsesMode → profile shape → retry |
+| Profile CRUD（`POST /api/profiles`、`PUT /api/profiles/:name`、CLI `provider add`） | 跑完整 `profile.ValidateProfile`：responsesMode → 无 channel 的 flat profile 按整文件门同一口径判定 effective api（缺失/未知/已知但不可代理）→ profile shape → retry。profile 声明了 channel 时，顶层 api 不参与运行期解析，逐 channel 由 `ProfileIssues`/`ValidateUpstreamAPI` 判定 |
 | `GET /api/config/validate`（advisory） | 报告完整诊断、不阻断也不写入：profile 内容 validation 逐条来自 `profile.ProfileIssues`（带字段路径，含能力诊断），并附加 config-level diagnostics（api/baseUrl/no-models/modelsDevProvider/retry/settings）。它**不镜像** profile map key、rename、existence 这类 CRUD 外层语义，且因含 CRUD 内容规则而可能比运行期更严（例如要求每个 channel 自带 api） |
 
 写入门的校验强度差异是**有意的**，不是遗漏：
@@ -50,7 +50,6 @@
 5. `ResolvedUpstreams` 与 runtime 共享的是 **effective upstream fallback 语义**（api/baseUrl/apiKey 的取值来源），不是「合成出的 channel 一定能走完 route resolution」——route resolution 只遍历 `prof.Upstreams` 与 `ExposedModels`，所以 legacy flat profile 的可用性不由本节断言。
 6. 旧配置的逃生通道：若磁盘上的配置含不可代理 API，整文件门会拒绝保存并点名 profile/字段，但 **Profile CRUD 仍然可用**（`PUT /api/profiles/:name` 改成可代理的 api、`DELETE /api/profiles/:name` 删除该 profile），也可以直接编辑磁盘文件；`GET /api/config/validate` 会先一步把问题报出来，WebUI 的 api 选择器把不可代理的 api 显示为不可选（但仍保留旧值）。因此不会出现无法修复的配置。
 7. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
-5. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 ### 2.3 Gateway
 
