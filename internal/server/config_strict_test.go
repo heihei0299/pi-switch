@@ -4,7 +4,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/config"
 )
 
 // ARCH-01: a corrupt config must fail the read endpoints explicitly instead of
@@ -35,5 +39,55 @@ func TestStrictConfig_MissingFileStillServesDefault(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /api/settings without config = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+// ARCH-02: PUT /api/config parses the body into the typed config before it
+// persists, so a body the strict loader would reject can never be written, and
+// the save goes through the 0600 atomic writer.
+func TestPutConfig_ParsesBeforePersist(t *testing.T) {
+	cfgPath := isolateConfig(t)
+	r := NewMgmtRouter()
+	put := func(body string) int {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := put(`{"version":"two"}`); code != http.StatusBadRequest {
+		t.Fatalf("PUT config with a wrong field type = %d, want 400", code)
+	}
+	if code := put(`{"version":2,"profiles":{"p":{"api":"openai-completions","responsesMode":"passthrough"}}}`); code != http.StatusBadRequest {
+		t.Fatalf("PUT config with an invalid responsesMode = %d, want 400", code)
+	}
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		t.Fatalf("a rejected PUT must not create %s (stat err=%v)", cfgPath, err)
+	}
+
+	body := `{"version":2,"current":"p","profiles":{"p":{"api":"openai-completions","baseUrl":"https://example.test/v1","apiKey":"k"}},"settings":{"writeMode":"gateway"}}`
+	if code := put(body); code != http.StatusOK {
+		t.Fatalf("PUT valid config = %d, want 200", code)
+	}
+	info, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if mode := info.Mode().Perm(); mode != 0600 {
+			t.Fatalf("saved config mode = %o, want 600", mode)
+		}
+	}
+	reloaded, _, err := config.LoadConfigAtPath(cfgPath)
+	if err != nil {
+		t.Fatalf("strict reload of PUT config: %v", err)
+	}
+	if _, ok := reloaded.Profiles["p"]; !ok {
+		t.Fatalf("saved config lost profile p: %+v", reloaded.Profiles)
+	}
+	if reloaded.Settings.Proxy.Host != "127.0.0.1" || reloaded.Settings.Proxy.Port != 43112 {
+		t.Fatalf("settings defaults not backfilled: %+v", reloaded.Settings.Proxy)
 	}
 }

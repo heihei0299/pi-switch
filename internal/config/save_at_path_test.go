@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -153,4 +154,28 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// ARCH-02: the config must never be world-readable. SaveAtPath writes through a
+// 0600 temp file and the rename carries that mode onto the final file, even when
+// the previous file was 0644.
+func TestSaveAtPath_FileModeIs0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports mode bits differently")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAtPath(DefaultConfig(), path); err != nil {
+		t.Fatalf("SaveAtPath: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0600 {
+		t.Fatalf("config mode = %o, want 600", mode)
+	}
 }

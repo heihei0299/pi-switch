@@ -319,9 +319,49 @@ func ResolvePath() string {
 	return filepath.Join(home, ".pi-switch", "config.json")
 }
 
-// SaveAtPath applies the save-time migration and writes cfg to path atomically
-// (temp file + rename), creating the parent directory as needed.
-// Every entry point must go through this so that no caller skips the migration.
+// writeFileAtomic writes data to path through a temp file in the same directory,
+// fsyncs it and renames it into place. Writing to a temp file means path either
+// keeps its previous content or holds the complete new content, and the rename
+// preserves the temp file's 0600 mode so the config is never world-readable.
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	// CreateTemp already uses 0600, but an unusual umask can only clear bits, so
+	// set the mode explicitly to keep the guarantee.
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+// SaveAtPath applies the save-time migration and writes cfg to path atomically,
+// creating the parent directory as needed. Every entry point must go through
+// this so that no caller skips the migration or the 0600 atomic write.
 func SaveAtPath(cfg PiSwitchConfig, path string) error {
 	cfg = MigratedForSave(cfg)
 	if dir := filepath.Dir(path); dir != "" {
@@ -333,11 +373,7 @@ func SaveAtPath(cfg PiSwitchConfig, path string) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeFileAtomic(path, append(b, '\n'))
 }
 
 // ChannelName returns the stable key of the i-th upstream ("" when unnamed).
@@ -361,6 +397,52 @@ func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
 	return nil, nil
 }
 
+// ParseConfig parses config JSON with the same semantics every entry point uses:
+// fields default from DefaultConfig, an explicit "profiles" replaces the
+// placeholder profile, and any wrong field type is an error. Callers that write
+// config back must parse through here first so they never persist raw JSON that
+// the loader would reject.
+func ParseConfig(b []byte) (PiSwitchConfig, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return PiSwitchConfig{}, err
+	}
+	cfg := DefaultConfig()
+	if v, ok := raw["version"]; ok {
+		if err := json.Unmarshal(v, &cfg.Version); err != nil {
+			return PiSwitchConfig{}, fmt.Errorf("version: %w", err)
+		}
+	}
+	if v, ok := raw["current"]; ok {
+		if err := json.Unmarshal(v, &cfg.Current); err != nil {
+			return PiSwitchConfig{}, fmt.Errorf("current: %w", err)
+		}
+	}
+	if v, ok := raw["profiles"]; ok {
+		// Replace the placeholder profile instead of merging the file's profiles
+		// into it.
+		cfg.Profiles = map[string]ProviderProfile{}
+		if err := json.Unmarshal(v, &cfg.Profiles); err != nil {
+			return PiSwitchConfig{}, fmt.Errorf("profiles: %w", err)
+		}
+		if cfg.Profiles == nil {
+			cfg.Profiles = map[string]ProviderProfile{}
+		}
+	}
+	if v, ok := raw["settings"]; ok {
+		if err := json.Unmarshal(v, &cfg.Settings); err != nil {
+			return PiSwitchConfig{}, fmt.Errorf("settings: %w", err)
+		}
+	}
+	// A v1 file is normalized in memory on load; MigratedForSave re-applies the
+	// same rule when writing. The settings defaults no longer need re-doing here:
+	// cfg starts from DefaultConfig and Settings.UnmarshalJSON owns its backfill.
+	if cfg.Version < 2 {
+		cfg.Version = 2
+	}
+	return cfg, nil
+}
+
 // LoadConfigAtPath reads and parses the config file at path.
 //
 // A missing file is the only condition that yields DefaultConfig. Anything else
@@ -374,42 +456,9 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 		}
 		return PiSwitchConfig{}, "", fmt.Errorf("read config %s: %w", path, err)
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
+	cfg, err := ParseConfig(b)
+	if err != nil {
 		return PiSwitchConfig{}, "", fmt.Errorf("parse config %s: %w", path, err)
-	}
-	cfg := DefaultConfig()
-	if v, ok := raw["version"]; ok {
-		if err := json.Unmarshal(v, &cfg.Version); err != nil {
-			return PiSwitchConfig{}, "", fmt.Errorf("config %s version: %w", path, err)
-		}
-	}
-	if v, ok := raw["current"]; ok {
-		if err := json.Unmarshal(v, &cfg.Current); err != nil {
-			return PiSwitchConfig{}, "", fmt.Errorf("config %s current: %w", path, err)
-		}
-	}
-	if v, ok := raw["profiles"]; ok {
-		// Replace the placeholder profile instead of merging the file's profiles
-		// into it.
-		cfg.Profiles = map[string]ProviderProfile{}
-		if err := json.Unmarshal(v, &cfg.Profiles); err != nil {
-			return PiSwitchConfig{}, "", fmt.Errorf("config %s profiles: %w", path, err)
-		}
-		if cfg.Profiles == nil {
-			cfg.Profiles = map[string]ProviderProfile{}
-		}
-	}
-	if v, ok := raw["settings"]; ok {
-		if err := json.Unmarshal(v, &cfg.Settings); err != nil {
-			return PiSwitchConfig{}, "", fmt.Errorf("config %s settings: %w", path, err)
-		}
-	}
-	// A v1 file is normalized in memory on load; MigratedForSave re-applies the
-	// same rule when writing. The settings defaults no longer need re-doing here:
-	// cfg starts from DefaultConfig and Settings.UnmarshalJSON owns its backfill.
-	if cfg.Version < 2 {
-		cfg.Version = 2
 	}
 	return cfg, path, nil
 }

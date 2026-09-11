@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,40 +29,24 @@ func handlePutConfig(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	path := configPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	var v interface{}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		c.JSON(400, gin.H{"error": "invalid json"})
+	// Parse before persisting: writing the raw body would let an operator save
+	// JSON the strict loader then rejects, and the writer would bypass the
+	// migration and 0600 atomic save every other entry point uses.
+	cfg, err := config.ParseConfig(raw)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid config: " + err.Error()})
 		return
 	}
-	// validate responsesMode
-	if m, ok := v.(map[string]interface{}); ok {
-		if profiles, ok := m["profiles"].(map[string]interface{}); ok {
-			for name, pv := range profiles {
-				if pm, ok := pv.(map[string]interface{}); ok {
-					if api, _ := pm["api"].(string); api != "" {
-						if mode, _ := pm["responsesMode"].(string); mode != "" {
-							if err := validateProfileResponsesMode(api, mode); err != nil {
-								c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
-								return
-							}
-						}
-					}
-				}
-			}
+	for name, prof := range cfg.Profiles {
+		if prof.API == "" || prof.ResponsesMode == "" {
+			continue
+		}
+		if err := validateProfileResponsesMode(prof.API, prof.ResponsesMode); err != nil {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
+			return
 		}
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0644); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	// A failed rename means the config was NOT replaced. Reporting success here
-	// would tell the operator their edit was saved while the old file is still in
-	// place (a realistic outcome on Windows when the target is locked).
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := config.SaveAtPath(cfg, configPath()); err != nil {
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
