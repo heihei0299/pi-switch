@@ -10,21 +10,31 @@ import (
 	"testing"
 )
 
-// ARCH-03 / ARCH-05 收尾：显式 draft metadata 不得被 catalog 覆盖。
+// The provider key the draft uses; the plan and the payload must name the same one.
+const draftGatewayProvider = "pi-switch-chat"
+
+// ARCH-03 / ARCH-05 收尾（审查报告 P1）：显式 draft metadata 不得被 catalog 覆盖。
 //
-// draft 路径（preview 与 publish）只做 missing-only enrich：draft 对自己声明的
-// 值拥有最终解释权，用户显式编辑的 contextWindow/maxTokens/reasoning/input/cost
-// 必须原样进入 BuildDraftPlan。overwrite enrich 只属于 generated flow。
+// 数值取自报告的指定场景：catalog contextWindow = 1048576，draft contextWindow = 111，
+// 最终 canonical draft 必须保持 111，maxTokens / reasoning / input / cost 同理。
+// Generated 路径仍用 FillOverwrite；draft 路径只补 draft 未声明的字段。
 func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 	dir := t.TempDir()
-	// catalogFixture 的 test-model：context 5000 / output 500 / reasoning true /
-	// input [text,image] / cost 1,2,0.1 —— 与下方 draft 显式值全部冲突。
-	writeCatalogCache(t, dir)
+	catalogPath := filepath.Join(dir, "models-dev.json")
+	catalogJSON := `{"acme":{"models":{"flash-x":{
+		"name":"Flash X","reasoning":true,
+		"modalities":{"input":["text","image"]},
+		"limit":{"context":1048576,"output":131072},
+		"cost":{"input":0.5,"output":1.5,"cache_read":0.1}}}}}`
+	if err := os.WriteFile(catalogPath, []byte(catalogJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
 	cfgJSON := `{"version":2,"profiles":{
-		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
+		"acme":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k",
 			"upstreams":[{"name":"main","api":"openai-completions","baseUrl":"http://x","apiKey":"k",
-			"models":[{"id":"test-model","contextWindow":0,"maxTokens":0}],
-			"exposedModels":["test-model"]}]}},
+			"models":[{"id":"flash-x","contextWindow":0,"maxTokens":0}],
+			"exposedModels":["flash-x"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	mp := filepath.Join(dir, "models.json")
@@ -32,11 +42,11 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 
 	draft := map[string]interface{}{
 		"providers": map[string]interface{}{
-			"pi-switch-chat": map[string]interface{}{
+			draftGatewayProvider: map[string]interface{}{
 				"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1",
 				"apiKey": "pi-switch-proxy", "proxy": false,
 				"models": []interface{}{map[string]interface{}{
-					"id":            "test-model",
+					"id":            "flash-x",
 					"contextWindow": 111,
 					"maxTokens":     11,
 					"reasoning":     false,
@@ -70,6 +80,21 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 	}
 	assertDraftMetadataWins(t, firstGatewayModel(t, proposed), "preview")
 
+	// 对照（models.json 尚未发布，current 为空）：Generated 路径仍把 config 里的
+	// 陈旧默认值刷成 catalog 值，overwrite enrich 未被削弱。
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/models/gateway/preview", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	generated, ok := resp["proposed"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("generated proposed missing: %v", resp)
+	}
+	if got := firstGatewayModel(t, generated)["contextWindow"]; got != float64(1048576) {
+		t.Fatalf("generated contextWindow = %v, want the catalog's 1048576", got)
+	}
+
 	// publish：PUT /api/models/gateway 落盘的 canonical proposed 保持同一结果。
 	payload, _ := json.Marshal(draft)
 	w = httptest.NewRecorder()
@@ -93,9 +118,9 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 
 func firstGatewayModel(t *testing.T, providers map[string]interface{}) map[string]interface{} {
 	t.Helper()
-	entry, ok := providers["pi-switch-chat"].(map[string]interface{})
+	entry, ok := providers[draftGatewayProvider].(map[string]interface{})
 	if !ok {
-		t.Fatalf("pi-switch-chat provider missing: %v", providers)
+		t.Fatalf("%s provider missing: %v", draftGatewayProvider, providers)
 	}
 	models, _ := entry["models"].([]interface{})
 	if len(models) != 1 {
@@ -113,10 +138,10 @@ func firstGatewayModel(t *testing.T, providers map[string]interface{}) map[strin
 func assertDraftMetadataWins(t *testing.T, m map[string]interface{}, where string) {
 	t.Helper()
 	if m["contextWindow"] != float64(111) {
-		t.Fatalf("%s: contextWindow = %v, want 111 (catalog 5000 must not overwrite)", where, m["contextWindow"])
+		t.Fatalf("%s: contextWindow = %v, want 111 (catalog 1048576 must not overwrite)", where, m["contextWindow"])
 	}
 	if m["maxTokens"] != float64(11) {
-		t.Fatalf("%s: maxTokens = %v, want 11 (catalog 500 must not overwrite)", where, m["maxTokens"])
+		t.Fatalf("%s: maxTokens = %v, want 11 (catalog 131072 must not overwrite)", where, m["maxTokens"])
 	}
 	if m["reasoning"] != false {
 		t.Fatalf("%s: reasoning = %v, want false (catalog true must not overwrite)", where, m["reasoning"])
@@ -130,7 +155,7 @@ func assertDraftMetadataWins(t *testing.T, m map[string]interface{}, where strin
 		t.Fatalf("%s: cost = %v, want the draft's 9/9/9", where, m["cost"])
 	}
 	// 补齐方向仍在：draft 未声明的 name 由 catalog 补上。
-	if m["name"] != "Test Model" {
-		t.Fatalf("%s: name = %v, want the catalog's Test Model (missing-only fill must still run)", where, m["name"])
+	if m["name"] != "Flash X" {
+		t.Fatalf("%s: name = %v, want the catalog's Flash X (missing-only fill must still run)", where, m["name"])
 	}
 }

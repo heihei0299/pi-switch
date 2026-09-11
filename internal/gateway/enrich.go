@@ -34,13 +34,19 @@ func EnrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interfa
 // (catalog.FillMissing). A draft is the source of truth for its own metadata, so an
 // explicit contextWindow/maxTokens/input/reasoning/cost must reach BuildDraftPlan
 // unchanged; only the generated flow refreshes stale values from the catalog.
+//
+// "Stated" follows the empty-value convention the draft and the model editor already
+// share: a zero contextWindow/maxTokens and an empty input array are "not stated",
+// so the catalog may fill them. Only non-zero numbers and non-empty input pin the
+// value.
 func EnrichDraftModels(cfg config.PiSwitchConfig, draft map[string]interface{}) catalog.EnrichSummary {
 	return enrichModels(cfg, draft, catalog.FillMissing)
 }
 
 // enrichModels is the one lookup walk behind both enrich policies: fill decides
-// whether a catalog hit overwrites a stated value or only fills a gap.
-func enrichModels(cfg config.PiSwitchConfig, proposed map[string]interface{}, fill func(map[string]interface{}, catalog.Meta) bool) catalog.EnrichSummary {
+// whether a catalog hit overwrites a stated value or only fills a gap. target is the
+// proposal or draft map, mutated in place.
+func enrichModels(cfg config.PiSwitchConfig, target map[string]interface{}, fill func(map[string]interface{}, catalog.Meta) bool) catalog.EnrichSummary {
 	snap, stale, warning := catalog.Ensure()
 	enriched, skipped := 0, 0
 	// Fixed gateway providers use bare ids; resolve catalog metadata through the originating supplier.
@@ -60,7 +66,7 @@ func enrichModels(cfg config.PiSwitchConfig, proposed map[string]interface{}, fi
 			}
 		}
 	}
-	provs, ok := proposed["providers"].(map[string]interface{})
+	provs, ok := target["providers"].(map[string]interface{})
 	if !ok {
 		return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 	}

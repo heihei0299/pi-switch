@@ -243,6 +243,9 @@ Draft      → catalog.FillMissing
 `BuildDraftPlan` 本身以 draft 为事实来源；draft 路径（preview 与 publish）必须在进入它
 之前只补缺，否则用户显式编辑的 metadata 会在建 plan 前被 catalog 改写。
 
+“已声明”沿用 draft 与模型编辑器共同的空值约定：数值 0 与空 `input` 数组算未声明（可被
+catalog 补齐），只有非零数值与非空 `input` 才算钉住该字段。
+
 ### Gateway 的事实边界
 
 ```text

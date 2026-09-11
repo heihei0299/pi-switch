@@ -43,10 +43,12 @@
 | 输入 | 语义 |
 |---|---|
 | models 文件不存在 | current 为空；preview 仍返回 canonical proposed；publish 创建父目录并原子写入 |
+| models.json 不可读或 JSON 损坏 | 读取边界报错：`GET /api/models/gateway` 与 preview/publish 返回 500，不伪装成空 current，也不返回 `gateway: null` |
 | `providers` 缺失或 `null` | current 为空 map；不删除或覆盖任何不存在的第三方 provider |
 | fixed provider 无 exposed model | canonical proposed 不包含该 provider；发布后不保留 stale fixed provider |
 | 第三方 provider | 不属于 pi-switch 管理范围，发布时原样保留其 entry 和未受管字段 |
 | Gateway-owned model metadata（`name`/`reasoning`/`input`/`contextWindow`/`maxTokens`/`thinkingLevelMap`/`cost`/`compat`/`headers`/其他 `extra`）缺失 | 不生成空的伪字段；current 中存在的受允许 metadata 合并进 canonical proposed，显式 draft 优先 |
+| models.dev catalog enrich | Generated 用 catalog 覆盖陈旧值（`FillOverwrite`）；Draft 只补 draft 未声明的字段（`FillMissing`），进入 `BuildDraftPlan` 前不得改写 draft 显式值。数值 0 与空 `input` 数组按“未声明”处理，与 draft/编辑器的空值约定一致 |
 | validation/conflict 非空 | publish 零写入；不部分写入、不先写临时目标再报告冲突 |
 | 连续 publish 同一 canonical plan | 结构等价且 `pending_count=0`；不得因 normalization 或 extra merge 产生漂移 |
 
@@ -115,6 +117,8 @@
 | model id 缺失/null/空字符串不发布、不路由 | §2.2 model id | IMP-05；后续 IMP-07/08 | model validation tests | Gateway 和 `/v1/models` 无空 ID |
 | 无模型 metadata/context/maxTokens 不伪造，三个 max key 不重写 | §2.2 model metadata；§2.4.5 | IMP-02 | clamp nil/zero metadata tests | 无 metadata 的真实请求保持客户端 max 值且不触发本地伪造 |
 | models 文件不存在时 current 为空，publish 创建目录并原子写 | §2.3 models file | IMP-05 | golden/atomic write tests | 真实 models.json 副本首次 publish 可被 Pi 解析 |
+| models.json 损坏/不可读时读取边界报错而非空 current | §2.3 models file | IMP-05 | gateway read boundary tests | 损坏文件下 `GET /api/models/gateway` 返回 500，不返回 `gateway: null` |
+| Draft 路径只补缺，显式 draft metadata 不被 catalog 覆盖 | §2.3 catalog enrich | IMP-05；后续 IMP-06 | draft enrich tests（1048576 vs 111） | 编辑 metadata 后 publish 落盘值仍为编辑值 |
 | providers 缺失/null 不删除不存在的第三方 provider | §2.3 providers | IMP-05 | current-empty/preservation tests | 真实第三方 provider 字节/结构保留 |
 | fixed provider 无 exposed model 时不保留 stale entry | §2.3 fixed provider | IMP-05 | stale provider cleanup tests | 删除模型后重新 preview/publish 不复活 |
 | Gateway-owned model metadata 由 canonical merge 保留，显式 draft 优先 | §2.3 Gateway metadata | IMP-05；后续 IMP-06 | manual metadata preservation tests | publish 后再次 preview pending 为 0 |
