@@ -50,8 +50,10 @@ func handlePutConfig(c *gin.Context) {
 		}
 		// 第二层：与运行期同一口径——请求路径先 narrowToChannel(ResolvedUpstreams()[i])，
 		// 再交给 translator.PlanRequest；所以逐个 channel 判它的 effective api/mode
-		// （channel 声明优先、否则回退 profile）。legacy flat profile 由 ResolvedUpstreams
-		// 合成同一个 channel。shape/模型/channel 名校验不在此门（CRUD 门的规则，见 §2.2）。
+		// （channel 声明优先、否则回退 profile）。ResolvedUpstreams 与 runtime 共享的是
+		// effective upstream fallback 语义（api/baseUrl/apiKey 的来源），不表示 legacy
+		// flat profile 一定能走完 route resolution。shape/模型/channel 名校验不在此门
+		// （CRUD 门的规则，见 §2.2）。
 		for idx, u := range prof.ResolvedUpstreams() {
 			if err := config.ValidateEffectiveChannelAPI(u, prof); err != nil {
 				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: upstreams[%d]: %s", name, idx, err.Error())})
@@ -507,14 +509,26 @@ func handleGetCredits(c *gin.Context) {
 }
 
 // ProviderPresets is the single source of the static provider preset list,
-// shared by GET /api/presets and `pi-switch preset`.
+// shared by GET /api/presets and `pi-switch preset`. Presets are filtered by the
+// one capability source so the list can never offer a profile the write doors
+// refuse.
 func ProviderPresets() []map[string]interface{} {
-	return []map[string]interface{}{
+	all := []map[string]interface{}{
 		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
 		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": protocol.AnthropicMessages, "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
 		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": protocol.GoogleGenerativeAI, "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
 		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
 	}
+	// 预设必须与写入口能力一致：不可代理的 api 现在会被两个写入口拒绝，若仍在这里
+	// 提供预设，用户点选后只会拿到一个必失败的保存。过滤依据是同一个能力来源
+	// protocol.CanProxy，不维护第二份列表（见 system-contract §2.2）。
+	usable := make([]map[string]interface{}, 0, len(all))
+	for _, preset := range all {
+		if api, _ := preset["api"].(string); protocol.CanProxy(api) {
+			usable = append(usable, preset)
+		}
+	}
+	return usable
 }
 
 func handlePresets(c *gin.Context) {
@@ -554,6 +568,12 @@ func handleValidate(c *gin.Context) {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": "api required"})
 		} else if !protocol.IsKnown(prof.API) {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": fmt.Sprintf("unsupported api %s", prof.API)})
+		} else if len(prof.Upstreams) == 0 {
+			// legacy flat profile：effective api 就是 profile 自己的 api，路径按 profile 报。
+			// 声明了 channel 的 profile 由 ProfileIssues 逐 channel 报（同一能力来源）。
+			if err := config.ValidateEffectiveChannelAPI(config.Upstream{}, prof); err != nil {
+				issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": err.Error()})
+			}
 		}
 		if prof.BaseURL == "" && len(prof.Upstreams) == 0 {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.baseUrl", name), "message": "baseUrl required"})

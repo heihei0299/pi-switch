@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/protocol"
+)
 
 func TestChannelAPI_IsRequired(t *testing.T) {
 	prof := ProviderProfile{API: "openai-completions", ResponsesMode: "auto"}
@@ -40,6 +45,15 @@ func TestChannelAPI_EffectiveRulesForTheTolerantDoor(t *testing.T) {
 	// 未知 api 照报（消息比 mode 错误更贴切）。
 	if err := ValidateEffectiveChannelAPI(Upstream{API: "invalid-api"}, prof); err == nil {
 		t.Fatal("unknown api must be rejected")
+	}
+	// FINAL-01：已知但当前不可代理的 api 同样是运行期必失败（translator.upstreamFormat
+	// 拒绝它的每个请求），因此也拒收，且消息要同时说明 api 与 proxy。
+	err := ValidateEffectiveChannelAPI(Upstream{API: protocol.GoogleGenerativeAI}, prof)
+	if err == nil {
+		t.Fatal("known-but-unproxyable api must be rejected")
+	}
+	if msg := err.Error(); !strings.Contains(msg, protocol.GoogleGenerativeAI) || !strings.Contains(msg, "proxy") {
+		t.Fatalf("message must name the api and the capability: %q", msg)
 	}
 	// 严格门额外要求 channel 自带 api —— 两者差别只有这一点。
 	if err := ValidateUpstreamAPI(Upstream{}, prof); err == nil {

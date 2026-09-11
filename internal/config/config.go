@@ -95,6 +95,11 @@ func (u Upstream) EffectiveAPI(fallback string) string {
 // ResolvedUpstreams). It does not demand that the channel declare its own api, but a
 // pair with no api anywhere is not "nothing to judge": every request through that
 // channel fails, so it is an error like any other incompatible pair.
+//
+// A known-but-unproxyable api is rejected too: protocol.CanProxy is the one
+// capability source, translator.upstreamFormat refuses every request for such an api
+// (google-generative-ai today), and the write doors therefore refuse to store a
+// profile that cannot run instead of surfacing the failure at request time.
 func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
 	api := u.EffectiveAPI(profile.API)
 	if api == "" {
@@ -102,6 +107,9 @@ func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
 	}
 	if !protocol.IsKnown(api) {
 		return fmt.Errorf("unsupported api %s", api)
+	}
+	if !protocol.CanProxy(api) {
+		return fmt.Errorf("api %s is not currently proxy-supported", api)
 	}
 	return protocol.ValidateResponsesMode(api, u.EffectiveResponsesMode(profile.ResponsesMode))
 }

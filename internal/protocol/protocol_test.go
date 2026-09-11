@@ -8,8 +8,9 @@ import (
 )
 
 // The capability split is the contract the three surfaces depend on:
-// google-generative-ai is a known api the config may store, but neither the
-// translator nor the gateway can serve it.
+// google-generative-ai is a known api, but neither the translator nor the gateway
+// can serve it — so the config write doors reject it (config.ValidateEffectiveChannelAPI)
+// and GET /api/presets filters it out, rather than storing a profile that cannot run.
 func TestCapabilities(t *testing.T) {
 	cases := []struct {
 		api                   string

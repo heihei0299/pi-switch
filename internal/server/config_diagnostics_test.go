@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 // 后续审查 P2（a）：整文件门必须按每个 channel 的 effective api/mode 判定，否则能存下
@@ -60,12 +62,120 @@ func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 	}
 }
 
+// FINAL-04：capability regression matrix。矩阵从 protocol.Capabilities() 派生，新增 API
+// 时必须显式决定 Config write 的期望结果，否则这个测试会以「未覆盖」失败——避免只改
+// IsKnown 就上线。
+func TestPutConfig_CapabilityMatrix(t *testing.T) {
+	isolateConfig(t)
+	r := NewMgmtRouter()
+
+	// 每个已知 API 的 Config write 期望：能否被请求路径执行（CanProxy）决定。
+	configWritePolicy := map[string]bool{
+		protocol.OpenAIChat:         true,
+		protocol.OpenAIResponses:    true,
+		protocol.AnthropicMessages:  true,
+		protocol.GoogleGenerativeAI: false,
+	}
+
+	caps := protocol.Capabilities()
+	if len(caps) != len(configWritePolicy) {
+		t.Fatalf("capability set changed (%d apis); decide the Config write result for each new api in configWritePolicy", len(caps))
+	}
+	for _, cap := range caps {
+		allow, decided := configWritePolicy[cap.ID]
+		if !decided {
+			t.Fatalf("no Config write policy for api %q (CanProxy=%v CanGateway=%v)", cap.ID, cap.CanProxy, cap.CanGateway)
+		}
+		if allow != cap.CanProxy {
+			t.Fatalf("api %q: Config write allow=%v, want %v (CanProxy is the one source)", cap.ID, allow, cap.CanProxy)
+		}
+		t.Run(cap.ID, func(t *testing.T) {
+			// legacy flat profile：effective api 就是 profile 的 api。
+			body := `{"version":2,"profiles":{"p":{"api":"` + cap.ID + `","responsesMode":"` + cap.DefaultMode + `","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}}}`
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+
+			if cap.CanProxy {
+				if w.Code != http.StatusOK {
+					t.Fatalf("PUT /api/config with api %q = %d, want 200 (proxy-supported APIs must stay writable): %s", cap.ID, w.Code, w.Body.String())
+				}
+				return
+			}
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("PUT /api/config with known-but-unproxyable api %q = %d, want 400: %s", cap.ID, w.Code, w.Body.String())
+			}
+			msg := w.Body.String()
+			if !strings.Contains(msg, cap.ID) || !strings.Contains(msg, "proxy") {
+				t.Fatalf("rejection must name the api and the capability: %s", msg)
+			}
+		})
+	}
+}
+
+// FINAL-02：advisory 必须能发现磁盘上已有的不可代理 API（旧配置、手工改盘、降级场景），
+// 且旧 flat profile 的路径按 profile 报。
+func TestValidate_ReportsKnownButUnproxyableAPI(t *testing.T) {
+	isolateConfig(t)
+	flat := `{"version":2,"profiles":{"p":{"api":"` + protocol.GoogleGenerativeAI + `","responsesMode":"auto","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}}}`
+	writeChannelConfig(t, t.TempDir(), flat)
+
+	w := httptest.NewRecorder()
+	NewMgmtRouter().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config/validate", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/config/validate = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var issues []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &issues); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, issue := range issues {
+		path, _ := issue["path"].(string)
+		message, _ := issue["message"].(string)
+		if path == "profiles.p.api" && strings.Contains(message, protocol.GoogleGenerativeAI) {
+			if level, _ := issue["level"].(string); level != "error" {
+				t.Fatalf("capability issue level = %q, want error: %v", level, issue)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("validate must report the known-but-unproxyable api at profiles.p.api; got %v", issues)
+	}
+}
+
+// 预设列表必须与写入口能力一致：不可代理的 api 不再提供预设，避免点选后必然保存失败。
+func TestProviderPresets_OnlyOffersProxySupportedAPIs(t *testing.T) {
+	presets := ProviderPresets()
+	if len(presets) == 0 {
+		t.Fatal("preset list is empty")
+	}
+	seen := map[string]bool{}
+	for _, preset := range presets {
+		api, _ := preset["api"].(string)
+		seen[api] = true
+		if !protocol.CanProxy(api) {
+			t.Fatalf("preset %v offers api %q, which the write doors reject", preset["id"], api)
+		}
+	}
+	for _, cap := range protocol.Capabilities() {
+		if cap.CanProxy != seen[cap.ID] {
+			// 允许「可代理但没有预设」（例如将来新增 api 而暂无预设），只禁止反向。
+			if seen[cap.ID] {
+				t.Fatalf("preset for %q exists but CanProxy=%v", cap.ID, cap.CanProxy)
+			}
+		}
+	}
+}
+
 // profile 与 channel 都没有 api：请求期 upstreamFormat("") 必失败，因此是运行期必失败
 // 的组合，整文件门必须拒绝（不能当成「无可判定」放过）。
 func TestPutConfig_RejectsAChannelPairWithNoAPIAnywhere(t *testing.T) {
 	isolateConfig(t)
-	w := httptest.NewRecorder()
 	body := `{"version":2,"profiles":{"p":{"baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}}}`
+	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	NewMgmtRouter().ServeHTTP(w, req)
