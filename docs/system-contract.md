@@ -43,12 +43,12 @@
 | 输入 | 语义 |
 |---|---|
 | models 文件不存在 | current 为空；preview 仍返回 canonical proposed；publish 创建父目录并原子写入 |
-| models.json 不可读或 JSON 损坏 | 读取边界报错：`GET /api/models/gateway` 与 preview/publish 返回 500，不伪装成空 current，也不返回 `gateway: null` |
+| models.json 不可读或 JSON 损坏 | 读取边界报错：`GET /api/models/gateway` 与 preview/publish 返回 500，不伪装成空 current，也不返回 `gateway: null`。该端点返回 `ReadCurrent` 的投影（`providers`），不保留 models.json 的其它顶层键 |
 | `providers` 缺失或 `null` | current 为空 map；不删除或覆盖任何不存在的第三方 provider |
 | fixed provider 无 exposed model | canonical proposed 不包含该 provider；发布后不保留 stale fixed provider |
 | 第三方 provider | 不属于 pi-switch 管理范围，发布时原样保留其 entry 和未受管字段 |
 | Gateway-owned model metadata（`name`/`reasoning`/`input`/`contextWindow`/`maxTokens`/`thinkingLevelMap`/`cost`/`compat`/`headers`/其他 `extra`）缺失 | 不生成空的伪字段；current 中存在的受允许 metadata 合并进 canonical proposed，显式 draft 优先 |
-| models.dev catalog enrich | Generated 用 catalog 覆盖陈旧值（`FillOverwrite`）；Draft 只补 draft 未声明的字段（`FillMissing`），进入 `BuildDraftPlan` 前不得改写 draft 显式值。数值 0 与空 `input` 数组按“未声明”处理，与 draft/编辑器的空值约定一致 |
+| models.dev catalog enrich | Generated 用 catalog 覆盖陈旧值（`FillOverwrite`）；Draft 只补 draft 未声明的字段（`FillMissing`），进入 `BuildDraftPlan` 前不得改写 draft 显式值。判「未声明」的规则：`name`/`reasoning`/`cost` 子字段按键是否存在（`cost` 写下的 0 是已知零价，如免费模型，不得覆盖；缺键才补）；`contextWindow`/`maxTokens` 的 0 与空 `input` 数组视为未声明，可被 catalog 补齐（这两个字段的 0 不描述任何真实模型，WebUI 也拒收 0） |
 | validation/conflict 非空 | publish 零写入；不部分写入、不先写临时目标再报告冲突 |
 | 连续 publish 同一 canonical plan | 结构等价且 `pending_count=0`；不得因 normalization 或 extra merge 产生漂移 |
 

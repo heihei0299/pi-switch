@@ -196,11 +196,28 @@ func fillFloat(m map[string]interface{}, key string, val float64) bool {
 	return true
 }
 
+// fillAbsentFloat sets m[key] when the key is absent and the catalog value is
+// non-zero. Unlike fillFloat, a stated 0 is a value, not a gap: a cost of 0 is a
+// known price (a free model), and rewriting it with the catalog's price would
+// publish a price the operator explicitly contradicted.
+func fillAbsentFloat(m map[string]interface{}, key string, val float64) bool {
+	if val == 0 {
+		return false
+	}
+	if _, has := m[key]; has {
+		return false
+	}
+	m[key] = val
+	return true
+}
+
 // FillMissing 只补缺失字段，已有值不覆盖，返回是否有目录数据补入。
 // 数值一律写 float64（JSON 域归一，避免与落盘 float64 序列化分叉）。
 //   - name 为空补；contextWindow/maxTokens 缺失或 0 且目录非 0 则补
+//     （这两个字段的 0 不表示任何模型配置，编辑器也拒收 0，故按未声明处理）
 //   - input 缺失或空补；reasoning 缺键则按目录值补（含 false）
-//   - cost 缺失整设（含显式 cacheWrite:0，保 pending 收敛）；已存在则补 0 值子字段
+//   - cost 缺失整设（含显式 cacheWrite:0，保 pending 收敛）；已存在则按子字段补缺，
+//     显式写下的 0 是已知零价（免费模型）而不是空缺，绝不覆盖
 //   - 存量 cost 缺 cacheWrite 键时补零归一（保 pending 收敛），该归一不计入返回值
 func FillMissing(entry map[string]interface{}, meta Meta) bool {
 	filled := false
@@ -232,13 +249,13 @@ func FillMissing(entry map[string]interface{}, meta Meta) bool {
 			filled = true
 		}
 	} else if cm, ok := raw.(map[string]interface{}); ok {
-		if fillFloat(cm, "input", meta.CostInput) {
+		if fillAbsentFloat(cm, "input", meta.CostInput) {
 			filled = true
 		}
-		if fillFloat(cm, "output", meta.CostOutput) {
+		if fillAbsentFloat(cm, "output", meta.CostOutput) {
 			filled = true
 		}
-		if fillFloat(cm, "cacheRead", meta.CacheRead) {
+		if fillAbsentFloat(cm, "cacheRead", meta.CacheRead) {
 			filled = true
 		}
 		if _, has := cm["cacheWrite"]; !has {

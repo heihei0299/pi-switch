@@ -153,10 +153,16 @@ func configWithProxyHost(host string) config.PiSwitchConfig {
 	return cfg
 }
 
+// planWithBaseURL builds a hand-edited plan that a client can actually call: one
+// pi-switch provider carrying one model. An empty model list would be unroutable, and
+// the caveat deliberately stays quiet about those (H7).
 func planWithBaseURL(base string) map[string]interface{} {
 	return map[string]interface{}{
 		"providers": map[string]interface{}{
-			"pi-switch-chat": map[string]interface{}{"api": "openai-completions", "baseUrl": base, "apiKey": "pi-switch-proxy", "models": []interface{}{}},
+			"pi-switch-chat": map[string]interface{}{
+				"api": "openai-completions", "baseUrl": base, "apiKey": "pi-switch-proxy",
+				"models": []interface{}{map[string]interface{}{"id": "m1"}},
+			},
 		},
 	}
 }
@@ -212,8 +218,30 @@ func TestGatewayPublish_StaysQuietWithoutOwnProviders(t *testing.T) {
 	if !strings.Contains(string(raw), "third-party") {
 		t.Fatalf("the third-party entry was not published: %s", raw)
 	}
-	if strings.Contains(string(raw), `"pi-switch-chat"`) {
-		t.Fatalf("the fixture published a pi-switch provider: %s", raw)
+	for _, key := range []string{"pi-switch-chat", "pi-switch-res"} {
+		if strings.Contains(string(raw), `"`+key+`"`) {
+			t.Fatalf("the fixture published %s: %s", key, raw)
+		}
+	}
+}
+
+// H7: a fixed provider published with an empty model list is unroutable —
+// ValidateGatewayProvider accepts `"models": []` — so no client can call it and the
+// 401 cannot happen. The gate must look at models, not just at the provider key.
+func TestGatewayPublish_StaysQuietForAnEmptyFixedProvider(t *testing.T) {
+	publishableConfigWithProxyHost(t, "0.0.0.0")
+	r := NewMgmtRouter()
+
+	payload := `{"providers":{"pi-switch-chat":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","proxy":false,"models":[]}}}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	if warnings := warningsOf(t, w); len(warnings) != 0 {
+		t.Fatalf("an unroutable fixed provider warned about authentication: %v", warnings)
 	}
 }
 

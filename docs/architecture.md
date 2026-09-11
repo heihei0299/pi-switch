@@ -243,8 +243,10 @@ Draft      → catalog.FillMissing
 `BuildDraftPlan` 本身以 draft 为事实来源；draft 路径（preview 与 publish）必须在进入它
 之前只补缺，否则用户显式编辑的 metadata 会在建 plan 前被 catalog 改写。
 
-“已声明”沿用 draft 与模型编辑器共同的空值约定：数值 0 与空 `input` 数组算未声明（可被
-catalog 补齐），只有非零数值与非空 `input` 才算钉住该字段。
+“已声明”是 enrich 自己的规则，不是编辑器的约定（编辑器按「键是否存在」判断，并拒收
+`contextWindow`/`maxTokens` 的 0）：`name`/`reasoning`/`cost` 子字段按**键是否存在**判定，
+`cost` 写下的 0 是已知零价（免费模型），缺键才补；`contextWindow`/`maxTokens` 的 0 与空
+`input` 数组视为未声明，可被 catalog 补齐。
 
 ### Gateway 的事实边界
 

@@ -58,7 +58,8 @@ Status: open —— 需要产品决策，未修复
 
 **处理情况（2026-09-11）**：按 A 案落地（明确告知 + 文档化，不发布任何凭据）。两条 publish 路径（`PUT /api/models/gateway`、`POST /api/gateway/publish`）在非 loopback 绑定时于成功响应中带 `warnings`；CLI `gateway publish` 同样把警告打到 stderr，判断取自**即将写入的条目**自身的 baseUrl，避免与 gateway 包的 host 推法漂移；两个 README 记录了该限制。测试同时断言响应与 `models.json` 都不含共享密码。**根治项（可发布的代理专用 token）仍未决，需另立票。**
 
-**判定范围补记（同日，code review 后定夺）**：告警条件收敛为「plan 至少发布一个 pi-switch fixed provider」+ 原有 exposure 判定（`cfg.Settings.Proxy.Host` 为主、fixed 条目 `baseUrl` 为辅），并明确两条边界：
+**判定范围补记（同日，code review 后定夺）**：告警条件收敛为「plan 至少发布一个**带模型的** pi-switch fixed provider」+ 原有 exposure 判定（`cfg.Settings.Proxy.Host` 为主、fixed 条目 `baseUrl` 为辅），并明确三条边界：
 
 1. **`apiKey` 字面值不参与判定**。客户端把该字段原样当 Bearer 发出，所以手改成真 key 的 fixed provider 同样 401；危害来自「发布了我们的 provider」而不是 placeholder 这个值。回归：`TestGatewayPublish_WarnsWhateverTheFixedEntryKeySays`。
-2. **第三方 provider 不纳入判定，且这不是漏报**。带 placeholder key 的第三方条目根本无法发布——`internal/gateway/gateway.go` 的 `ValidateProposedGateway` 对非 fixed key 直接返回 `unsupported third pi-switch provider`，三条写入路径（WebUI PUT/POST、CLI、TUI）都先查 `plan.Conflicts`；带自有凭据的第三方条目指向别人的端点，本代理的 Basic 要求对它没有可判定语义。回归：`TestGatewayPublish_StaysQuietWithoutOwnProviders`（断言一次「plan 里没有我们的 provider」的 publish 不告警，同时该第三方条目确实被发布）。
+2. **必须真的发布了模型**。`ValidateGatewayProvider` 接受 `"models": []`，这样的 fixed provider 虽然写进 models.json 却不可路由，客户端不会去调，因此不告警。回归：`TestGatewayPublish_StaysQuietForAnEmptyFixedProvider`。
+3. **第三方 provider 不纳入判定，且这不是漏报**。带 placeholder key 的第三方条目不可能发布——`internal/gateway/gateway.go` 的 `ValidateProposedGateway` 对非 fixed key 直接返回 `unsupported third pi-switch provider`，而 `PublishPlan` 自身在 `len(plan.Conflicts) > 0` 时拒绝写入（WebUI 的两条 HTTP 路径另外还会显式映射成 400）。判定范围的理由是**它不是我们的 provider**，不是「它一定指向别人的端点」——手写的第三方条目完全可能指向本代理的 LAN 地址，那种情况由用户自担，pi-switch 不解释其凭据语义。回归：`TestGatewayPublish_StaysQuietWithoutOwnProviders`（断言一次「plan 里没有我们的 provider」的 publish 不告警，同时该第三方条目确实被发布）。

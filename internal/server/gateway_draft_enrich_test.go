@@ -13,20 +13,20 @@ import (
 // The provider key the draft uses; the plan and the payload must name the same one.
 const draftGatewayProvider = "pi-switch-chat"
 
-// ARCH-03 / ARCH-05 收尾（审查报告 P1）：显式 draft metadata 不得被 catalog 覆盖。
-//
-// 数值取自报告的指定场景：catalog contextWindow = 1048576，draft contextWindow = 111，
-// 最终 canonical draft 必须保持 111，maxTokens / reasoning / input / cost 同理。
-// Generated 路径仍用 FillOverwrite；draft 路径只补 draft 未声明的字段。
-func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
-	dir := t.TempDir()
+// Every catalog field conflicts with the draft values used below, so any field that
+// keeps its draft value proves the catalog did not overwrite it.
+const draftEnrichCatalog = `{"acme":{"models":{"flash-x":{
+	"name":"Flash X","reasoning":true,
+	"modalities":{"input":["text","image"]},
+	"limit":{"context":1048576,"output":131072},
+	"cost":{"input":0.5,"output":1.5,"cache_read":0.1}}}}}`
+
+// draftEnrichFixture points both one-shot lookups at temp files: a catalog whose
+// metadata differs from every draft value, and a config exposing one catalog model.
+func draftEnrichFixture(t *testing.T, dir string) string {
+	t.Helper()
 	catalogPath := filepath.Join(dir, "models-dev.json")
-	catalogJSON := `{"acme":{"models":{"flash-x":{
-		"name":"Flash X","reasoning":true,
-		"modalities":{"input":["text","image"]},
-		"limit":{"context":1048576,"output":131072},
-		"cost":{"input":0.5,"output":1.5,"cache_read":0.1}}}}}`
-	if err := os.WriteFile(catalogPath, []byte(catalogJSON), 0644); err != nil {
+	if err := os.WriteFile(catalogPath, []byte(draftEnrichCatalog), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
@@ -37,25 +37,72 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 			"exposedModels":["flash-x"]}]}},
 		"settings":{"providerPrefix":"pi-switch"}}`
 	writeChannelConfig(t, dir, cfgJSON)
-	mp := filepath.Join(dir, "models.json")
-	t.Setenv("PI_SWITCH_MODELS", mp)
+	modelsPath := filepath.Join(dir, "models.json")
+	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+	return modelsPath
+}
 
-	draft := map[string]interface{}{
+// publishDraft PUTs a hand-edited draft and returns the providers that landed in
+// models.json — the canonical plan the publish wrote.
+func publishDraft(t *testing.T, r http.Handler, draft map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	payload, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/models/gateway", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("publish code = %d body %s", w.Code, w.Body.String())
+	}
+	raw, err := os.ReadFile(os.Getenv("PI_SWITCH_MODELS"))
+	if err != nil {
+		t.Fatalf("models.json not written: %v", err)
+	}
+	var stored map[string]interface{}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	providers, ok := stored["providers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("published providers = %v", stored["providers"])
+	}
+	return providers
+}
+
+func draftModel(fields map[string]interface{}) map[string]interface{} {
+	model := map[string]interface{}{"id": "flash-x"}
+	for key, value := range fields {
+		model[key] = value
+	}
+	return map[string]interface{}{
 		"providers": map[string]interface{}{
 			draftGatewayProvider: map[string]interface{}{
 				"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1",
 				"apiKey": "pi-switch-proxy", "proxy": false,
-				"models": []interface{}{map[string]interface{}{
-					"id":            "flash-x",
-					"contextWindow": 111,
-					"maxTokens":     11,
-					"reasoning":     false,
-					"input":         []string{"text"},
-					"cost":          map[string]interface{}{"input": 9, "output": 9, "cacheRead": 9, "cacheWrite": 0},
-				}},
+				"models": []interface{}{model},
 			},
 		},
 	}
+}
+
+// ARCH-03 / ARCH-05 收尾（审查报告 P1）：显式 draft metadata 不得被 catalog 覆盖。
+//
+// 数值取自报告的指定场景：catalog contextWindow = 1048576，draft contextWindow = 111，
+// 最终 canonical draft 必须保持 111，maxTokens / reasoning / input / cost 同理。
+// Generated 路径仍用 FillOverwrite；draft 路径只补 draft 未声明的字段。
+func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
+	dir := t.TempDir()
+	draftEnrichFixture(t, dir)
+	draft := draftModel(map[string]interface{}{
+		"contextWindow": 111,
+		"maxTokens":     11,
+		"reasoning":     false,
+		"input":         []string{"text"},
+		"cost":          map[string]interface{}{"input": 9, "output": 9, "cacheRead": 9, "cacheWrite": 0},
+	})
 	body, err := json.Marshal(map[string]interface{}{"draft": draft})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +111,7 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 
 	// preview：draft → enrich → BuildDraftPlan，返回值必须是 draft 自己的值。
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/models/gateway/preview", strings.NewReader(string(body)))
+	req := httptest.NewRequest("POST", "/api/models/gateway/preview", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	if w.Code != 200 {
@@ -95,25 +142,39 @@ func TestGatewayDraft_ExplicitMetadataBeatsCatalog(t *testing.T) {
 		t.Fatalf("generated contextWindow = %v, want the catalog's 1048576", got)
 	}
 
-	// publish：PUT /api/models/gateway 落盘的 canonical proposed 保持同一结果。
-	payload, _ := json.Marshal(draft)
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("PUT", "/api/models/gateway", strings.NewReader(string(payload)))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("publish code = %d body %s", w.Code, w.Body.String())
+	// publish：落盘的 canonical proposed 保持同一结果。
+	assertDraftMetadataWins(t, firstGatewayModel(t, publishDraft(t, r, draft)), "published")
+}
+
+// 审查后的补丁：draft 显式写下的 cost 0 是已知零价（免费模型），不是空缺。
+// 覆盖检查按子字段判「键是否存在」——缺键才补，写下的 0 必须活下来。
+func TestGatewayDraft_StatedZeroCostIsAFreePrice(t *testing.T) {
+	dir := t.TempDir()
+	draftEnrichFixture(t, dir)
+	r := NewMgmtRouter()
+
+	free := publishDraft(t, r, draftModel(map[string]interface{}{
+		"cost": map[string]interface{}{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+	}))
+	cost, ok := firstGatewayModel(t, free)["cost"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("cost missing: %v", firstGatewayModel(t, free))
 	}
-	raw, err := os.ReadFile(mp)
-	if err != nil {
-		t.Fatalf("models.json not written: %v", err)
+	for _, field := range []string{"input", "output", "cacheRead"} {
+		if cost[field] != float64(0) {
+			t.Fatalf("cost.%s = %v, want the stated 0 (catalog prices must not overwrite a free price)", field, cost[field])
+		}
 	}
-	var stored map[string]interface{}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatal(err)
+
+	// 缺键仍是空缺：不写 cost 的 draft 照旧从目录拿到价格。
+	enriched := publishDraft(t, r, draftModel(map[string]interface{}{}))
+	cost, ok = firstGatewayModel(t, enriched)["cost"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("cost missing: %v", firstGatewayModel(t, enriched))
 	}
-	providers := stored["providers"].(map[string]interface{})
-	assertDraftMetadataWins(t, firstGatewayModel(t, providers), "published")
+	if cost["input"] != float64(0.5) || cost["cacheRead"] != float64(0.1) {
+		t.Fatalf("cost = %v, want the catalog's 0.5/0.1 (an absent key is a gap)", cost)
+	}
 }
 
 func firstGatewayModel(t *testing.T, providers map[string]interface{}) map[string]interface{} {

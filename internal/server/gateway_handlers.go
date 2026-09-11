@@ -145,10 +145,11 @@ func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]
 // Only pi-switch's own providers are judged: a third-party provider the plan
 // carries over from models.json publishes someone else's endpoint, so where it
 // points says nothing about this proxy's authentication. That also means the caveat
-// needs at least one pi-switch provider to be part of what the plan publishes: a
-// plan that publishes none of them (every model unexposed, or a hand-kept
-// third-party provider as the only entry) cannot produce the 401 this warns about,
-// so it stays silent instead of complaining about entries pi-switch does not own.
+// needs at least one pi-switch provider with a model to be part of what the plan
+// publishes: a plan that publishes none of them (every model unexposed, a fixed
+// provider left with an empty model list, or a hand-kept third-party provider as the
+// only entry) cannot produce the 401 this warns about, so it stays silent instead of
+// complaining about entries no client can call.
 //
 // The entry's apiKey value is deliberately not part of the judgement. A Pi client
 // sends whatever sits in that field as a Bearer token, so a hand-edited fixed
@@ -171,12 +172,18 @@ func PublishedAuthCaveat(cfg config.PiSwitchConfig, published map[string]interfa
 }
 
 // publishesFixedGatewayProvider reports whether the plan publishes one of pi-switch's
-// own providers — the only entries a client reads from models.json and calls against
-// this proxy.
+// own providers with at least one model — the only entries a client reads from
+// models.json and can actually call against this proxy. A fixed provider carrying an
+// empty model list is published but unroutable (ValidateGatewayProvider accepts
+// `"models": []`), so it cannot produce the 401 either.
 func publishesFixedGatewayProvider(published map[string]interface{}) bool {
 	providers, _ := published["providers"].(map[string]interface{})
-	for key := range providers {
-		if gateway.IsFixedGatewayProvider(key) {
+	for key, raw := range providers {
+		if !gateway.IsFixedGatewayProvider(key) {
+			continue
+		}
+		entry, _ := raw.(map[string]interface{})
+		if models, ok := entry["models"].([]interface{}); ok && len(models) > 0 {
 			return true
 		}
 	}

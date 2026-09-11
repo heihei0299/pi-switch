@@ -35,10 +35,11 @@ func EnrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interfa
 // explicit contextWindow/maxTokens/input/reasoning/cost must reach BuildDraftPlan
 // unchanged; only the generated flow refreshes stale values from the catalog.
 //
-// "Stated" follows the empty-value convention the draft and the model editor already
-// share: a zero contextWindow/maxTokens and an empty input array are "not stated",
-// so the catalog may fill them. Only non-zero numbers and non-empty input pin the
-// value.
+// "Stated" follows enrich's own rule, per field: name/reasoning and each cost
+// subfield count as stated when the key is present — a cost of 0 is a known price (a
+// free model), never a gap to fill — while a zero contextWindow/maxTokens and an
+// empty input array count as unstated, because no real model is described by 0 there
+// and the model editor refuses those values outright.
 func EnrichDraftModels(cfg config.PiSwitchConfig, draft map[string]interface{}) catalog.EnrichSummary {
 	return enrichModels(cfg, draft, catalog.FillMissing)
 }

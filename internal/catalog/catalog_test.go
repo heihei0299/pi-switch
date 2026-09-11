@@ -143,8 +143,40 @@ func TestCatalog_FillMissingOnly(t *testing.T) {
 	if cost["input"] != 9.0 || cost["output"] != 9.0 {
 		t.Fatalf("cost overwritten: %v", cost)
 	}
+	// 显式写下的 0 是已知零价（免费模型），不是空缺：不被目录价覆盖。
+	if cost["cacheRead"] != 0.0 {
+		t.Fatalf("cacheRead = %v, want 0 (a stated 0 is a known price, not a gap)", cost["cacheRead"])
+	}
+}
+
+// 上一条的另一半：cost 对象在、子字段缺键时目录照补——是「缺键」而不是「值为 0」才算空缺。
+func TestCatalog_FillMissingFillsAbsentCostSubfields(t *testing.T) {
+	tempCache(t)
+	var hits int
+	srv := fixtureServer(t, &hits)
+	defer srv.Close()
+	t.Setenv("PI_SWITCH_CATALOG_URL", srv.URL)
+	snap, _, _ := Ensure()
+	meta, ok := snap.Lookup("gpt-4o-mini")
+	if !ok {
+		t.Fatal("lookup missed")
+	}
+	entry := map[string]interface{}{
+		"id":   "sup/gpt-4o-mini",
+		"cost": map[string]interface{}{"input": 9.0},
+	}
+	if !FillMissing(entry, meta) {
+		t.Fatal("FillMissing reported no change, want the absent cost subfields filled")
+	}
+	cost := entry["cost"].(map[string]interface{})
+	if cost["input"] != 9.0 {
+		t.Fatalf("stated input price overwritten: %v", cost)
+	}
 	if cost["cacheRead"] != 0.075 {
-		t.Fatalf("cacheRead = %v, want 0.075 (filled)", cost["cacheRead"])
+		t.Fatalf("cacheRead = %v, want 0.075 (an absent key is a gap)", cost["cacheRead"])
+	}
+	if _, ok := cost["output"]; !ok {
+		t.Fatalf("output missing, want the catalog value (an absent key is a gap): %v", cost)
 	}
 }
 
@@ -263,11 +295,12 @@ func TestCatalog_FillMissingKeepsTypedNumbers(t *testing.T) {
 		t.Fatal("lookup missed")
 	}
 	// Go 侧提议值为 uint32/int 等非 float64 类型：非零值不得被覆盖。
+	// cacheRead 故意缺键（缺键才是空缺；写下 0 会被当成已知零价，见上一条测试）。
 	entry := map[string]interface{}{
 		"id":            "sup/gpt-4o-mini",
 		"contextWindow": uint32(64000),
 		"maxTokens":     0,
-		"cost":          map[string]interface{}{"input": 9, "output": 9.0, "cacheRead": 0.0},
+		"cost":          map[string]interface{}{"input": 9, "output": 9.0},
 	}
 	if !FillMissing(entry, meta) {
 		t.Fatal("want changes (maxTokens/cacheRead)")
