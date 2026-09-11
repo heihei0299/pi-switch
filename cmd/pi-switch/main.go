@@ -449,7 +449,11 @@ func handleProvider(args []string) int {
 		return 0
 	}
 	cfgPath := config.ResolvePath()
-	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
 	switch args[0] {
 	case "list", "ls":
 		if len(cfg.Profiles) == 0 {
@@ -812,18 +816,14 @@ func handleDoctor() int {
 	cfgPath := config.ResolvePath()
 	problems := 0
 
-	if _, err := os.Stat(cfgPath); err != nil {
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("config: %s (not created yet)\n", cfgPath)
-	} else if err := configFileProblem(cfgPath); err != nil {
-		// LoadConfigAtPath tolerates unparsable JSON by returning defaults, so a
-		// corrupt config would otherwise look healthy to this probe.
+	} else if cfg, source, err := config.LoadConfigAtPath(cfgPath); err != nil {
+		// Strict reading: a corrupt or unreadable config is a real problem, not a
+		// default config that happens to look healthy.
 		fmt.Printf("config: %s unreadable: %v\n", cfgPath, err)
 		problems++
 	} else {
-		// LoadConfigAtPath never returns a non-nil error today (it falls back to
-		// defaults), so its source string is the honest diagnostic to report
-		// rather than an error branch that can never run.
-		cfg, source, _ := config.LoadConfigAtPath(cfgPath)
 		fmt.Printf("config: %s (%d profiles, %s)\n", cfgPath, len(cfg.Profiles), source)
 	}
 
@@ -895,26 +895,17 @@ func derefString(s *string) string {
 	return *s
 }
 
-// configFileProblem reports whether an existing config file is unusable. The
-// loader is deliberately tolerant, so the probe has to check the bytes itself.
-func configFileProblem(path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if !json.Valid(b) {
-		return errors.New("config file is not valid JSON")
-	}
-	return nil
-}
-
 func handleGatewayCLI(args []string) {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println("Usage: pi-switch gateway <publish|status|preview>")
 		os.Exit(0)
 	}
 	cfgPath := config.ResolvePath()
-	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	switch args[0] {
 	case "publish", "apply":
 		toPublish := gateway.BuildProposedGatewayEntry(cfg)
@@ -952,14 +943,17 @@ func handleConfigCLI(args []string) int {
 	case "show", "path":
 		fmt.Println(cfgPath)
 	case "validate":
-		// A corrupt file must not be reported as valid: LoadConfigAtPath falls
-		// back to a default config that has a placeholder profile, so checking
-		// the parsed result alone would always look healthy.
-		if err := configFileProblem(cfgPath); err != nil {
+		// Strict reading now surfaces corruption directly, so the probe can rely
+		// on the loader instead of validating the raw bytes itself.
+		if _, statErr := os.Stat(cfgPath); errors.Is(statErr, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "config invalid: %s does not exist\n", cfgPath)
+			return 1
+		}
+		cfg, _, err := config.LoadConfigAtPath(cfgPath)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "config invalid: %v\n", err)
 			return 1
 		}
-		cfg, _, _ := config.LoadConfigAtPath(cfgPath)
 		if len(cfg.Profiles) == 0 {
 			fmt.Println("warning: no profiles")
 		} else {

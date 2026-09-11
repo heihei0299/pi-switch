@@ -33,7 +33,10 @@ func TestLogRequestPreservesSubsecondTimestampForCurrentStatsWindow(t *testing.T
 	if parsed.Nanosecond() == 0 {
 		t.Fatalf("request timestamp lost subsecond precision: %q", rawTS)
 	}
-	service := newStatsService(db)
+	service, err := newStatsService(db)
+	if err != nil {
+		t.Fatalf("stats service: %v", err)
+	}
 	window := &statsservice.Window{
 		From: parsed.Add(-time.Second).UnixMilli(),
 		To:   parsed.UnixMilli() + 1,

@@ -25,7 +25,10 @@ import (
 )
 
 func handleModels(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	data := []interface{}{}
 	seen := map[string]bool{}
 	for name, prof := range cfg.Profiles {
@@ -285,7 +288,14 @@ func handleChatCompletions(c *gin.Context) {
 		}})
 		return
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, cfgErr := loadConfig()
+	if cfgErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": "config unavailable: " + cfgErr.Error(),
+			"type":    "internal_error",
+		}})
+		return
+	}
 	var body map[string]interface{}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		body = map[string]interface{}{}

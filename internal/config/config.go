@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -160,7 +161,9 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if vv, ok := raw["writeMode"]; ok {
-		_ = json.Unmarshal(vv, &s.WriteMode)
+		if err := json.Unmarshal(vv, &s.WriteMode); err != nil {
+			return fmt.Errorf("writeMode: %w", err)
+		}
 	}
 	if vv, ok := raw["conversationSource"]; ok {
 		var cs string
@@ -175,19 +178,24 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 		}
 	} else if vv, ok := raw["injectOpenCodeAttribution"]; ok {
 		var bval bool
-		if err := json.Unmarshal(vv, &bval); err == nil {
-			if bval {
-				s.ConversationSource = "proxy"
-			} else {
-				s.ConversationSource = "off"
-			}
+		if err := json.Unmarshal(vv, &bval); err != nil {
+			return fmt.Errorf("injectOpenCodeAttribution: %w", err)
+		}
+		if bval {
+			s.ConversationSource = "proxy"
+		} else {
+			s.ConversationSource = "off"
 		}
 	}
 	if vv, ok := raw["proxy"]; ok {
-		_ = json.Unmarshal(vv, &s.Proxy)
+		if err := json.Unmarshal(vv, &s.Proxy); err != nil {
+			return fmt.Errorf("proxy: %w", err)
+		}
 	}
 	if vv, ok := raw["web"]; ok {
-		_ = json.Unmarshal(vv, &s.Web)
+		if err := json.Unmarshal(vv, &s.Web); err != nil {
+			return fmt.Errorf("web: %w", err)
+		}
 	}
 	if s.WriteMode == "" {
 		s.WriteMode = "gateway"
@@ -353,59 +361,53 @@ func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
 	return nil, nil
 }
 
+// LoadConfigAtPath reads and parses the config file at path.
+//
+// A missing file is the only condition that yields DefaultConfig. Anything else
+// — an unreadable file, malformed JSON, a field with the wrong type — is
+// returned so a broken config can never masquerade as a default or empty one.
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return DefaultConfig(), "default (no file)", nil
+		if errors.Is(err, os.ErrNotExist) {
+			return DefaultConfig(), "default (no file)", nil
+		}
+		return PiSwitchConfig{}, "", fmt.Errorf("read config %s: %w", path, err)
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
-		return DefaultConfig(), "default (bad json)", nil
+		return PiSwitchConfig{}, "", fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg := DefaultConfig()
 	if v, ok := raw["version"]; ok {
-		_ = json.Unmarshal(v, &cfg.Version)
+		if err := json.Unmarshal(v, &cfg.Version); err != nil {
+			return PiSwitchConfig{}, "", fmt.Errorf("config %s version: %w", path, err)
+		}
 	}
 	if v, ok := raw["current"]; ok {
-		_ = json.Unmarshal(v, &cfg.Current)
+		if err := json.Unmarshal(v, &cfg.Current); err != nil {
+			return PiSwitchConfig{}, "", fmt.Errorf("config %s current: %w", path, err)
+		}
 	}
 	if v, ok := raw["profiles"]; ok {
+		// Replace the placeholder profile instead of merging the file's profiles
+		// into it.
 		cfg.Profiles = map[string]ProviderProfile{}
-		_ = json.Unmarshal(v, &cfg.Profiles)
+		if err := json.Unmarshal(v, &cfg.Profiles); err != nil {
+			return PiSwitchConfig{}, "", fmt.Errorf("config %s profiles: %w", path, err)
+		}
 		if cfg.Profiles == nil {
 			cfg.Profiles = map[string]ProviderProfile{}
 		}
 	}
 	if v, ok := raw["settings"]; ok {
-		_ = json.Unmarshal(v, &cfg.Settings)
-	}
-	if cfg.Settings.WriteMode == "" {
-		cfg.Settings.WriteMode = "gateway"
-	}
-	if cfg.Settings.ConversationSource == "" {
-		cfg.Settings.ConversationSource = "sessionScan"
-	}
-	if cfg.Settings.Proxy.Host == "" {
-		cfg.Settings.Proxy.Host = "127.0.0.1"
-	}
-	if cfg.Settings.Proxy.Port == 0 {
-		cfg.Settings.Proxy.Port = 43112
-	}
-	if cfg.Settings.Web.Host == "" {
-		cfg.Settings.Web.Host = "127.0.0.1"
-	}
-	if cfg.Settings.Web.Port == 0 {
-		cfg.Settings.Web.Port = 43110
-	}
-	if cfg.Settings.Proxy.CircuitBreaker.FailureThreshold == 0 && cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-		if cfg.Settings.Proxy.CircuitBreaker.FailureThreshold == 0 {
-			cfg.Settings.Proxy.CircuitBreaker.FailureThreshold = 3
+		if err := json.Unmarshal(v, &cfg.Settings); err != nil {
+			return PiSwitchConfig{}, "", fmt.Errorf("config %s settings: %w", path, err)
 		}
-		if cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-			cfg.Settings.Proxy.CircuitBreaker.CooldownSeconds = 60
-		}
-		cfg.Settings.Proxy.CircuitBreaker.Enabled = true
 	}
+	// A v1 file is normalized in memory on load; MigratedForSave re-applies the
+	// same rule when writing. The settings defaults no longer need re-doing here:
+	// cfg starts from DefaultConfig and Settings.UnmarshalJSON owns its backfill.
 	if cfg.Version < 2 {
 		cfg.Version = 2
 	}

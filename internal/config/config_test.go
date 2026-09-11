@@ -60,9 +60,85 @@ func TestLoadPerRequest_MigratesLegacyField(t *testing.T) {
 	}
 	// false -> off
 	legacy2 := `{"version":1,"profiles":{},"settings":{"injectOpenCodeAttribution":false}}`
-	_ = os.WriteFile(path, []byte(legacy2), 0644)
-	cfg2, _, _ := LoadConfigAtPath(path)
+	if err := os.WriteFile(path, []byte(legacy2), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, _, err := LoadConfigAtPath(path)
+	if err != nil {
+		t.Fatalf("load legacy2: %v", err)
+	}
 	if cfg2.Settings.ConversationSource != "off" {
 		t.Fatalf("conversationSource = %q, want off", cfg2.Settings.ConversationSource)
+	}
+}
+
+// ARCH-01: reading a config must fail explicitly. Only a missing file yields
+// DefaultConfig; malformed JSON, unreadable files and wrong field types must
+// surface as errors so no caller mistakes them for a default/empty config.
+func TestLoadConfigAtPath_StrictErrors(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if err := os.Mkdir(filepath.Join(dir, "as-dir"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"malformed json":             write("malformed.json", `{"profiles":`),
+		"version wrong type":         write("version.json", `{"version":"two"}`),
+		"current wrong type":         write("current.json", `{"current":42}`),
+		"profiles wrong type":        write("profiles.json", `{"profiles":[]}`),
+		"profile field wrong type":   write("profile.json", `{"profiles":{"p":{"apiKey":42}}}`),
+		"settings wrong type":        write("settings.json", `{"settings":"nope"}`),
+		"proxy field wrong type":     write("proxy.json", `{"settings":{"proxy":{"port":"x"}}}`),
+		"writeMode wrong type":       write("writemode.json", `{"settings":{"writeMode":7}}`),
+		"invalid conversationSource": write("conv.json", `{"settings":{"conversationSource":"bogus"}}`),
+		"unreadable path":            filepath.Join(dir, "as-dir"),
+	}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, _, err := LoadConfigAtPath(path)
+			if err == nil {
+				t.Fatalf("LoadConfigAtPath(%s) returned nil error, want explicit failure", path)
+			}
+			if cfg.Current != nil || cfg.Profiles != nil {
+				t.Fatalf("failed load must not return a config, got %+v", cfg)
+			}
+		})
+	}
+}
+
+// Partial settings must still receive the defaults owned by DefaultConfig and
+// Settings.UnmarshalJSON; the loader no longer re-applies them itself.
+func TestLoadConfigAtPath_PartialSettingsKeepDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"profiles":{},"settings":{"writeMode":"proxy"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfigAtPath(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Settings.WriteMode != "proxy" {
+		t.Fatalf("writeMode = %q, want proxy", cfg.Settings.WriteMode)
+	}
+	if cfg.Settings.ConversationSource != "sessionScan" {
+		t.Fatalf("conversationSource = %q, want sessionScan", cfg.Settings.ConversationSource)
+	}
+	if cfg.Settings.Proxy.Host != "127.0.0.1" || cfg.Settings.Proxy.Port != 43112 {
+		t.Fatalf("proxy defaults lost: %+v", cfg.Settings.Proxy)
+	}
+	if cfg.Settings.Web.Host != "127.0.0.1" || cfg.Settings.Web.Port != 43110 {
+		t.Fatalf("web defaults lost: %+v", cfg.Settings.Web)
+	}
+	cb := cfg.Settings.Proxy.CircuitBreaker
+	if !cb.Enabled || cb.FailureThreshold != 3 || cb.CooldownSeconds != 60 {
+		t.Fatalf("circuit breaker defaults lost: %+v", cb)
 	}
 }

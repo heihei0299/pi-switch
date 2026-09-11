@@ -155,7 +155,10 @@ func handlePutFailover(c *gin.Context) {
 	c.JSON(410, gin.H{"error": gin.H{"message": "failover removed, will be replaced by per-conversation breaker", "type": "gone"}})
 }
 func handleGetSettings(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	c.JSON(200, cfg.Settings)
 }
 
@@ -170,7 +173,10 @@ func handlePutSettings(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	cfg.Settings = s
 	// A failed write must not be reported as success: the caller would believe
 	// settings were persisted while the file still holds the old values.

@@ -71,11 +71,11 @@ func TestSaveAtPath_NormalizesInvalidConversationSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	cfg, _, err := LoadConfigAtPath(writeFile(t, filepath.Join(dir, "src.json"),
-		`{"version":2,"profiles":{},"settings":{"conversationSource":"bogus"}}`))
-	if err != nil {
-		t.Fatalf("load source: %v", err)
-	}
+	// A file with an invalid conversationSource no longer loads (strict reading),
+	// so the save-time net is exercised with an in-memory value: the migration
+	// must still normalize anything a caller hands to SaveAtPath.
+	cfg := DefaultConfig()
+	cfg.Settings.ConversationSource = "bogus"
 	if err := SaveAtPath(cfg, path); err != nil {
 		t.Fatalf("SaveAtPath: %v", err)
 	}

@@ -155,6 +155,24 @@ func configPath() string {
 	return config.ResolvePath()
 }
 
+// loadConfig is the server's single config read path. It returns the error
+// instead of a fallback so no handler continues with a silently empty config.
+func loadConfig() (config.PiSwitchConfig, error) {
+	cfg, _, err := config.LoadConfigAtPath(configPath())
+	return cfg, err
+}
+
+// loadConfigOrWrite is loadConfig for gin handlers: on failure it writes the 500
+// response and reports ok=false so the handler must stop.
+func loadConfigOrWrite(c *gin.Context) (config.PiSwitchConfig, bool) {
+	cfg, err := loadConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return config.PiSwitchConfig{}, false
+	}
+	return cfg, true
+}
+
 // notImplemented answers with 501 for capabilities that have no implementation.
 // It lives in the kernel because both the settings and profile domains use it
 // (domain files must not call each other's helpers). These endpoints used to

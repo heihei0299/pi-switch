@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
@@ -109,14 +108,17 @@ func statsPageLimit(c *gin.Context, max int) (page, limit int) {
 	return page, limit
 }
 
-func newStatsService(db *sql.DB) statsservice.Service {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+func newStatsService(db *sql.DB) (statsservice.Service, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return statsservice.Service{}, err
+	}
 	source := cfg.Settings.ConversationSource
 	return statsservice.Service{
 		DB:         db,
 		Source:     conversation.Source(source),
 		Candidates: conversationCandidates(sessionScanCandidates(source)),
-	}
+	}, nil
 }
 
 // --- stats handler with window filtering ---
@@ -136,7 +138,12 @@ func handleStats(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	response, err := newStatsService(db).Stats(window, page, limit)
+	service, err := newStatsService(db)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	response, err := service.Stats(window, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -157,7 +164,12 @@ func handleStatsConversations(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	conversations, total, err := newStatsService(db).Conversations(window, page, limit)
+	service, err := newStatsService(db)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	conversations, total, err := service.Conversations(window, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -183,7 +195,12 @@ func handleConversationRequests(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	requests, total, err := newStatsService(db).ConversationRequests(id, page, limit)
+	service, err := newStatsService(db)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	requests, total, err := service.ConversationRequests(id, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

@@ -41,7 +41,7 @@ func handleGatewayPreviewPost(c *gin.Context) {
 	}
 	var edited map[string]interface{}
 	if request.Selected != nil {
-		cfg, _, configErr := config.LoadConfigAtPath(configPath())
+		cfg, configErr := loadConfig()
 		if configErr != nil {
 			c.JSON(500, gin.H{"error": configErr.Error()})
 			return
@@ -63,7 +63,7 @@ func handleGatewayPreviewPost(c *gin.Context) {
 }
 
 func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
-	cfg, _, configErr := config.LoadConfigAtPath(configPath())
+	cfg, configErr := loadConfig()
 	if configErr != nil {
 		c.JSON(500, gin.H{"error": configErr.Error()})
 		return
@@ -100,7 +100,7 @@ func buildGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]inter
 	if proposal == nil {
 		proposal = gateway.BuildProposedGatewayEntry(cfg)
 	}
-	summary := enrichProposedModels(proposal)
+	summary := enrichProposedModels(cfg, proposal)
 	return gateway.BuildCanonicalGatewayPlanWithPublishedMetadata(cfg, current, proposal, draft == nil), summary
 }
 
@@ -108,9 +108,9 @@ func buildGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]inter
 // It prefers provider/bare lookup using the supplier's resolved modelsDevProvider
 // (or supplier name as hint) to disambiguate duplicate bare ids, and overwrites
 // stale defaults (e.g. 128000→1048576) when the catalog provides non-zero values.
-func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary {
+// It takes the already-loaded cfg so the caller's config read is the only one.
+func enrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interface{}) catalog.EnrichSummary {
 	snap, stale, warning := catalog.Ensure()
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	enriched, skipped := 0, 0
 	// Fixed gateway providers use bare ids; resolve catalog metadata through the originating supplier.
 	modelSuppliers := map[string]string{}
@@ -259,7 +259,10 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "providers is required"})
 		return
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	current, currentErr := gateway.ReadCurrent()
 	if currentErr != nil {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
@@ -284,8 +287,7 @@ func handlePutGateway(c *gin.Context) {
 // record to date. has_models_file used to be one of those constants (literally
 // `true`), which made "already published" always true for a frontend that decodes
 // it as a required boolean.
-func gatewayHealthPayload() gin.H {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+func gatewayHealthPayload(cfg config.PiSwitchConfig) gin.H {
 	_, statErr := os.Stat(gateway.ModelsPath())
 	return gin.H{
 		"running":         true,
@@ -299,7 +301,11 @@ func gatewayHealthPayload() gin.H {
 }
 
 func handleGatewayHealth(c *gin.Context) {
-	c.JSON(200, gatewayHealthPayload())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
+	c.JSON(200, gatewayHealthPayload(cfg))
 }
 func handleGatewayStart(c *gin.Context) {
 	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch"})
@@ -322,7 +328,10 @@ func handleGatewayPublish(c *gin.Context) {
 			return
 		}
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	current, currentErr := gateway.ReadCurrent()
 	if currentErr != nil {
 		c.JSON(500, gin.H{"error": currentErr.Error()})

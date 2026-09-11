@@ -17,7 +17,11 @@ import (
 )
 
 func handleGetConfig(c *gin.Context) {
-	cfg, src, _ := config.LoadConfigAtPath(configPath())
+	cfg, src, err := config.LoadConfigAtPath(configPath())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{"source": src, "config": cfg})
 }
 
@@ -68,18 +72,27 @@ func handlePutConfig(c *gin.Context) {
 }
 
 func handleGetState(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	c.JSON(200, gin.H{"current": cfg.Current, "profiles": cfg.Profiles, "settings": cfg.Settings})
 }
 
 func handleListProfiles(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	c.JSON(200, cfg.Profiles)
 }
 
 func handleGetProfile(c *gin.Context) {
 	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": fmt.Sprintf("unknown profile '%s'", name)})
@@ -191,7 +204,10 @@ func CreateProfile(name string, prof config.ProviderProfile) error {
 	if err := validateRetryFields(prof); err != nil {
 		return err
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]config.ProviderProfile{}
 	}
@@ -349,7 +365,10 @@ func handlePutProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]config.ProviderProfile{}
 	}
@@ -368,7 +387,10 @@ func handlePutProfile(c *gin.Context) {
 
 func handleDeleteProfile(c *gin.Context) {
 	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	if _, ok := cfg.Profiles[name]; !ok {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -395,7 +417,10 @@ func DuplicateProfile(src, as string) error {
 		// 核心函数不知道调用方是 HTTP 还是命令行。
 		return ErrTargetNameRequired
 	}
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	prof, ok := cfg.Profiles[src]
 	if !ok {
 		return profileErr(ErrProfileNotFound, "profile %q not found", src)
@@ -476,7 +501,10 @@ func TestProfileUpstream(prof config.ProviderProfile) (success bool, message str
 
 func handleTestProfile(c *gin.Context) {
 	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
@@ -517,7 +545,10 @@ type EnrichCounts struct {
 // handler's channel-directed semantics. Existing entries are never modified and
 // other channels are never touched.
 func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, EnrichCounts{}, err
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		return nil, EnrichCounts{}, profileErr(ErrProfileNotFound, "profile %q not found", name)
@@ -692,7 +723,10 @@ func fetchUpstreamIDs(baseURL, apiKey string, headers map[string]string) ([]stri
 
 func handleFetchModels(c *gin.Context) {
 	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
@@ -803,7 +837,10 @@ func handlePutModels(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
@@ -845,7 +882,10 @@ func handlePutModels(c *gin.Context) {
 // does not actually carry (which would make routing claim a model it cannot
 // serve).
 func SetExposedModels(name, channel string, modelIDs []string) error {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		return profileErr(ErrProfileNotFound, "profile %q not found", name)
@@ -894,7 +934,10 @@ func handlePutSpoof(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
@@ -926,7 +969,10 @@ func handlePutSpoof(c *gin.Context) {
 
 func handleGetCredits(c *gin.Context) {
 	name := c.Param("name")
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, ok := loadConfigOrWrite(c)
+	if !ok {
+		return
+	}
 	prof, ok := cfg.Profiles[name]
 	if !ok {
 		c.JSON(404, gin.H{"error": "not found"})
@@ -988,7 +1034,15 @@ func handlePresetDetail(c *gin.Context) {
 	c.JSON(404, gin.H{"error": "not found"})
 }
 func handleDoctor(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, _, err := config.LoadConfigAtPath(configPath())
+	if err != nil {
+		// The first check below claims the config JSON is valid, so a broken file
+		// must flip that check instead of being reported as healthy.
+		c.JSON(200, []map[string]interface{}{
+			{"ok": false, "msg": "config unreadable: " + err.Error()},
+		})
+		return
+	}
 	checks := []map[string]interface{}{
 		{"ok": true, "msg": "config JSON is valid"},
 		{"ok": len(cfg.Profiles) > 0, "msg": fmt.Sprintf("%d profile(s) configured", len(cfg.Profiles))},
@@ -1127,7 +1181,13 @@ func validateProviderProfile(p config.ProviderProfile) error {
 }
 
 func handleValidate(c *gin.Context) {
-	cfg, _, _ := config.LoadConfigAtPath(configPath())
+	cfg, _, err := config.LoadConfigAtPath(configPath())
+	if err != nil {
+		c.JSON(200, []map[string]interface{}{
+			{"level": "error", "path": "config", "message": err.Error()},
+		})
+		return
+	}
 	issues := []map[string]interface{}{}
 	allowedAPIs := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
 	for name, prof := range cfg.Profiles {

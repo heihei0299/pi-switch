@@ -10,7 +10,10 @@ import (
 
 func Run() error {
 	cfgPath := config.ResolvePath()
-	cfg, _, _ := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	if err != nil {
+		return fmt.Errorf("tui: %w", err)
+	}
 	if len(cfg.Profiles) == 0 && os.Getenv("PI_SWITCH_CONFIG") == "" {
 		// still allow TUI with empty config
 	}

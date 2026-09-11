@@ -353,9 +353,9 @@ func TestHandlePresets_ListsRealCatalogue(t *testing.T) {
 	}
 }
 
-// B11: `config validate` must not call a corrupt file valid. The loader falls
-// back to a default config containing a placeholder profile, so the old check
-// ("has profiles") always reported success.
+// B11: `config validate` must not call a corrupt file valid. The loader now
+// returns an error for a corrupt file, so the probe must surface that error
+// instead of reporting the default config's placeholder profile as healthy.
 func TestHandleConfigCLI_ValidateRejectsCorruptFile(t *testing.T) {
 	isolateCLI(t)
 	if err := os.WriteFile(os.Getenv("PI_SWITCH_CONFIG"), []byte("{not json"), 0644); err != nil {
