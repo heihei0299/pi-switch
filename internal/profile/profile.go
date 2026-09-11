@@ -35,7 +35,7 @@ func CreateProfile(name string, prof config.ProviderProfile) error {
 		cfg.Profiles = map[string]config.ProviderProfile{}
 	}
 	if _, exists := cfg.Profiles[name]; exists {
-		return errors.New("profile already exists")
+		return profileErr(ErrProfileExists, "profile already exists")
 	}
 	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
 	// 与"空 exposed = 不暴露"一致。

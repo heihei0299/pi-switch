@@ -121,48 +121,6 @@ func handlePostProfile(c *gin.Context) {
 		Profile json.RawMessage `json:"profile"`
 	}
 	raw, _ := c.GetRawData()
-
-	// quick validation for responsesMode in raw json
-	{
-		var rawMap map[string]interface{}
-		if err := json.Unmarshal(raw, &rawMap); err == nil {
-			// check profile wrapper
-			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
-				if api, _ := prof["api"].(string); api != "" {
-					if mode, _ := prof["responsesMode"].(string); mode != "" {
-						if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-							c.JSON(400, gin.H{"error": err.Error()})
-							return
-						}
-					}
-				}
-			}
-			// direct api field (for PUT /api/config profiles)
-			if profiles, ok := rawMap["profiles"].(map[string]interface{}); ok {
-				for _, pv := range profiles {
-					if pm, ok := pv.(map[string]interface{}); ok {
-						if api, _ := pm["api"].(string); api != "" {
-							if mode, _ := pm["responsesMode"].(string); mode != "" {
-								if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-									c.JSON(400, gin.H{"error": err.Error()})
-									return
-								}
-							}
-						}
-					}
-				}
-			}
-			// single profile case
-			if api, ok := rawMap["api"].(string); ok {
-				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
-					if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-						c.JSON(400, gin.H{"error": err.Error()})
-						return
-					}
-				}
-			}
-		}
-	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
@@ -176,9 +134,9 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid profile: %v", err)})
 		return
 	}
-	// validate responsesMode compatibility
-	// 校验、重名与落盘都在 CreateProfile 里（与 CLI 共用一份实现），
-	// handler 只负责把它映射成 HTTP 错误码：校验类 400、落盘失败 500。
+	// 校验（含 responsesMode 兼容性）、重名与落盘都在 CreateProfile 里（与 CLI
+	// 共用一份实现），handler 只负责把它映射成 HTTP 错误码：落盘失败 500，
+	// 其余 400。
 	if err := profile.CreateProfile(body.Name, prof); err != nil {
 		if isPersistError(err) {
 			c.JSON(500, gin.H{"error": err.Error()})
@@ -197,48 +155,6 @@ func handlePutProfile(c *gin.Context) {
 		RenameFrom *string         `json:"renameFrom"`
 	}
 	raw, _ := c.GetRawData()
-
-	// quick validation for responsesMode in raw json
-	{
-		var rawMap map[string]interface{}
-		if err := json.Unmarshal(raw, &rawMap); err == nil {
-			// check profile wrapper
-			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
-				if api, _ := prof["api"].(string); api != "" {
-					if mode, _ := prof["responsesMode"].(string); mode != "" {
-						if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-							c.JSON(400, gin.H{"error": err.Error()})
-							return
-						}
-					}
-				}
-			}
-			// direct api field (for PUT /api/config profiles)
-			if profiles, ok := rawMap["profiles"].(map[string]interface{}); ok {
-				for _, pv := range profiles {
-					if pm, ok := pv.(map[string]interface{}); ok {
-						if api, _ := pm["api"].(string); api != "" {
-							if mode, _ := pm["responsesMode"].(string); mode != "" {
-								if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-									c.JSON(400, gin.H{"error": err.Error()})
-									return
-								}
-							}
-						}
-					}
-				}
-			}
-			// single profile case
-			if api, ok := rawMap["api"].(string); ok {
-				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
-					if err := protocol.ValidateResponsesMode(api, mode); err != nil {
-						c.JSON(400, gin.H{"error": err.Error()})
-						return
-					}
-				}
-			}
-		}
-	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
@@ -248,6 +164,7 @@ func handlePutProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid profile: %v", err)})
 		return
 	}
+	// 业务规则只从 typed profile 判定（responsesMode 规则在 internal/protocol 唯一）。
 	if err := profile.ValidateResponsesMode(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

@@ -17,16 +17,17 @@ type gatewayPreviewRequest struct {
 	Draft    map[string]interface{}      `json:"draft"`
 }
 
+// handleGetGateway answers the current published Gateway. It reads through the one
+// Gateway read boundary, so a missing file is an empty current, while an unreadable
+// or corrupt models.json is an error — the server no longer invents a `gateway:
+// null` for both.
 func handleGetGateway(c *gin.Context) {
-	path := gateway.ModelsPath()
-	b, err := os.ReadFile(path)
+	current, err := gateway.ReadCurrent()
 	if err != nil {
-		c.JSON(200, gin.H{"gateway": nil})
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	var m map[string]interface{}
-	_ = json.Unmarshal(b, &m)
-	c.JSON(200, gin.H{"gateway": m})
+	c.JSON(200, gin.H{"gateway": current})
 }
 
 func handleGatewayPreview(c *gin.Context) {
@@ -114,10 +115,12 @@ func buildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]int
 	return gateway.BuildEnrichedGeneratedPlan(cfg, current)
 }
 
-// buildDraftGatewayPlan builds the canonical plan for a user draft, enriching the
-// draft from the catalog first so the plan's derived views match what is published.
+// buildDraftGatewayPlan builds the canonical plan for a user draft. The draft is
+// enriched from the catalog first — missing-only, so the values it states
+// explicitly reach BuildDraftPlan unchanged — and the plan's derived views match
+// what is published.
 func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	summary := gateway.EnrichProposedModels(cfg, draft)
+	summary := gateway.EnrichDraftModels(cfg, draft)
 	return gateway.BuildDraftPlan(cfg, current, draft), summary
 }
 
@@ -139,6 +142,10 @@ func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]
 // configured proxy host is therefore the primary source, with the plan's own
 // baseUrls as a second, so a hand-edited plan is judged too.
 //
+// Only pi-switch's own providers are judged: a third-party provider the plan
+// carries over from models.json publishes someone else's endpoint, so where it
+// points says nothing about this proxy's authentication.
+//
 // Residual limit: a proxy started with a --host that differs from the configured one
 // is invisible here; the running daemon's host would be the exact source.
 func PublishedAuthCaveat(cfg config.PiSwitchConfig, published map[string]interface{}) string {
@@ -152,12 +159,15 @@ func PublishedAuthCaveat(cfg config.PiSwitchConfig, published map[string]interfa
 // by the HTTP responses and `pi-switch gateway publish`.
 const publishedAuthCaveatText = `the proxy is exposed beyond loopback, so its /v1 surface requires HTTP Basic authentication, but the published providers carry "apiKey": "pi-switch-proxy", which clients send as a Bearer token — such clients get 401. Bind the proxy to loopback, or use a client that can send Basic.`
 
-// planReachesLan reports whether any published entry points a client at a host
-// beyond loopback. The empty host and an unparsable URL are skipped: an entry
+// planReachesLan reports whether any published pi-switch entry points a client at a
+// host beyond loopback. The empty host and an unparsable URL are skipped: an entry
 // without a usable baseUrl makes no claim about reachability.
 func planReachesLan(published map[string]interface{}) bool {
 	providers, _ := published["providers"].(map[string]interface{})
-	for _, raw := range providers {
+	for key, raw := range providers {
+		if !gateway.IsFixedGatewayProvider(key) {
+			continue
+		}
 		entry, _ := raw.(map[string]interface{})
 		base, _ := entry["baseUrl"].(string)
 		u, err := url.Parse(base)
@@ -210,7 +220,7 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, gw))
+	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
 }
 
 // gatewayHealthPayload reports the gateway's state. has_models_file and
@@ -270,17 +280,14 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
-	var toPublish map[string]interface{}
 	var plan gateway.CanonicalGatewayPlan
 	if body != nil && len(body) > 0 {
 		if _, ok := body["providers"]; !ok {
 			c.JSON(400, gin.H{"error": "providers is required"})
 			return
 		}
-		toPublish = body
-		plan, _ = buildDraftGatewayPlan(cfg, current, toPublish)
+		plan, _ = buildDraftGatewayPlan(cfg, current, body)
 	} else {
-		toPublish = gateway.BuildProposedGatewayEntry(cfg)
 		plan, _ = buildGeneratedGatewayPlan(cfg, current)
 	}
 	if len(plan.Conflicts) > 0 {
@@ -291,5 +298,5 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, toPublish))
+	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
 }

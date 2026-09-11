@@ -26,6 +26,21 @@ func BuildEnrichedGeneratedPlan(cfg config.PiSwitchConfig, current map[string]in
 // It is exported so preview and publish paths share one implementation instead of
 // each adapter re-deriving the lookup rules.
 func EnrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interface{}) catalog.EnrichSummary {
+	return enrichModels(cfg, proposed, catalog.FillOverwrite)
+}
+
+// EnrichDraftModels is the draft counterpart of EnrichProposedModels: same lookup
+// rules, but every field the draft states explicitly is left alone
+// (catalog.FillMissing). A draft is the source of truth for its own metadata, so an
+// explicit contextWindow/maxTokens/input/reasoning/cost must reach BuildDraftPlan
+// unchanged; only the generated flow refreshes stale values from the catalog.
+func EnrichDraftModels(cfg config.PiSwitchConfig, draft map[string]interface{}) catalog.EnrichSummary {
+	return enrichModels(cfg, draft, catalog.FillMissing)
+}
+
+// enrichModels is the one lookup walk behind both enrich policies: fill decides
+// whether a catalog hit overwrites a stated value or only fills a gap.
+func enrichModels(cfg config.PiSwitchConfig, proposed map[string]interface{}, fill func(map[string]interface{}, catalog.Meta) bool) catalog.EnrichSummary {
 	snap, stale, warning := catalog.Ensure()
 	enriched, skipped := 0, 0
 	// Fixed gateway providers use bare ids; resolve catalog metadata through the originating supplier.
@@ -94,7 +109,7 @@ func EnrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interfa
 				skipped++
 				continue
 			}
-			if catalog.FillOverwrite(mm, meta) {
+			if fill(mm, meta) {
 				enriched++
 			} else {
 				skipped++

@@ -292,3 +292,17 @@ Summary 后续又复用了 `RequestFact.countable()`，与完整 Stats 共享 to
 > `BuildDraftPlan` 本身正确，但 Draft 在进入它之前被 overwrite-enrich 修改。
 
 修复该问题并完成上述少量收尾后，当前架构可认为达到本轮维护性改造目标。
+
+## 收尾落实状态（同日）
+
+| 项目 | 落实 |
+|---|---|
+| P1 Draft metadata 被 Catalog 覆盖 | `gateway.EnrichDraftModels`（`catalog.FillMissing`）成为 draft 路径唯一 enrich；Generated 仍 `FillOverwrite`。回归测试 `TestGatewayDraft_ExplicitMetadataBeatsCatalog` 覆盖 contextWindow / maxTokens / reasoning / input / cost，并在撤回修复时复现失败 |
+| P2 Gateway Current 第二套读取逻辑 | `handleGetGateway` 复用 `gateway.ReadCurrent`：文件不存在为空 current，读取失败/JSON 损坏为 500，不再静默 `gateway: null` |
+| P2 Generated Publish 第二份 Proposal | 两条 publish 路径的成功响应警告改用最终 `plan.Proposed`；`PublishedAuthCaveat` 只判定 pi-switch fixed provider，避免 current 中第三方 provider 误触发 |
+| P2/P3 Profile raw validation | `handlePostProfile` / `handlePutProfile` 的 raw JSON walker 已删除，规则只从 typed `ProviderProfile` 判定 |
+| P3 CreateProfile 域错误 | 重名返回 `profileErr(ErrProfileExists, ...)`，文案不变 |
+
+验证：`scripts/test-limited.sh go`（`go test ./...`，`-p 1 -parallel 2`）全部通过。
+
+据此，本报告列出的 1 个优先修复项与 4 个收尾项均已落实；本轮维护性改造到此停止，不再扩大重构范围。

@@ -228,6 +228,21 @@ PublishPlan
    └── rename 为 models.json
 ```
 
+### Gateway enrich 策略
+
+同一条 enrich 查找链，两种补齐策略，按 plan 类型分界：
+
+```text
+Generated  → catalog.FillOverwrite
+             catalog 刷新陈旧默认值（如 contextWindow 128000→1048576）
+
+Draft      → catalog.FillMissing
+             draft 显式声明的值优先，catalog 只补 draft 缺失的字段
+```
+
+`BuildDraftPlan` 本身以 draft 为事实来源；draft 路径（preview 与 publish）必须在进入它
+之前只补缺，否则用户显式编辑的 metadata 会在建 plan 前被 catalog 改写。
+
 ### Gateway 的事实边界
 
 ```text
