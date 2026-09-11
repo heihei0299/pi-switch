@@ -152,7 +152,7 @@ func handleProxyStop(c *gin.Context) {
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid})
 }
 func handlePutFailover(c *gin.Context) {
-	c.JSON(410, gin.H{"error": "failover removed, will be replaced by per-conversation breaker"})
+	c.JSON(410, managementError("failover removed, will be replaced by per-conversation breaker"))
 }
 func handleGetSettings(c *gin.Context) {
 	cfg, ok := loadConfigOrWrite(c)

@@ -154,6 +154,34 @@ func (p ProviderProfile) ModelsDevProviderKey() string {
 	return ""
 }
 
+// UnmarshalJSON adds the channel index to an error raised while decoding an
+// upstream, so a bad channel field reports upstreams[i].<field> instead of losing
+// the position. The happy path decodes once; only a failed decode re-walks the
+// upstreams to find the index. The field rules themselves stay on Upstream.
+func (p *ProviderProfile) UnmarshalJSON(data []byte) error {
+	type providerProfileAlias ProviderProfile
+	if err := json.Unmarshal(data, (*providerProfileAlias)(p)); err == nil {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if v, ok := raw["upstreams"]; ok {
+		var upstreams []json.RawMessage
+		if err := json.Unmarshal(v, &upstreams); err == nil {
+			for i, upstreamRaw := range upstreams {
+				var upstream Upstream
+				if err := json.Unmarshal(upstreamRaw, &upstream); err != nil {
+					return fmt.Errorf("upstreams[%d]: %w", i, err)
+				}
+			}
+		}
+	}
+	// The failure was not in an upstream; report the original decode error.
+	return json.Unmarshal(data, (*providerProfileAlias)(p))
+}
+
 type CircuitBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
 	FailureThreshold int  `json:"failureThreshold"`
@@ -474,11 +502,18 @@ func ParseConfig(b []byte) (PiSwitchConfig, error) {
 	// explicit config that happens to omit the key.
 	cfg.Profiles = map[string]ProviderProfile{}
 	if v, ok := raw["profiles"]; ok {
-		if err := json.Unmarshal(v, &cfg.Profiles); err != nil {
+		// Decode profile by profile so the map key is part of the error path
+		// (profiles.<name>.…), not just "profiles".
+		var byName map[string]json.RawMessage
+		if err := json.Unmarshal(v, &byName); err != nil {
 			return PiSwitchConfig{}, fmt.Errorf("profiles: %w", err)
 		}
-		if cfg.Profiles == nil {
-			cfg.Profiles = map[string]ProviderProfile{}
+		for name, profileRaw := range byName {
+			var profile ProviderProfile
+			if err := json.Unmarshal(profileRaw, &profile); err != nil {
+				return PiSwitchConfig{}, fmt.Errorf("profiles.%s: %w", name, err)
+			}
+			cfg.Profiles[name] = profile
 		}
 	}
 	if v, ok := raw["settings"]; ok {

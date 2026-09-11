@@ -282,10 +282,7 @@ func handleChatCompletions(c *gin.Context) {
 	raw, readErr := io.ReadAll(limited)
 	var tooLarge *http.MaxBytesError
 	if errors.As(readErr, &tooLarge) {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
-			"message": fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit),
-			"type":    "request_too_large",
-		}})
+		c.JSON(http.StatusRequestEntityTooLarge, inferenceError(fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit), "request_too_large"))
 		return
 	}
 	cfg, ok := loadConfigOrChatError(c)
@@ -302,16 +299,16 @@ func handleChatCompletions(c *gin.Context) {
 		requestedModel = "gpt-4o-mini"
 	}
 	if strings.Contains(requestedModel, "/") {
-		c.JSON(400, gin.H{"error": gin.H{"message": "model must not contain \"/\"", "type": "invalid_request_error"}})
+		c.JSON(400, inferenceError("model must not contain \"/\"", "invalid_request_error"))
 		return
 	}
 	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
 	if pinnedChannel == "ambiguous" {
-		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "type": "ambiguous"}})
+		c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "ambiguous"))
 		return
 	}
 	if len(candidates) == 0 {
-		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
+		c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
 		return
 	}
 	convID, convName := conversationIDFrom(c.Request.Header, body, cfg.Settings.ConversationSource)
@@ -329,7 +326,7 @@ func handleChatCompletions(c *gin.Context) {
 	name := candidates[0]
 	prof, ok := cfg.Profiles[name]
 	if !ok {
-		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
+		c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
 		return
 	}
 	if pinnedChannel != "" {
@@ -346,7 +343,7 @@ func handleChatCompletions(c *gin.Context) {
 			}
 		}
 		if !found {
-			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "type": "no_route"}})
+			c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
 			return
 		}
 	}
@@ -365,7 +362,7 @@ func handleChatCompletions(c *gin.Context) {
 			}
 		}
 		if matchCount > 1 {
-			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", requestedModel, name, matchCount, name, realModel), "type": "ambiguous"}})
+			c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", requestedModel, name, matchCount, name, realModel), "ambiguous"))
 			return
 		}
 		if matched != -1 {
@@ -375,7 +372,7 @@ func handleChatCompletions(c *gin.Context) {
 	upstream := selectedOutboundUpstream(prof)
 	base := upstream.BaseURL
 	if base == "" {
-		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
+		c.JSON(502, inferenceError("missing baseUrl", "no_route"))
 		return
 	}
 	modelEntry := findModelEntry(prof, realModel)
@@ -384,12 +381,12 @@ func handleChatCompletions(c *gin.Context) {
 	clampBody(bcopy, modelEntry, rawLen)
 	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
 	if planErr != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("profile %s: %s", name, planErr.Error()), "type": "no_route"}})
+		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": convErr.Error(), "type": "no_route"}})
+		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
 		return
 	}
 	clampBody(convBody, modelEntry, rawLen)
@@ -410,13 +407,13 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	outbound, err := BuildOutboundRequest(outboundPlan)
 	if err != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
 		return
 	}
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
 		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
-		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
 		return
 	}
 	respBody, _ := io.ReadAll(resp.Body)
@@ -550,13 +547,13 @@ func handleChatCompletions(c *gin.Context) {
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, pinnedChannel, convID, convName, proto string, rawLen int, start time.Time) {
 	// Transitional passthrough: single candidate, no retry, no cooling.
 	if len(candidates) == 0 {
-		c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
+		c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
 		return
 	}
 	name := candidates[0]
 	prof, ok := cfg.Profiles[name]
 	if !ok {
-		c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
+		c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
 		return
 	}
 	if pinnedChannel != "" {
@@ -573,7 +570,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			}
 		}
 		if !found {
-			c.JSON(502, gin.H{"error": gin.H{"message": "No upstream exposes model", "type": "no_route"}})
+			c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
 			return
 		}
 	}
@@ -592,7 +589,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			}
 		}
 		if matchCount > 1 {
-			c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("Ambiguous model '%s/%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", name, realModel, name, matchCount, name, realModel), "type": "ambiguous"}})
+			c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s/%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", name, realModel, name, matchCount, name, realModel), "ambiguous"))
 			return
 		}
 		if matched != -1 {
@@ -602,7 +599,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	upstream := selectedOutboundUpstream(prof)
 	base := upstream.BaseURL
 	if base == "" {
-		c.JSON(502, gin.H{"error": gin.H{"message": "missing baseUrl", "type": "no_route"}})
+		c.JSON(502, inferenceError("missing baseUrl", "no_route"))
 		return
 	}
 	modelEntry := findModelEntry(prof, realModel)
@@ -612,12 +609,12 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	clampBody(bcopy, modelEntry, rawLen)
 	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
 	if planErr != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": fmt.Sprintf("profile %s: %s", name, planErr.Error()), "type": "no_route"}})
+		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": convErr.Error(), "type": "no_route"}})
+		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
 		return
 	}
 	convBody["stream"] = true
@@ -638,13 +635,13 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		Timeout:          0,
 	})
 	if err != nil {
-		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
 		return
 	}
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
 		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
-		c.JSON(502, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
 		return
 	}
 	if resp.StatusCode >= 400 {

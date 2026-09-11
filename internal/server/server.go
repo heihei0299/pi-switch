@@ -168,7 +168,7 @@ func loadConfig() (config.PiSwitchConfig, error) {
 func loadConfigOrWrite(c *gin.Context) (config.PiSwitchConfig, bool) {
 	cfg, err := loadConfig()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, managementError(err.Error()))
 		return config.PiSwitchConfig{}, false
 	}
 	return cfg, true
@@ -180,10 +180,7 @@ func loadConfigOrWrite(c *gin.Context) (config.PiSwitchConfig, bool) {
 func loadConfigOrChatError(c *gin.Context) (config.PiSwitchConfig, bool) {
 	cfg, err := loadConfig()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
-			"message": "config unavailable: " + err.Error(),
-			"type":    "internal_error",
-		}})
+		c.JSON(http.StatusInternalServerError, inferenceError("config unavailable: "+err.Error(), "internal_error"))
 		return config.PiSwitchConfig{}, false
 	}
 	return cfg, true
@@ -197,7 +194,7 @@ func loadConfigOrChatError(c *gin.Context) (config.PiSwitchConfig, bool) {
 // occur. It returns the management envelope: the 501 status already carries the
 // "not implemented" kind, and the WebUI only renders a string message.
 func notImplemented(what string) gin.H {
-	return gin.H{"error": what + " is not implemented"}
+	return managementError(what + " is not implemented")
 }
 
 func NewProxyRouter() *gin.Engine {
@@ -209,14 +206,11 @@ func NewProxyRouter() *gin.Engine {
 // scoped to the inference routes; health probes stay open.
 func NewProxyRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.CustomRecovery(inferenceRecovery))
 	if !IsLoopback(opts.BindHost) {
 		// Inference surface: system-contract 2.8 keeps the OpenAI error object even
 		// for the shared 401, because these responses go to OpenAI-compatible clients.
-		r.Use(basicAuthMiddleware(opts.Password, gin.H{"error": gin.H{
-			"message": "Unauthorized",
-			"type":    "invalid_request_error",
-		}}, "/v1"))
+		r.Use(basicAuthMiddleware(opts.Password, inferenceUnauthorized, "/v1"))
 	}
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
@@ -225,6 +219,7 @@ func NewProxyRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r.POST("/v1/responses", handleChatCompletions)
 	r.POST("/v1/messages", handleChatCompletions)
 	r.GET("/v1/models", handleModels)
+	r.NoRoute(inferenceNoRoute)
 	return r
 }
 
@@ -240,7 +235,7 @@ func NewMgmtRouter() *gin.Engine {
 // decision never consults the config file.
 func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.CustomRecovery(managementRecovery))
 	// Any non-loopback bind installs the guard, including an unspecified bind
 	// host. With no password the middleware rejects everything, because an
 	// exposed listener that cannot authenticate must not serve openly at all.
@@ -248,7 +243,7 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	// the guard anyway means reaching it cannot silently fail open.
 	if !IsLoopback(opts.BindHost) {
 		// Management surface: system-contract 2.8 answers a bare string message.
-		r.Use(basicAuthMiddleware(opts.Password, gin.H{"error": "Unauthorized"}, "/api"))
+		r.Use(basicAuthMiddleware(opts.Password, managementUnauthorized, "/api"))
 	}
 	// Record the enforced mode for handlers that report it back to clients.
 	r.Use(func(c *gin.Context) {
@@ -505,14 +500,14 @@ func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (
 // instead of getting a second authentication implementation. The 401 body is the
 // caller's surface envelope (system-contract 2.8): management passes a bare
 // message, inference the OpenAI error object.
-func basicAuthMiddleware(password string, unauthorized gin.H, guardedPrefixes ...string) gin.HandlerFunc {
+func basicAuthMiddleware(password string, unauthorized func() gin.H, guardedPrefixes ...string) gin.HandlerFunc {
 	if len(guardedPrefixes) == 0 {
 		guardedPrefixes = []string{"/api"}
 	}
 	expected := adminUser + ":" + password
 	reject := func(c *gin.Context) {
 		c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
-		c.AbortWithStatusJSON(http.StatusUnauthorized, unauthorized)
+		c.AbortWithStatusJSON(http.StatusUnauthorized, unauthorized())
 	}
 	return func(c *gin.Context) {
 		guarded := false

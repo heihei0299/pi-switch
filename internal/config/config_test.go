@@ -168,8 +168,8 @@ func TestLoadConfigAtPath_MissingOrNullProfilesIsEmpty(t *testing.T) {
 	}
 }
 
-// system-contract 2.2: `exposedModels: null` is a boundary error and must name the
-// offending field so the operator can find it.
+// system-contract 2.2: `exposedModels: null` is a boundary error and must report
+// the full field path so the operator can find the channel.
 func TestLoadConfigAtPath_NullExposedModelsNamesField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
@@ -180,7 +180,9 @@ func TestLoadConfigAtPath_NullExposedModelsNamesField(t *testing.T) {
 	if err == nil {
 		t.Fatal("exposedModels:null loaded without error")
 	}
-	if !strings.Contains(err.Error(), "exposedModels") {
-		t.Fatalf("error %q does not name the offending field", err)
+	for _, want := range []string{"profiles.p", "upstreams[0]", "exposedModels"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q is missing path segment %q", err, want)
+		}
 	}
 }
