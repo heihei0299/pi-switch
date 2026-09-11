@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/gateway"
-	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/stats"
 )
 
 var (
@@ -93,45 +93,45 @@ func (m *Model) refreshGateway() {
 }
 
 func (m *Model) refreshStats() {
-	db, err := store.GetDB()
+	service, err := stats.OpenService(m.cfg.Settings.ConversationSource)
 	if err != nil {
 		m.statsBrief = "stats: db unavailable"
 		return
 	}
-	rows, err := db.Query(`SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COUNT(*), COALESCE(SUM(cost),0) FROM requests WHERE success=1`)
+	summary, err := service.Summary(nil)
 	if err != nil {
 		m.statsBrief = "stats: query error"
 		return
 	}
-	defer rows.Close()
-	var pt, ct, cnt int64
-	var cost float64
-	if rows.Next() {
-		_ = rows.Scan(&pt, &ct, &cnt, &cost)
-	}
+	m.statsBrief = formatStatsBrief(summary)
+}
+
+// formatStatsBrief is the TUI's only stats responsibility: turning the numbers
+// into a display string. The aggregation lives in internal/stats.
+func formatStatsBrief(s stats.Summary) string {
 	costStr := "-"
-	if cnt > 0 && cost != 0 {
-		if cost < 0.01 {
-			costStr = fmt.Sprintf("$%.4f", cost)
-		} else if cost < 1000 {
-			costStr = fmt.Sprintf("$%.2f", cost)
-		} else {
-			costStr = fmt.Sprintf("$%.1fK", cost/1000)
+	if s.Requests > 0 && s.Cost != nil && *s.Cost != 0 {
+		switch {
+		case *s.Cost < 0.01:
+			costStr = fmt.Sprintf("$%.4f", *s.Cost)
+		case *s.Cost < 1000:
+			costStr = fmt.Sprintf("$%.2f", *s.Cost)
+		default:
+			costStr = fmt.Sprintf("$%.1fK", *s.Cost/1000)
 		}
-	} else if cnt == 0 {
+	} else if s.Requests == 0 {
 		costStr = "$0.00"
 	}
 	cacheRate := "-"
-	if pt > 0 {
-		var cached int64
-		_ = db.QueryRow(`SELECT COALESCE(SUM(cached_tokens),0) FROM requests WHERE success=1`).Scan(&cached)
-		if cached == 0 {
+	if s.PromptTokens > 0 {
+		if s.CachedTokens == 0 {
 			cacheRate = "0.0%"
 		} else {
-			cacheRate = fmt.Sprintf("%.1f%%", float64(cached)/float64(pt)*100)
+			cacheRate = fmt.Sprintf("%.1f%%", float64(s.CachedTokens)/float64(s.PromptTokens)*100)
 		}
 	}
-	m.statsBrief = fmt.Sprintf("Requests: %d  Tokens: %d in / %d out  Cost: %s  Cache: %s", cnt, pt, ct, costStr, cacheRate)
+	return fmt.Sprintf("Requests: %d  Tokens: %d in / %d out  Cost: %s  Cache: %s",
+		s.Requests, s.PromptTokens, s.CompletionTokens, costStr, cacheRate)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

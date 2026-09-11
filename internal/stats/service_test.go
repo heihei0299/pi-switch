@@ -122,3 +122,35 @@ func TestStatsServicePaginationIsDeterministic(t *testing.T) {
 		t.Fatalf("pages are not deterministic by request id: first=%s second=%s", *first.RecentRequests[0].TS, *second.RecentRequests[0].TS)
 	}
 }
+
+// ARCH-06: the TUI status line reads Summary from this package instead of
+// running its own SQL. Only successful requests count; unknown cost contributes
+// nothing while missing token facts count as zero.
+func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
+	db := openStatsDB(t)
+	center := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	insertFact(t, db, center.Format(time.RFC3339), "p", "m", 1, int64(10), int64(5), int64(2), nil, 0.25, "c1", nil, nil)
+	insertFact(t, db, center.Add(time.Minute).Format(time.RFC3339), "p", "m", 1, nil, nil, nil, nil, nil, "c2", nil, nil)
+	insertFact(t, db, center.Add(2*time.Minute).Format(time.RFC3339), "p", "m", 0, int64(99), int64(99), int64(99), nil, 9.0, "c3", nil, nil)
+	insertFact(t, db, center.Add(-48*time.Hour).Format(time.RFC3339), "old", "m", 1, int64(7), int64(3), int64(1), nil, 1.0, "old", nil, nil)
+
+	service := Service{DB: db}
+	all, err := service.Summary(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Requests != 3 || all.PromptTokens != 17 || all.CompletionTokens != 8 || all.CachedTokens != 3 {
+		t.Fatalf("all-time summary = %+v", all)
+	}
+	if all.Cost == nil || *all.Cost != 1.25 {
+		t.Fatalf("all-time cost = %v, want 1.25", all.Cost)
+	}
+
+	windowed, err := service.Summary(&Window{From: center.Add(-time.Hour).UnixMilli(), To: center.Add(time.Hour).UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if windowed.Requests != 2 || windowed.PromptTokens != 10 || windowed.Cost == nil || *windowed.Cost != 0.25 {
+		t.Fatalf("windowed summary = %+v", windowed)
+	}
+}

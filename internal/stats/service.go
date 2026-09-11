@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/conversation"
+	"github.com/heihei0299/pi-switch/internal/store"
 )
 
 // Window is an inclusive/exclusive epoch-millisecond range.
@@ -19,6 +20,59 @@ type Service struct {
 	DB         *sql.DB
 	Source     conversation.Source
 	Candidates []conversation.Candidate
+}
+
+// OpenService opens the default request database and returns a Service bound to
+// conversationSource. Callers that only need Summary (the TUI status line) do not
+// need attribution candidates; the source still selects the mode for the other
+// methods.
+func OpenService(conversationSource string) (Service, error) {
+	db, err := store.GetDB()
+	if err != nil {
+		return Service{}, err
+	}
+	return Service{DB: db, Source: conversation.Source(conversationSource)}, nil
+}
+
+// Summary is the compact aggregate behind the TUI status line: successful
+// requests and their token/cost totals. It is deliberately smaller than
+// StatsResponse — the TUI shows numbers, not per-provider attribution.
+type Summary struct {
+	Requests         int      `json:"requests"`
+	PromptTokens     int64    `json:"promptTokens"`
+	CompletionTokens int64    `json:"completionTokens"`
+	CachedTokens     int64    `json:"cachedTokens"`
+	Cost             *float64 `json:"cost"`
+}
+
+// Summary aggregates successful requests in window (nil means all time). Missing
+// token facts count as zero, matching the previous TUI query; a request whose
+// cost is unknown contributes nothing to Cost rather than a zero.
+func (s Service) Summary(window *Window) (Summary, error) {
+	var out Summary
+	err := s.forEachFact(window, "ASC", func(fact RequestFact) error {
+		if fact.Success == nil || !*fact.Success {
+			return nil
+		}
+		out.Requests++
+		if fact.PromptTokens != nil {
+			out.PromptTokens += *fact.PromptTokens
+		}
+		if fact.CompletionTokens != nil {
+			out.CompletionTokens += *fact.CompletionTokens
+		}
+		if fact.CachedTokens != nil {
+			out.CachedTokens += *fact.CachedTokens
+		}
+		if fact.Cost != nil {
+			out.Cost = addCost(out.Cost, *fact.Cost)
+		}
+		return nil
+	})
+	if err != nil {
+		return Summary{}, err
+	}
+	return out, nil
 }
 
 // timestampEpochMillisSQL keeps the Stats window in the same epoch-millisecond
