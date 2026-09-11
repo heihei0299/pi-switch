@@ -86,6 +86,19 @@
 4. 固定 pid 文件只支持一个受管理 Proxy 和一个受管理 WebUI；多实例不是本期能力，Status 必须明确提示 unmanaged/multiple listener。
 5. stop 是幂等的：实例已退出、PID stale 或 PID 文件缺失都不能误杀其他进程，也不能报告仍在运行。
 
+### 2.8 HTTP 错误信封
+
+错误响应按消费面分成两种信封，同一路由族内不得混用：
+
+| 面 | 路由 | 信封 | 消费者 |
+|---|---|---|---|
+| 管理面 | `/api/*` | `{"error": "<message>"}` | WebUI / CLI；只渲染 message，错误种类由 HTTP status 表达 |
+| 推理面 | `/v1/*` | `{"error": {"message": "...", "type": "..."}}` | OpenAI 兼容客户端；需要 type/message 语义 |
+
+1. 管理面一律字符串 message，包括 501 `not_implemented` 与 410 `gone`：这两个状态已唯一表达拒绝种类，不再重复放进 `error.type`。
+2. 推理面（含 `GET /v1/models` 与 `POST /v1/chat/completions`）一律 OpenAI 错误对象，即使失败发生在读取 config 这类共享前置步骤。
+3. 管理面客户端只解析字符串；给管理面返回错误对象会让 WebUI 丢失 message、退化成 HTTP statusText。
+
 ## 3. IMP-01～IMP-05 追踪矩阵
 
 | 不变量 | 规范证据 | 后续工作包 | 直接回归测试 | 真实验收 |

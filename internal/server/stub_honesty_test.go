@@ -9,9 +9,9 @@ import (
 )
 
 // Ticket 04: no management endpoint may answer 200 while claiming a side effect
-// it never performs. Endpoints without an implementation answer 501 with
-// error.type=not_implemented; endpoints whose empty result is the truth keep
-// answering 200.
+// it never performs. Endpoints without an implementation answer 501 with the
+// management error envelope (a bare message; system-contract 2.8); endpoints whose
+// empty result is the truth keep answering 200.
 
 func mustConfigPath(t *testing.T) string {
 	t.Helper()
@@ -39,15 +39,11 @@ func assertNotImplemented(t *testing.T, w *httptest.ResponseRecorder) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v (%s)", err, w.Body.String())
 	}
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("body = %s, want an error object", w.Body.String())
-	}
-	if errObj["type"] != "not_implemented" {
-		t.Fatalf("error.type = %v, want not_implemented", errObj["type"])
-	}
-	if msg, _ := errObj["message"].(string); msg == "" {
-		t.Fatalf("error.message is empty: %s", w.Body.String())
+	// Management surface (system-contract 2.8): the 501 status carries the
+	// "not implemented" kind, so error is a bare message the WebUI can render.
+	msg, ok := body["error"].(string)
+	if !ok || msg == "" {
+		t.Fatalf("body = %s, want a non-empty string error", w.Body.String())
 	}
 	// A 501 must not also claim success.
 	if _, ok := body["ok"]; ok {

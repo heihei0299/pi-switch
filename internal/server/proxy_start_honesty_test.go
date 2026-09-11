@@ -17,8 +17,8 @@ import (
 // process. It is the request that asks for nothing, and it was told the proxy is
 // running.
 //
-// The honest answer reuses the shape the P0 batch established for capabilities
-// that do not exist: 501 + {"error":{"type":"not_implemented", ...}}.
+// The honest answer uses the management error envelope
+// (system-contract 2.8): 501 + {"error":"<message>"}.
 func TestProxyStart_EmptyRequestDoesNotClaimTheProxyIsRunning(t *testing.T) {
 	isolateConfig(t)
 	r := NewMgmtRouter()
@@ -29,11 +29,8 @@ func TestProxyStart_EmptyRequestDoesNotClaimTheProxyIsRunning(t *testing.T) {
 	}
 
 	var body struct {
-		Running *bool `json:"running"`
-		Error   struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Running *bool  `json:"running"`
+		Error   string `json:"error"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v (%s)", err, w.Body.String())
@@ -41,12 +38,9 @@ func TestProxyStart_EmptyRequestDoesNotClaimTheProxyIsRunning(t *testing.T) {
 	if body.Running != nil {
 		t.Fatalf("the response still claims a running state: %s", w.Body.String())
 	}
-	if body.Error.Type != "not_implemented" {
-		t.Fatalf("error.type = %q, want not_implemented (%s)", body.Error.Type, w.Body.String())
-	}
 	// The operator must be told what the request was missing, not just "no".
-	if !strings.Contains(body.Error.Message, "daemon") {
-		t.Fatalf("the message does not say how to start the proxy for real: %q", body.Error.Message)
+	if !strings.Contains(body.Error, "daemon") {
+		t.Fatalf("the message does not say how to start the proxy for real: %q", body.Error)
 	}
 }
 

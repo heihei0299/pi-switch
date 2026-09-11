@@ -25,7 +25,7 @@ import (
 )
 
 func handleModels(c *gin.Context) {
-	cfg, ok := loadConfigOrWrite(c)
+	cfg, ok := loadConfigOrChatError(c)
 	if !ok {
 		return
 	}
@@ -288,12 +288,8 @@ func handleChatCompletions(c *gin.Context) {
 		}})
 		return
 	}
-	cfg, cfgErr := loadConfig()
-	if cfgErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
-			"message": "config unavailable: " + cfgErr.Error(),
-			"type":    "internal_error",
-		}})
+	cfg, ok := loadConfigOrChatError(c)
+	if !ok {
 		return
 	}
 	var body map[string]interface{}

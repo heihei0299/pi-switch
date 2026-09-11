@@ -11,9 +11,28 @@ function okResponse(body: string) {
   } as Response;
 }
 
+function errorResponse(status: number, statusText: string, body: string) {
+  return {
+    ok: false,
+    status,
+    statusText,
+    text: async () => body,
+  } as Response;
+}
+
 describe("API runtime contract boundary", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
+
+  // system-contract 2.8: the management surface answers {"error": "<message>"},
+  // and the client must surface that message (not the HTTP statusText).
+  it("surfaces the management string message on a failed request", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      errorResponse(501, "Not Implemented", JSON.stringify({ error: "config export is not implemented" })),
+    );
+
+    await expect(api.getState()).rejects.toThrow("config export is not implemented");
+  });
 
   it("reports the response path when a required state field is missing", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({

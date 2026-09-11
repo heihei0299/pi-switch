@@ -162,12 +162,28 @@ func loadConfig() (config.PiSwitchConfig, error) {
 	return cfg, err
 }
 
-// loadConfigOrWrite is loadConfig for gin handlers: on failure it writes the 500
-// response and reports ok=false so the handler must stop.
+// loadConfigOrWrite is loadConfig for management (/api) handlers: on failure it
+// writes the management error envelope ({"error": "<message>"}) and reports
+// ok=false so the handler must stop.
 func loadConfigOrWrite(c *gin.Context) (config.PiSwitchConfig, bool) {
 	cfg, err := loadConfig()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return config.PiSwitchConfig{}, false
+	}
+	return cfg, true
+}
+
+// loadConfigOrChatError is loadConfig for inference (/v1) handlers: the response
+// keeps the OpenAI {"error":{message,type}} envelope even when the failure is a
+// shared pre-step such as reading the config. See system-contract 2.8.
+func loadConfigOrChatError(c *gin.Context) (config.PiSwitchConfig, bool) {
+	cfg, err := loadConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": "config unavailable: " + err.Error(),
+			"type":    "internal_error",
+		}})
 		return config.PiSwitchConfig{}, false
 	}
 	return cfg, true
@@ -178,9 +194,10 @@ func loadConfigOrWrite(c *gin.Context) (config.PiSwitchConfig, bool) {
 // (domain files must not call each other's helpers). These endpoints used to
 // return 200 with a plausible payload — a path that was never written, a restore
 // that never happened — so the WebUI reported success for work that did not
-// occur.
+// occur. It returns the management envelope: the 501 status already carries the
+// "not implemented" kind, and the WebUI only renders a string message.
 func notImplemented(what string) gin.H {
-	return gin.H{"error": gin.H{"type": "not_implemented", "message": what + " is not implemented"}}
+	return gin.H{"error": what + " is not implemented"}
 }
 
 func NewProxyRouter() *gin.Engine {

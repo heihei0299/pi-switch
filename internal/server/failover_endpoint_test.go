@@ -15,7 +15,11 @@ func TestFailoverEndpoint_Gone(t *testing.T) {
 	if w.Code != 410 {
 		t.Fatalf("PUT /api/proxy/failover: got %d body %s, want 410", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "gone") {
-		t.Fatalf("body should contain gone, got %s", w.Body.String())
+	// Management envelope (system-contract 2.8): a bare message; 410 carries "gone".
+	if !strings.Contains(w.Body.String(), "failover removed") {
+		t.Fatalf("body should explain the removal, got %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"error":"`) {
+		t.Fatalf("body should use the management string envelope, got %s", w.Body.String())
 	}
 }

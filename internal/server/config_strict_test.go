@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,40 @@ func TestStrictConfig_CorruptFileFailsReadEndpoints(t *testing.T) {
 		if w.Code != http.StatusInternalServerError {
 			t.Fatalf("GET %s with corrupt config = %d, want 500 (body=%s)", path, w.Code, w.Body.String())
 		}
+		// system-contract 2.8: management errors are a bare string message.
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error == "" {
+			t.Fatalf("GET %s management envelope = %s, want {\"error\":\"...\"}", path, w.Body.String())
+		}
+	}
+}
+
+// system-contract 2.8: the inference surface keeps the OpenAI error object even
+// when the failure is a shared pre-step such as reading the config.
+func TestStrictConfig_InferenceErrorEnvelope(t *testing.T) {
+	cfgPath := isolateConfig(t)
+	if err := os.WriteFile(cfgPath, []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	NewProxyRouter().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /v1/models with corrupt config = %d, want 500 (body=%s)", w.Code, w.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode /v1/models error: %v (%s)", err, w.Body.String())
+	}
+	if body.Error.Message == "" || body.Error.Type == "" {
+		t.Fatalf("GET /v1/models inference envelope = %s, want {\"error\":{\"message\":...,\"type\":...}}", w.Body.String())
 	}
 }
 
