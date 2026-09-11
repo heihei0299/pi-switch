@@ -446,7 +446,10 @@ function ProfileForm({
                   <option key={mode} value={mode}>{responsesModeLabel(mode, t)}</option>
                 ))}
                 {!allowedResponsesModes(caps, apiType).includes(responsesMode) && (
-                  <option value={responsesMode}>{responsesModeLabel(responsesMode, t)}</option>
+                  // 与 api 选择器同一原则：旧值可见可回显，但不能被重新选中。
+                  <option value={responsesMode} disabled>
+                    {responsesModeLabel(responsesMode, t)}
+                  </option>
                 )}
               </Select>
             </Field>
