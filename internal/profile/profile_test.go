@@ -2,6 +2,7 @@ package profile
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,6 +111,43 @@ func TestCreateProfileFlatProfileObeysCapabilityContract(t *testing.T) {
 
 	if err := CreateProfile("flat-ok", flat(protocol.OpenAIResponses)); err != nil {
 		t.Fatalf("flat proxyable api rejected: %v", err)
+	}
+}
+
+// DuplicateProfile 逐字复制既有 profile，但复制不能成为绕过 capability 的途径：flat profile
+// 的 api 就是它的 effective pair，把一条跑不起来的 legacy profile 再复制一份，同样是让 CRUD
+// 产出一个必失败配置。这些源只可能来自遗留配置或手工编辑（三个授权门已经拒收这个形状），所以
+// 用直接写盘来构造。
+func TestDuplicateProfileRefusesUnproxyableFlatSource(t *testing.T) {
+	path := isolate(t)
+	write := func(profile string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(`{"version":2,"profiles":{"legacy":`+profile+`}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(`{"api":"` + protocol.GoogleGenerativeAI + `","baseUrl":"https://example.test/v1","apiKey":"k"}`)
+	if err := DuplicateProfile("legacy", "copy"); err == nil || !strings.Contains(err.Error(), "proxy") {
+		t.Fatalf("flat unproxyable source = %v, want a proxy-capability error", err)
+	}
+
+	write(`{"api":"unknown-api","baseUrl":"https://example.test/v1","apiKey":"k"}`)
+	if err := DuplicateProfile("legacy", "copy"); err == nil || !strings.Contains(err.Error(), "unsupported api") {
+		t.Fatalf("flat unknown source = %v, want an unsupported-api error", err)
+	}
+
+	// shape 不归 duplicate 管：磁盘上 baseUrl 坏的 legacy profile 仍要能复制一份再改，
+	// 否则这条修复路径会被 shape 问题一起挡掉。
+	write(`{"api":"openai-completions","baseUrl":"ftp://example.test","apiKey":"k"}`)
+	if err := DuplicateProfile("legacy", "copy"); err != nil {
+		t.Fatalf("a flat source with a shape problem must still be duplicable: %v", err)
+	}
+
+	// 可代理的 flat 源照常复制。
+	write(`{"api":"openai-completions","baseUrl":"https://example.test/v1","apiKey":"k"}`)
+	if err := DuplicateProfile("legacy", "copy2"); err != nil {
+		t.Fatalf("proxyable flat source: %v", err)
 	}
 }
 

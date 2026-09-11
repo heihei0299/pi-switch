@@ -114,6 +114,15 @@ func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
 	return protocol.ValidateResponsesMode(api, u.EffectiveResponsesMode(profile.ResponsesMode))
 }
 
+// ValidateEffectiveFlatAPI judges the api/mode pair of a profile that resolves to no
+// channel at all — no upstreams and no baseUrl/apiKey/headers. There the profile's own
+// api is the effective one, exactly as it is for a synthesized legacy channel, so this
+// is ValidateEffectiveChannelAPI with the empty channel named: callers judge the flat
+// shape without passing `Upstream{}` and guessing what it stands for.
+func ValidateEffectiveFlatAPI(profile ProviderProfile) error {
+	return ValidateEffectiveChannelAPI(Upstream{}, profile)
+}
+
 // ValidateUpstreamAPI checks one channel of a profile that is being authored, so it
 // additionally requires the channel to name its own api. It reports exactly what the
 // effective rule reports: an explicit per-channel api with an incompatible mode is

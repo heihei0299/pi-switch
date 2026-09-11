@@ -54,9 +54,21 @@ func handlePutConfig(c *gin.Context) {
 		// effective upstream fallback 语义（api/baseUrl/apiKey 的来源），不表示 legacy
 		// flat profile 一定能走完 route resolution。shape/模型/channel 名校验不在此门
 		// （CRUD 门的规则，见 §2.2）。
-		for idx, u := range prof.ResolvedUpstreams() {
+		resolved := prof.ResolvedUpstreams()
+		for idx, u := range resolved {
 			if err := config.ValidateEffectiveChannelAPI(u, prof); err != nil {
 				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: upstreams[%d]: %s", name, idx, err.Error())})
+				return
+			}
+		}
+		// 第三层：ResolvedUpstreams() 为空表示这条 profile 没有任何 channel（无 upstreams 且
+		// 无 baseUrl/apiKey/headers）。此时 profile 自己声明的 api 就是唯一能判的 effective
+		// 组合，按 advisory 门与 CRUD 门同一条规则判一次——否则「无 channel 又无连接信息」
+		// 会成为一个所有门里只有这道门放行的形状。没有声明 api 的 profile 没有任何可判的
+		// 组合，仍然放行（那属于 loader/advisory 的范围）。
+		if len(resolved) == 0 && prof.API != "" {
+			if err := config.ValidateEffectiveFlatAPI(prof); err != nil {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
 				return
 			}
 		}
@@ -571,7 +583,7 @@ func handleValidate(c *gin.Context) {
 		} else if len(prof.Upstreams) == 0 {
 			// legacy flat profile：effective api 就是 profile 自己的 api，路径按 profile 报。
 			// 声明了 channel 的 profile 由 ProfileIssues 逐 channel 报（同一能力来源）。
-			if err := config.ValidateEffectiveChannelAPI(config.Upstream{}, prof); err != nil {
+			if err := config.ValidateEffectiveFlatAPI(prof); err != nil {
 				issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": err.Error()})
 			}
 		}

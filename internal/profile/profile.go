@@ -58,6 +58,15 @@ func DuplicateProfile(src, as string) error {
 	if _, exists := cfg.Profiles[as]; exists {
 		return profileErr(ErrProfileExists, "target %q already exists", as)
 	}
+	// 复制不校验内容，但 flat profile 的 api 就是它的 effective pair：把磁盘上一条能力上跑不
+	// 起来的 legacy profile（遗留配置或手工编辑，三个授权门已经拒收这个形状）再复制一份，等于
+	// 让 CRUD 重新产出必失败配置。只补这一格——shape/retry 仍然不判，否则「复制一份再改」这条
+	// 修复路径会被 shape 问题一起挡掉。
+	if len(prof.Upstreams) == 0 {
+		if err := config.ValidateEffectiveFlatAPI(prof); err != nil {
+			return err
+		}
+	}
 	cfg.Profiles[as] = prof
 	return persist(cfg, "failed to save config: ")
 }

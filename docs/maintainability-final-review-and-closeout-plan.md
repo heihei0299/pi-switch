@@ -449,9 +449,9 @@ STOP
 满足：
 
 ```text
-[x] Config door 与 Profile CRUD capability 一致（例外：profile 既无 channel 又无 baseUrl/apiKey/headers
-    时整文件门不进入判定——该形状不可路由；CRUD 门与 advisory 门仍拒收。已记入 system-contract §2.2 第 2 条）
-[x] flat profile 不再绕过 IsKnown / CanProxy（三个授权门；`duplicate` 是逐字复制、不做判定，见 §11）
+[x] Config door 与 Profile CRUD capability 一致（仅剩例外：连 api 都没声明的 profile——它没有任何可判的组合，
+    整文件门放行、CRUD 门与 advisory 门拒收/报错。已记入 system-contract §2.2 第 2 条）
+[x] flat profile 不再绕过 IsKnown / CanProxy（含 `duplicate`：复制 flat 源时按同一条 flat 规则判，channel 型源保持不判，见 §11）
 [x] UI 不提供服务端必拒绝的可选 API
 [x] advisory 继续能诊断历史坏配置
 [x] capability matrix 保持有效
@@ -505,12 +505,13 @@ WebUI 大规模重构
 
 同类项（已一并处理）：`ProfilesPanel.tsx` 的 responsesMode fallback option 原先也没有 `disabled`，现按同一原则加上。一处诚实修正：它比 api 那个弱——`saveLocal` 先用 `responsesModeError`/`allowedResponsesModes` 拦下保存（客户端给出「passthrough requires openai-responses」这类话术），旧 mode 到不了服务端；而 api 那项此前没有任何客户端规则，unknown 值会一路走到 400。所以这一项是「不提供写入口必拒的可选项」的一致性对齐，不是补一个真实漏洞。
 
-后续 code review（双轴：Standards + Spec；基准 `3a88157`）后的处理记录：
+后续 code review（双轴：Standards + Spec；基准 `3a88157`）后的处理记录（三项全部执行）：
 
-- **两门之间有意保留的差异**：profile 既无 channel 又无 baseUrl/apiKey/headers 时，整文件门按 `ResolvedUpstreams()` 判定、因此不进入 capability 判定（该形状没有任何 channel，route resolution 与 `/v1/models` 都不遍历它，本来就不可路由），而 CRUD 门与 advisory 门仍按 profile 顶层 api 拒收。已写进 system-contract §2.2 第 2 条，不再声称两门字面一致。
-- **未纳入的授权门**：`duplicate`（`POST /api/profiles/:name/duplicate`、`provider duplicate`）逐字复制既有 profile、不做 capability 判定；它的源只可能来自磁盘上的遗留/手工配置（三个授权门已拒收该形状），且 advisory 会报出来，故本轮不改。
-- **已采纳**：两个 capability matrix 合并为一份共享期望 `capabilityWritePolicy` + `capabilityWriteCases`（`internal/server/config_diagnostics_test.go`）——两个门读同一份「新增 API 必须显式决策」表与同一条 CanProxy 一致性断言，各门仍保留自己的请求与断言逻辑。反证：把 google 的决策临时改成 `true`，两个矩阵同时以 `CanProxy is the one source both write doors follow` 失败；改回后 `internal/server` 全绿。
+- **① 整文件门补齐「无 channel 但声明了 api」的形状**：`ResolvedUpstreams()` 为空时按 profile 顶层 api 判一次（`internal/server/profile_handlers.go` 第三层）。与 CRUD 门、advisory 门从此同一条规则；唯一剩下的分歧是**连 api 都没声明**的 profile——它没有任何可判的组合，整文件门放行而另外两个门拒收/报错，已写进 system-contract §2.2 第 2 条。同时把 `config.Upstream{}` 这个读不出意图的哨兵收成具名调用 `config.ValidateEffectiveFlatAPI(profile)`，三个调用点（整文件门、CRUD 门、advisory 门）共用。
+- **② `duplicate` 门补 flat 判定**：`DuplicateProfile` 在复制 flat 源（`len(Upstreams) == 0`）时按同一条 flat 规则判，否则把 legacy/手改的不可代理 profile 再复制一份就等于用 CRUD 重新产出必失败配置。**只判这一格**：shape/retry 仍不判，磁盘上带 shape 问题的 profile 依旧能「复制一份再改」。channel 型源保持不判。
+- **③ 两个 capability matrix 合并为一份共享期望** `capabilityWritePolicy` + `capabilityWriteCases`（`internal/server/config_diagnostics_test.go`）——两个门读同一份「新增 API 必须显式决策」表与同一条 CanProxy 一致性断言，各门仍保留自己的请求与断言逻辑。
+- **不变量固化**：新增 `internal/server/door_parity_test.go`，把「形状 × api → 三个门的判决」逐格声明成表（含上面那格例外），duplicate 那一格按「源形状」单独列表。以后口径漂移会以某一行 diff 出现，而不是等下一轮人工审查发现——这一轮的两个缺口正是这么暴露的。
 
-前两项不构成「继续修」的理由：按 §10，除非出现真实维护问题，本轮到此为止。
+反证：新表在实现前对 `flat-no-url` + `google-generative-ai` / `unknown-api` 两格与 duplicate 的两格为红（整文件门与 duplicate 都回 200），实现后转绿；把 google 的写策略临时改成 `true`，两个 capability matrix 同时以 `CanProxy is the one source both write doors follow` 失败。
 
 > **maintainability initiative CLOSED**

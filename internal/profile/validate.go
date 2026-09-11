@@ -22,7 +22,7 @@ func ValidateProfile(p config.ProviderProfile) error {
 		// 无 channel 的 flat profile：它的 api/mode 就是 effective pair，和整文件门
 		// （handleValidate、config 写入路径）判定的是同一个 channel。有 channel 时
 		// profile 顶层 api 不参与运行期解析，逐 channel 由 ProfileIssues 判定。
-		if err := config.ValidateEffectiveChannelAPI(config.Upstream{}, p); err != nil {
+		if err := config.ValidateEffectiveFlatAPI(p); err != nil {
 			return err
 		}
 	}
