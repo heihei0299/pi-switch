@@ -123,15 +123,17 @@ func ValidateEffectiveFlatAPI(profile ProviderProfile) error {
 	return ValidateEffectiveChannelAPI(Upstream{}, profile)
 }
 
-// ValidateResolvedCapability is the capability judgement of one whole profile, in the
-// shape the runtime resolves it: every channel from ResolvedUpstreams(), and — when
-// nothing resolves to a channel — the profile's own api. A profile that declares no api
-// anywhere has no pair to judge and passes.
+// ValidateResolvedCapability judges a profile's api/mode capability using the same
+// effective-upstream fallback semantics used by the runtime helpers. It checks every
+// ResolvedUpstreams() entry and, when none exists but the profile declares an api,
+// checks the profile-level api/mode pair. A profile that declares no api anywhere has
+// no pair to judge and passes.
 //
-// It is the rule the whole-file config door applies to a profile being stored, and the
-// rule DuplicateProfile applies before copying one, so a copy can never be a profile that
-// door would refuse. Shape, model-name and retry rules are deliberately not part of it:
-// those belong to the authoring doors.
+// It is the capability rule the whole-file config door applies to a profile being stored
+// (that door's profile-level mode check runs first), and the rule DuplicateProfile
+// applies before copying one, so a copy can never be a profile that door would refuse.
+// Shape, model-name and retry rules are deliberately not part of it: those belong to the
+// authoring doors.
 func ValidateResolvedCapability(profile ProviderProfile) error {
 	resolved := profile.ResolvedUpstreams()
 	for idx, u := range resolved {

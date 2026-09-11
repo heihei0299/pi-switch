@@ -42,11 +42,12 @@ func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 		t.Fatalf("PUT /api/config without a profile-level responsesMode = %d, want 400 (the channel pair is still judged): %s", w.Code, w.Body.String())
 	}
 
-	// legacy flat profile（无 upstreams）：ResolvedUpstreams 合成的 channel 就是运行期那一个，
-	// 它的 effective 组合仍必须被判定。
+	// legacy flat profile（无 upstreams）：ResolvedUpstreams 用与 runtime 相同的 effective
+	// upstream fallback 语义合成一个 channel，它的 effective 组合仍必须被判定——这里只断言
+	// capability 判定，不声明 synthesized channel 一定能走完 route resolution。
 	w = put(`{"p":{"api":"openai-completions","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}}`)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("PUT /api/config with a legacy flat mismatch = %d, want 400 (the synthesized channel is the runtime's): %s", w.Code, w.Body.String())
+		t.Fatalf("PUT /api/config with a legacy flat mismatch = %d, want 400 (the door judges the synthesized channel's effective pair): %s", w.Code, w.Body.String())
 	}
 
 	// profile 顶层组合不兼容，即使每个 channel 都覆盖它：门仍拒绝——配置自身声明了一个

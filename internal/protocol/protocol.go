@@ -13,8 +13,9 @@ const (
 	GoogleGenerativeAI = "google-generative-ai"
 )
 
-// IsKnown reports whether api is a recognized identifier. This is the set the
-// config boundary may store, even when no current surface can route it.
+// IsKnown reports whether api is a recognized identifier.
+// Parsing/loading may preserve a known identifier, while authoring/write
+// boundaries may additionally require CanProxy.
 func IsKnown(api string) bool {
 	switch api {
 	case OpenAIChat, OpenAIResponses, AnthropicMessages, GoogleGenerativeAI:
