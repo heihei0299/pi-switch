@@ -58,9 +58,16 @@ func DuplicateProfile(src, as string) error {
 	if _, exists := cfg.Profiles[as]; exists {
 		return profileErr(ErrProfileExists, "target %q already exists", as)
 	}
-	// 复制不判 shape/模型/channel 名/retry——磁盘上带这些问题的 profile 仍要能「复制一份再改」。
-	// 但能力判定与整文件门共用同一条（config.ValidateResolvedCapability）：副本因此不可能是那道
-	// 门会拒绝的配置。这类源只可能来自遗留配置或手工编辑，三道授权门已经拒收这些形状。
+	// 复制只判整文件门会判的两件事，顺序与它一致：profile 顶层 api/responsesMode 自洽（api 为
+	// 空时门也跳过这一层），随后 resolved capability。副本因此不可能是那道门会拒绝的配置——channel
+	// 覆盖顶层组合不豁免，因为"配置自身必须自洽"正是门比 runtime 严的那一格（system-contract
+	// §2.2 第 4 条）。shape/模型/channel 名/retry 一律不判：磁盘上带这些问题的源仍要能
+	// 「复制一份再改」。
+	if prof.API != "" {
+		if err := ValidateResponsesMode(prof); err != nil {
+			return err
+		}
+	}
 	if err := config.ValidateResolvedCapability(prof); err != nil {
 		return err
 	}

@@ -516,4 +516,13 @@ WebUI 大规模重构
 
 反证：新表在实现前对 `flat-no-url` + `google-generative-ai` / `unknown-api` 两格、以及 duplicate 的 channel 不可代理 / channel 未知 api / 逐字空源三格为红（整文件门与 duplicate 都回 200，逐字空源那一格反倒是 duplicate 比门更严），实现后转绿；把 google 的写策略临时改成 `true`，两个 capability matrix 同时以 `CanProxy is the one source both write doors follow` 失败。
 
-> **maintainability initiative CLOSED**
+Final follow-up（基准 `main @ 42a25cd`，CLOSE-FINAL-01～06）：
+
+- **duplicate 顶层 responsesMode parity 已修**：`PUT /api/config` 判两层（顶层 api/responsesMode 自洽 → `ValidateResolvedCapability`），而 duplicate 此前只判第二层，于是「顶层 `openai-completions + passthrough` 不可执行、channel 用 `openai-responses + passthrough` 覆盖」的 legacy profile 能被复制——那一格门会 400。现在 `DuplicateProfile` 按同一顺序判两层（顶层检查同样带 `prof.API != ""` 守卫，api 为空时与门一样跳过）。仍**不**调用完整 `ValidateProfile`：shape/模型/channel 名/retry 依旧不阻止复制。
+- **targeted regression 已加**：domain 两条（`TestDuplicateProfileRejectsInvalidTopLevelResponsesModeEvenWhenChannelOverridesIt`、`TestDuplicateProfileAllowsValidTopLevelModeWithChannelOverride`）+ door parity 两格（`TestDoorParity_DuplicateMatchesWholeFileTopLevelModeRule`）。主矩阵刻意没有扩成 shape × api × responsesMode × channelMode。
+- **stale legacy-flat 措辞已改**：`door_parity_test.go` 里那句"合成出的 channel 就是运行期那一个"改为声明 ResolvedUpstreams 的 fallback 语义、且只验证 capability 判定，不声明 synthesized channel 一定能走完 route resolution。
+- **contract 已同步**：system-contract §2.2 的 duplicate 行改写为"顶层 mode 自洽 + `ValidateResolvedCapability` 两件事，副本不会是门因 mode/capability 而拒绝的配置"，并指回第 4 条。
+
+红→绿：实现前 domain 的 A 例 `DuplicateProfile = nil`、door parity 的 A 格 `duplicate = 200`（期望 400），正例 A/B 均已通过（证明 channel override 本身不是错误）；实现后全绿。
+
+> **maintainability initiative CLOSED — 无已知 P0 / P1 / P2。**

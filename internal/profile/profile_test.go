@@ -166,6 +166,55 @@ func TestDuplicateProfileRefusesUnproxyableSource(t *testing.T) {
 	}
 }
 
+// DuplicateProfile 判两件事：profile 顶层 api/responsesMode 自洽，随后 resolved capability——
+// 与整文件门同一顺序。channel 自带 api 覆盖了顶层组合也不豁免：那条"配置自身必须自洽"的检查
+// 是整文件门唯一比 runtime 严的地方（system-contract §2.2 第 4 条），duplicate 不能是唯一放行
+// 的门。正例见 TestDuplicateProfileAllowsValidTopLevelModeWithChannelOverride。
+func TestDuplicateProfileRejectsInvalidTopLevelResponsesModeEvenWhenChannelOverridesIt(t *testing.T) {
+	path := isolate(t)
+	// 顶层 openai-completions + passthrough 不可执行；channel 的 openai-responses +
+	// passthrough 本身有效，所以这一格只有顶层检查能挡住。
+	source := `{"api":"openai-completions","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k",` +
+		`"upstreams":[{"name":"main","api":"openai-responses","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}`
+	if err := os.WriteFile(path, []byte(`{"version":2,"profiles":{"legacy":`+source+`}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := DuplicateProfile("legacy", "copy")
+	if err == nil || !strings.Contains(err.Error(), "passthrough") {
+		t.Fatalf("invalid top-level pair = %v, want a responsesMode error", err)
+	}
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(raw), `"copy"`) {
+		t.Fatalf("被拒绝的复制仍然落盘：%s", raw)
+	}
+}
+
+// 防止修复时把"channel 覆盖顶层组合"本身当成错误：顶层 auto 合法、channel 用
+// openai-responses + passthrough 覆盖它，是合法配置（runtime 就按 channel 走），复制必须成功。
+func TestDuplicateProfileAllowsValidTopLevelModeWithChannelOverride(t *testing.T) {
+	path := isolate(t)
+	source := `{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://example.test/v1","apiKey":"k",` +
+		`"upstreams":[{"name":"main","api":"openai-responses","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}`
+	if err := os.WriteFile(path, []byte(`{"version":2,"profiles":{"legacy":`+source+`}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DuplicateProfile("legacy", "copy"); err != nil {
+		t.Fatalf("合法的 channel override 被拒绝：%v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"copy"`) {
+		t.Fatalf("副本没有落盘：%s", raw)
+	}
+}
+
 func TestDuplicateProfileErrorKinds(t *testing.T) {
 	isolate(t)
 	if err := CreateProfile("p", provider()); err != nil {

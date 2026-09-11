@@ -42,7 +42,7 @@ func TestDoorParity_CapabilityVerdicts(t *testing.T) {
 		{shapeFlatNoURL, protocol.OpenAIChat, true, true, false, "能力上可代理：整文件门不跑 shape 校验；缺 baseUrl 只有 advisory 报 error，CRUD 门不要求 flat profile 带 baseUrl"},
 		{shapeFlatNoURL, protocol.GoogleGenerativeAI, false, false, true, "声明了 api 就判，没有 channel 也不例外"},
 		{shapeFlatNoURL, "unknown-api", false, false, true, "同上，未知 api"},
-		{shapeFlatWithURL, protocol.OpenAIChat, true, true, false, "legacy flat profile：合成出的 channel 就是运行期那一个"},
+		{shapeFlatWithURL, protocol.OpenAIChat, true, true, false, "legacy flat profile：ResolvedUpstreams 用与 runtime 相同的 effective upstream fallback 语义；这里只验证 capability 判定，不声明 synthesized channel 一定能走完 route resolution"},
 		{shapeFlatWithURL, protocol.GoogleGenerativeAI, false, false, true, "capability matrix 覆盖的经典形状"},
 		{shapeFlatWithURL, "unknown-api", false, false, true, ""},
 		{shapeFlatWithURL, "", false, false, true, "连接信息在、api 不在：合成 channel 的 effective api 为空"},
@@ -193,6 +193,51 @@ func TestDoorParity_DuplicateSourceVerdicts(t *testing.T) {
 			}
 			if copied := strings.Contains(string(raw), `"copy"`); copied != (tc.wantCode == 200) {
 				t.Fatalf("落盘与响应不一致：copy 存在=%v，响应码=%d（%s）", copied, w.Code, raw)
+			}
+		})
+	}
+}
+
+// duplicate 与整文件门对「顶层 mode 不兼容、但 channel 覆盖它」这一格必须给出同一个结果。
+// 主矩阵刻意不扩成 shape × api × responsesMode × channelMode（那是组合爆炸），所以这一格单独钉：
+// 两格就是全部需要说的话——不可执行的顶层组合谁也放不过，合法的 channel override 谁都不许挡。
+func TestDoorParity_DuplicateMatchesWholeFileTopLevelModeRule(t *testing.T) {
+	legacy := func(mode string) string {
+		return `{"version":2,"profiles":{"p":{"api":"openai-completions","responsesMode":"` + mode + `",` +
+			`"baseUrl":"https://example.test/v1","apiKey":"k",` +
+			`"upstreams":[{"name":"main","api":"openai-responses","responsesMode":"passthrough",` +
+			`"baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}}}`
+	}
+
+	cases := []struct {
+		name     string
+		mode     string
+		wantCode int
+		note     string
+	}{
+		{"invalid top level with valid channel override", "passthrough", 400, "顶层组合自身不可执行：channel 覆盖它不豁免"},
+		{"valid top level with valid channel override", "auto", 200, "channel override 本身合法，不得被当成错误"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := legacy(tc.mode)
+			r := NewMgmtRouter()
+
+			writeChannelConfig(t, t.TempDir(), `{"version":2,"profiles":{}}`)
+			req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != tc.wantCode {
+				t.Fatalf("PUT /api/config = %d (%s), want %d；%s", w.Code, strings.TrimSpace(w.Body.String()), tc.wantCode, tc.note)
+			}
+
+			// duplicate 的源就是盘上同一份 profile，所以两个门判的是同一格。
+			writeChannelConfig(t, t.TempDir(), body)
+			dup := callMgmt(r, http.MethodPost, "/api/profiles/p/duplicate", `{"as":"copy"}`)
+			if dup.Code != tc.wantCode {
+				t.Fatalf("duplicate = %d (%s), want %d（必须与整文件门一致）；%s", dup.Code, strings.TrimSpace(dup.Body.String()), tc.wantCode, tc.note)
 			}
 		})
 	}
