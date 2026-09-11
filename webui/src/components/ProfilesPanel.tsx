@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AppState, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
+import { defaultProtocolApiId, protocolApiIds, protocolCapabilities } from "../lib/protocolCapabilities";
 import { draftFromEntry, entryFromDraft, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
 import { channelNames, exposedForChannel, materializeMainChannel, modelsForChannel, parseModelsDraft, useProfileDraft } from "../hooks/useProfileDraft";
 import { JsonEditor } from "./JsonEditor";
@@ -28,13 +29,11 @@ import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { useDebounce } from "../hooks/useDebounce";
 import { mergePreviewHeaders } from "../lib/previewHeaders";
 import { mutateAfterProfilePut } from "../store/swr";
-const API_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "openai-completions", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-  { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "google-generative-ai", label: "Google Gemini" },
-];
-const API_TYPES = API_TYPE_OPTIONS.map((o) => o.value);
+// Api list and labels come from the backend capability set (GET /api/state),
+// never from a local copy; the fallback keeps rendering before the first fetch.
+function apiTypeOptions(): ReadonlyArray<{ value: string; label: string }> {
+  return protocolCapabilities().map((c) => ({ value: c.id, label: c.label }));
+}
 const SPOOFS = [
   { value: "", label: "none" },
   { value: "claude-code", label: "claude-code" },
@@ -55,7 +54,7 @@ type UpstreamForm = Omit<Upstream, "api" | "responsesMode" | "weight" | "name" |
 
 function emptyProfile(): ProviderProfile {
   return {
-    api: "openai-completions",
+    api: defaultProtocolApiId(),
     responsesMode: "auto",
     baseUrl: "",
     apiKey: "",
@@ -414,12 +413,12 @@ function ProfileForm({
             </Field>
             <Field label={t("API type")}>
               <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-                {API_TYPE_OPTIONS.map((o) => (
+                {apiTypeOptions().map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
-                {!API_TYPES.includes(apiType) && apiType && (
+                {!protocolApiIds().includes(apiType) && apiType && (
                   <option value={apiType}>{apiType}</option>
                 )}
               </Select>
@@ -532,7 +531,7 @@ function ProfileForm({
                         </Field>
                         <Field label={t("API type")}>
                           <Select value={u.api} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, api: e.target.value } : x))}>
-                            {API_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {apiTypeOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </Select>
                         </Field>
                       </div>

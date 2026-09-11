@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 // ARCH-01: a corrupt config must fail the read endpoints explicitly instead of
@@ -124,5 +125,36 @@ func TestPutConfig_ParsesBeforePersist(t *testing.T) {
 	}
 	if reloaded.Settings.Proxy.Host != "127.0.0.1" || reloaded.Settings.Proxy.Port != 43112 {
 		t.Fatalf("settings defaults not backfilled: %+v", reloaded.Settings.Proxy)
+	}
+}
+
+// The WebUI takes its api list and responsesMode rule from /api/state, so the
+// state payload must carry the protocol capability set.
+func TestStateExposesProtocolCapabilities(t *testing.T) {
+	isolateConfig(t)
+	w := httptest.NewRecorder()
+	NewMgmtRouter().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/state = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	var body struct {
+		Protocol struct {
+			APIs []struct {
+				ID             string   `json:"id"`
+				DefaultMode    string   `json:"defaultMode"`
+				ResponsesModes []string `json:"responsesModes"`
+			} `json:"apis"`
+		} `json:"protocol"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode state: %v (%s)", err, w.Body.String())
+	}
+	if len(body.Protocol.APIs) != len(protocol.Capabilities()) {
+		t.Fatalf("state.protocol.apis len = %d, want %d (%s)", len(body.Protocol.APIs), len(protocol.Capabilities()), w.Body.String())
+	}
+	for _, api := range body.Protocol.APIs {
+		if api.ID == "" || api.DefaultMode == "" || len(api.ResponsesModes) == 0 {
+			t.Fatalf("state.protocol.apis entry is incomplete: %+v", api)
+		}
 	}
 }

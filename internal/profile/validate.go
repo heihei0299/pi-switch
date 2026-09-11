@@ -9,20 +9,9 @@ import (
 )
 
 // ValidateResponsesMode rejects a responsesMode/api combination the proxy cannot
-// execute. An empty mode is the "auto" default and always accepted.
+// execute. It delegates to the one protocol rule; an empty mode is "auto".
 func ValidateResponsesMode(p config.ProviderProfile) error {
-	mode := p.ResponsesMode
-	if mode == "" {
-		mode = "auto"
-	}
-	api := p.API
-	if mode == "passthrough" && api != protocol.OpenAIResponses {
-		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
-	}
-	if mode == "convert" && api != protocol.OpenAIChat {
-		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
-	}
-	return nil
+	return protocol.ValidateResponsesMode(p.API, p.ResponsesMode)
 }
 
 // ValidateProviderProfile checks the profile shape: base URLs, channel names and

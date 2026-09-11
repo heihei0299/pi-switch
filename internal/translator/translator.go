@@ -15,23 +15,10 @@ type ResponsesConversionError struct {
 
 func (e *ResponsesConversionError) Error() string { return e.Message }
 
+// ValidateResponsesMode is kept as the translator-facing name; the rule lives in
+// internal/protocol so config, profile and translator share one implementation.
 func ValidateResponsesMode(api, mode string) error {
-	if mode == "" {
-		mode = "auto"
-	}
-	if mode == "auto" {
-		return nil
-	}
-	if mode == "passthrough" && api != protocol.OpenAIResponses {
-		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
-	}
-	if mode == "convert" && api != protocol.OpenAIChat {
-		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
-	}
-	if mode != "passthrough" && mode != "convert" {
-		return fmt.Errorf("invalid responsesMode %q", mode)
-	}
-	return nil
+	return protocol.ValidateResponsesMode(api, mode)
 }
 
 func IsNativeResponsesPassthrough(api, mode string) bool {

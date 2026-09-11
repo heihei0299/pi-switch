@@ -1,4 +1,5 @@
 import type { ModelCost, ModelEntry } from "../types";
+import { defaultProtocolApiId, protocolApiIds } from "./protocolCapabilities";
 
 // ─── Pi thinking levels ──────────────────────────────────────────────
 export const PI_THINKING_LEVELS = [
@@ -72,7 +73,6 @@ export function validateAbsoluteHttpUrl(value: string, errorMessage: string): vo
   }
 }
 
-const SUPPORTED_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const;
 
 export interface ValidateModelResult {
   ok: boolean;
@@ -218,7 +218,7 @@ export function validateProfileJson(text: string): ValidateProfileResult {
   if (typeof api !== "string" || !api) {
     return { ok: false, error: "profile.api is required" };
   }
-  if (!(SUPPORTED_APIS as readonly string[]).includes(api)) {
+  if (!protocolApiIds().includes(api)) {
     return { ok: false, error: `profile.api is not supported: ${api}` };
   }
   const baseUrl = obj.baseUrl;
@@ -406,7 +406,7 @@ export function buildGatewayPreview(
   return {
     ...(opts.providerPassthrough ?? {}),
     ...(profile.name ? { name: profile.name } : {}),
-    api: profile.api ?? "openai-completions",
+    api: profile.api ?? defaultProtocolApiId(),
     baseUrl: profile.baseUrl ?? "http://127.0.0.1:43112/v1",
     ...(profile.apiKey ? { apiKey: profile.apiKey } : {}),
     ...(opts.headers && Object.keys(opts.headers).length > 0 ? { headers: opts.headers } : {}),

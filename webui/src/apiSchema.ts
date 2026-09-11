@@ -18,6 +18,7 @@ import type {
   ProfileDetail,
   ProviderProfile,
   ProviderStats,
+  ProtocolApiCapability,
   RecentRequest,
   Settings,
   TestResult,
@@ -363,6 +364,25 @@ export function decodeSettings(value: unknown): Settings {
   return decodeSettingsAt(value, "settings");
 }
 
+function decodeProtocolApiAt(value: unknown, path: string): ProtocolApiCapability {
+  const raw = object(value, path);
+  const id = requiredString(raw, "id", path);
+  const modes = stringArray(raw.responsesModes, `${path}.responsesModes`).map((mode, index) => {
+    if (mode !== "auto" && mode !== "passthrough" && mode !== "convert") {
+      fail(`${path}.responsesModes[${index}]`, '"auto", "passthrough", or "convert"');
+    }
+    return mode;
+  }) as ProtocolApiCapability["responsesModes"];
+  return {
+    id,
+    label: defaultString(raw, "label", path, id),
+    defaultMode: responsesMode(raw, "defaultMode", path),
+    responsesModes: modes,
+    canProxy: defaultBoolean(raw, "canProxy", path, false),
+    canGateway: defaultBoolean(raw, "canGateway", path, false),
+  };
+}
+
 export function decodeAppState(value: unknown): AppState {
   const raw = object(value, "state");
   const out = { ...raw } as unknown as AppState;
@@ -373,6 +393,12 @@ export function decodeAppState(value: unknown): AppState {
   out.profiles = decodeProfilesAt(raw.profiles, "state.profiles");
   if (!has(raw, "settings")) fail("state.settings", "required object");
   out.settings = decodeSettingsAt(raw.settings, "state.settings");
+  // Optional: an older backend may not send it yet; the client falls back to its
+  // built-in capability mirror and re-seeds this when the field appears.
+  if (has(raw, "protocol")) {
+    const protocol = object(raw.protocol, "state.protocol");
+    out.protocol = { apis: arrayField(protocol, "apis", "state.protocol", decodeProtocolApiAt) };
+  }
   return out;
 }
 

@@ -87,22 +87,7 @@ func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	if !protocol.IsKnown(u.API) {
 		return fmt.Errorf("unsupported api %s", u.API)
 	}
-	if effectiveMode == "" {
-		effectiveMode = "auto"
-	}
-	if effectiveMode == "auto" {
-		return nil
-	}
-	if effectiveMode == "passthrough" && u.API != protocol.OpenAIResponses {
-		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", u.API)
-	}
-	if effectiveMode == "convert" && u.API != protocol.OpenAIChat {
-		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", u.API)
-	}
-	if effectiveMode != "passthrough" && effectiveMode != "convert" {
-		return fmt.Errorf("invalid responsesMode %q", effectiveMode)
-	}
-	return nil
+	return protocol.ValidateResponsesMode(u.API, effectiveMode)
 }
 
 func validateUpstreamAPI(u Upstream, profile ProviderProfile) error {

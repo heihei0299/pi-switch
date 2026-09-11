@@ -49,6 +49,33 @@ describe("API runtime contract boundary", () => {
     });
   });
 
+  it("decodes the backend protocol capability set", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      profiles: {},
+      settings: { writeMode: "gateway" },
+      protocol: {
+        apis: [{
+          id: "openai-responses",
+          label: "OpenAI Responses",
+          defaultMode: "passthrough",
+          responsesModes: ["auto", "passthrough"],
+          canProxy: true,
+          canGateway: true,
+        }],
+      },
+    })));
+
+    const state = await api.getState();
+    expect(state.protocol?.apis).toEqual([{
+      id: "openai-responses",
+      label: "OpenAI Responses",
+      defaultMode: "passthrough",
+      responsesModes: ["auto", "passthrough"],
+      canProxy: true,
+      canGateway: true,
+    }]);
+  });
+
   it("wraps malformed successful JSON as a contract error at the root", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse("not-json"));
 

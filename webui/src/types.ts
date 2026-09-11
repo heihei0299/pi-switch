@@ -112,10 +112,22 @@ export interface Settings {
   conversationSource: "proxy" | "sessionScan" | "off";
 }
 
+// One api's identity and capability set, as reported by GET /api/state. The
+// frontend must not keep its own api list or responsesMode rule.
+export interface ProtocolApiCapability {
+  id: string;
+  label: string;
+  defaultMode: ResponsesMode;
+  responsesModes: ResponsesMode[];
+  canProxy: boolean;
+  canGateway: boolean;
+}
+
 export interface AppState {
   current?: string | null;
   profiles: Record<string, ProviderProfile>;
   settings: Settings;
+  protocol?: { apis: ProtocolApiCapability[] };
 }
 
 export interface PresetInfo {

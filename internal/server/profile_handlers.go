@@ -42,7 +42,7 @@ func handlePutConfig(c *gin.Context) {
 		if prof.API == "" || prof.ResponsesMode == "" {
 			continue
 		}
-		if err := validateProfileResponsesMode(prof.API, prof.ResponsesMode); err != nil {
+		if err := protocol.ValidateResponsesMode(prof.API, prof.ResponsesMode); err != nil {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
 			return
 		}
@@ -59,7 +59,14 @@ func handleGetState(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(200, gin.H{"current": cfg.Current, "profiles": cfg.Profiles, "settings": cfg.Settings})
+	c.JSON(200, gin.H{
+		"current":  cfg.Current,
+		"profiles": cfg.Profiles,
+		"settings": cfg.Settings,
+		// The WebUI takes its api list and responsesMode rule from here
+		// (internal/protocol is the single source), never from a local copy.
+		"protocol": gin.H{"apis": protocol.Capabilities()},
+	})
 }
 
 func handleListProfiles(c *gin.Context) {
@@ -82,25 +89,6 @@ func handleGetProfile(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": name})
-}
-
-func validateProfileResponsesMode(api, mode string) error {
-	if mode == "" {
-		mode = "auto"
-	}
-	if mode == "auto" {
-		return nil
-	}
-	if mode == "passthrough" && api != protocol.OpenAIResponses {
-		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
-	}
-	if mode == "convert" && api != protocol.OpenAIChat {
-		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
-	}
-	if mode != "passthrough" && mode != "convert" {
-		return fmt.Errorf("invalid responsesMode %q", mode)
-	}
-	return nil
 }
 
 // isPersistError distinguishes a failed write from a rejected input, so the
@@ -142,7 +130,7 @@ func handlePostProfile(c *gin.Context) {
 			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
 				if api, _ := prof["api"].(string); api != "" {
 					if mode, _ := prof["responsesMode"].(string); mode != "" {
-						if err := validateProfileResponsesMode(api, mode); err != nil {
+						if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 							c.JSON(400, gin.H{"error": err.Error()})
 							return
 						}
@@ -155,7 +143,7 @@ func handlePostProfile(c *gin.Context) {
 					if pm, ok := pv.(map[string]interface{}); ok {
 						if api, _ := pm["api"].(string); api != "" {
 							if mode, _ := pm["responsesMode"].(string); mode != "" {
-								if err := validateProfileResponsesMode(api, mode); err != nil {
+								if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 									c.JSON(400, gin.H{"error": err.Error()})
 									return
 								}
@@ -167,7 +155,7 @@ func handlePostProfile(c *gin.Context) {
 			// single profile case
 			if api, ok := rawMap["api"].(string); ok {
 				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
-					if err := validateProfileResponsesMode(api, mode); err != nil {
+					if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 						c.JSON(400, gin.H{"error": err.Error()})
 						return
 					}
@@ -218,7 +206,7 @@ func handlePutProfile(c *gin.Context) {
 			if prof, ok := rawMap["profile"].(map[string]interface{}); ok {
 				if api, _ := prof["api"].(string); api != "" {
 					if mode, _ := prof["responsesMode"].(string); mode != "" {
-						if err := validateProfileResponsesMode(api, mode); err != nil {
+						if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 							c.JSON(400, gin.H{"error": err.Error()})
 							return
 						}
@@ -231,7 +219,7 @@ func handlePutProfile(c *gin.Context) {
 					if pm, ok := pv.(map[string]interface{}); ok {
 						if api, _ := pm["api"].(string); api != "" {
 							if mode, _ := pm["responsesMode"].(string); mode != "" {
-								if err := validateProfileResponsesMode(api, mode); err != nil {
+								if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 									c.JSON(400, gin.H{"error": err.Error()})
 									return
 								}
@@ -243,7 +231,7 @@ func handlePutProfile(c *gin.Context) {
 			// single profile case
 			if api, ok := rawMap["api"].(string); ok {
 				if mode, _ := rawMap["responsesMode"].(string); mode != "" {
-					if err := validateProfileResponsesMode(api, mode); err != nil {
+					if err := protocol.ValidateResponsesMode(api, mode); err != nil {
 						c.JSON(400, gin.H{"error": err.Error()})
 						return
 					}

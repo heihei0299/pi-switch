@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import type { AppState } from "./types";
+import { setProtocolCapabilities } from "./lib/protocolCapabilities";
 import { Button, ToastProvider, cx } from "./components/ui";
 import { LanguageProvider, useI18n } from "./i18n";
 import { HomePanel } from "./components/HomePanel";
@@ -89,6 +90,8 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
   const refresh = useCallback(async () => {
     try {
       const next = await api.getState();
+      // The backend is the single source for the api list and responsesMode rule.
+      setProtocolCapabilities(next.protocol?.apis);
       setState(next);
       onConfigLang(next.settings.language ?? null);
       setError(null);
