@@ -63,33 +63,51 @@ func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 	}
 }
 
-// FINAL-04：capability regression matrix。矩阵从 protocol.Capabilities() 派生，新增 API
-// 时必须显式决定 Config write 的期望结果，否则这个测试会以「未覆盖」失败——避免只改
-// IsKnown 就上线。
+// capabilityWritePolicy 是两个写入口（整文件门、Profile CRUD 门）共用的一份期望表：每个
+// 已知 API 能否被写入，由它能否被请求路径执行（protocol.CanProxy）决定。新增 API 时必须
+// 在这里显式决定，否则两个 capability matrix 都会以「未覆盖」失败——避免只改 IsKnown 就上线。
+var capabilityWritePolicy = map[string]bool{
+	protocol.OpenAIChat:         true,
+	protocol.OpenAIResponses:    true,
+	protocol.AnthropicMessages:  true,
+	protocol.GoogleGenerativeAI: false,
+}
+
+type capabilityWriteCase struct {
+	cap   protocol.APICapability
+	allow bool
+}
+
+// capabilityWriteCases 把 capability 集合与期望表对齐后交给两个门的矩阵测试。集合大小变了
+// （新增或删除 API）、某个 API 没被决策、或决策与 CanProxy 不一致时都在这里失败，所以两个
+// 门读的是同一份期望与同一条能力来源，而不是各留一份手写表。
+func capabilityWriteCases(t *testing.T) []capabilityWriteCase {
+	t.Helper()
+	caps := protocol.Capabilities()
+	if len(caps) != len(capabilityWritePolicy) {
+		t.Fatalf("capability set changed (%d apis); decide the write result for each new api in capabilityWritePolicy", len(caps))
+	}
+	cases := make([]capabilityWriteCase, 0, len(caps))
+	for _, cap := range caps {
+		allow, decided := capabilityWritePolicy[cap.ID]
+		if !decided {
+			t.Fatalf("no write policy for api %q (CanProxy=%v CanGateway=%v); decide it in capabilityWritePolicy", cap.ID, cap.CanProxy, cap.CanGateway)
+		}
+		if allow != cap.CanProxy {
+			t.Fatalf("api %q: write allow=%v, want %v (CanProxy is the one source both write doors follow)", cap.ID, allow, cap.CanProxy)
+		}
+		cases = append(cases, capabilityWriteCase{cap: cap, allow: allow})
+	}
+	return cases
+}
+
+// FINAL-04：整文件门的 capability regression matrix，逐 API 断言 PUT /api/config 的结果。
 func TestPutConfig_CapabilityMatrix(t *testing.T) {
 	isolateConfig(t)
 	r := NewMgmtRouter()
 
-	// 每个已知 API 的 Config write 期望：能否被请求路径执行（CanProxy）决定。
-	configWritePolicy := map[string]bool{
-		protocol.OpenAIChat:         true,
-		protocol.OpenAIResponses:    true,
-		protocol.AnthropicMessages:  true,
-		protocol.GoogleGenerativeAI: false,
-	}
-
-	caps := protocol.Capabilities()
-	if len(caps) != len(configWritePolicy) {
-		t.Fatalf("capability set changed (%d apis); decide the Config write result for each new api in configWritePolicy", len(caps))
-	}
-	for _, cap := range caps {
-		allow, decided := configWritePolicy[cap.ID]
-		if !decided {
-			t.Fatalf("no Config write policy for api %q (CanProxy=%v CanGateway=%v)", cap.ID, cap.CanProxy, cap.CanGateway)
-		}
-		if allow != cap.CanProxy {
-			t.Fatalf("api %q: Config write allow=%v, want %v (CanProxy is the one source)", cap.ID, allow, cap.CanProxy)
-		}
+	for _, tc := range capabilityWriteCases(t) {
+		cap := tc.cap
 		t.Run(cap.ID, func(t *testing.T) {
 			// legacy flat profile：effective api 就是 profile 的 api。
 			body := `{"version":2,"profiles":{"p":{"api":"` + cap.ID + `","responsesMode":"` + cap.DefaultMode + `","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}}}`
@@ -98,7 +116,7 @@ func TestPutConfig_CapabilityMatrix(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(w, req)
 
-			if cap.CanProxy {
+			if tc.allow {
 				if w.Code != http.StatusOK {
 					t.Fatalf("PUT /api/config with api %q = %d, want 200 (proxy-supported APIs must stay writable): %s", cap.ID, w.Code, w.Body.String())
 				}
@@ -115,38 +133,19 @@ func TestPutConfig_CapabilityMatrix(t *testing.T) {
 	}
 }
 
-// CLOSE-01：Profile CRUD 门（POST /api/profiles、PUT /api/profiles/:name）必须与整文件门
-// 对 flat profile 给出同一个 capability 判定。矩阵从 protocol.Capabilities() 派生并且与
-// TestPutConfig_CapabilityMatrix 用同一份期望（两者都由 CanProxy 决定），所以新增 API 时
-// 必须同时为两个门决定写策略。
+// CLOSE-01：Profile CRUD 门（POST /api/profiles、PUT /api/profiles/:name）必须与整文件门对
+// flat profile 给出同一个 capability 判定，所以两个矩阵读同一份 capabilityWriteCases。
 func TestProfileCRUD_CapabilityMatrix(t *testing.T) {
 	isolateConfig(t)
 	r := NewMgmtRouter()
 
-	profileWritePolicy := map[string]bool{
-		protocol.OpenAIChat:         true,
-		protocol.OpenAIResponses:    true,
-		protocol.AnthropicMessages:  true,
-		protocol.GoogleGenerativeAI: false,
-	}
-
-	caps := protocol.Capabilities()
-	if len(caps) != len(profileWritePolicy) {
-		t.Fatalf("capability set changed (%d apis); decide the Profile write result for each new api in profileWritePolicy", len(caps))
-	}
-	for _, cap := range caps {
-		allow, decided := profileWritePolicy[cap.ID]
-		if !decided {
-			t.Fatalf("no Profile write policy for api %q (CanProxy=%v CanGateway=%v)", cap.ID, cap.CanProxy, cap.CanGateway)
-		}
-		if allow != cap.CanProxy {
-			t.Fatalf("api %q: Profile write allow=%v, want %v (CanProxy is the one source)", cap.ID, allow, cap.CanProxy)
-		}
+	for _, tc := range capabilityWriteCases(t) {
+		cap := tc.cap
 		t.Run(cap.ID, func(t *testing.T) {
 			prof := `{"api":"` + cap.ID + `","responsesMode":"` + cap.DefaultMode + `","baseUrl":"https://example.test/v1","apiKey":"k"}`
 			posted := callMgmt(r, http.MethodPost, "/api/profiles", `{"name":"`+cap.ID+`","profile":`+prof+`}`)
 			put := callMgmt(r, http.MethodPut, "/api/profiles/"+cap.ID+"-copy", `{"profile":`+prof+`}`)
-			if cap.CanProxy {
+			if tc.allow {
 				if posted.Code != http.StatusOK {
 					t.Fatalf("POST /api/profiles with api %q = %d, want 200 (proxy-supported APIs must stay writable): %s", cap.ID, posted.Code, posted.Body.String())
 				}

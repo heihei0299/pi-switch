@@ -505,12 +505,12 @@ WebUI 大规模重构
 
 同类项（已一并处理）：`ProfilesPanel.tsx` 的 responsesMode fallback option 原先也没有 `disabled`，现按同一原则加上。一处诚实修正：它比 api 那个弱——`saveLocal` 先用 `responsesModeError`/`allowedResponsesModes` 拦下保存（客户端给出「passthrough requires openai-responses」这类话术），旧 mode 到不了服务端；而 api 那项此前没有任何客户端规则，unknown 值会一路走到 400。所以这一项是「不提供写入口必拒的可选项」的一致性对齐，不是补一个真实漏洞。
 
-后续 code review（双轴：Standards + Spec；基准 `3a88157`）记录的两处例外与一处未采纳项：
+后续 code review（双轴：Standards + Spec；基准 `3a88157`）后的处理记录：
 
 - **两门之间有意保留的差异**：profile 既无 channel 又无 baseUrl/apiKey/headers 时，整文件门按 `ResolvedUpstreams()` 判定、因此不进入 capability 判定（该形状没有任何 channel，route resolution 与 `/v1/models` 都不遍历它，本来就不可路由），而 CRUD 门与 advisory 门仍按 profile 顶层 api 拒收。已写进 system-contract §2.2 第 2 条，不再声称两门字面一致。
 - **未纳入的授权门**：`duplicate`（`POST /api/profiles/:name/duplicate`、`provider duplicate`）逐字复制既有 profile、不做 capability 判定；它的源只可能来自磁盘上的遗留/手工配置（三个授权门已拒收该形状），且 advisory 会报出来，故本轮不改。
-- **未采纳**：合并两个 capability matrix 测试——两份手写策略 map 是刻意的「新增 API 必须显式决策」守卫，合并会把两个门的期望耦合到一处。
+- **已采纳**：两个 capability matrix 合并为一份共享期望 `capabilityWritePolicy` + `capabilityWriteCases`（`internal/server/config_diagnostics_test.go`）——两个门读同一份「新增 API 必须显式决策」表与同一条 CanProxy 一致性断言，各门仍保留自己的请求与断言逻辑。反证：把 google 的决策临时改成 `true`，两个矩阵同时以 `CanProxy is the one source both write doors follow` 失败；改回后 `internal/server` 全绿。
 
-以上均不构成「继续修」的理由：按 §10，除非出现真实维护问题，本轮到此为止。
+前两项不构成「继续修」的理由：按 §10，除非出现真实维护问题，本轮到此为止。
 
 > **maintainability initiative CLOSED**
