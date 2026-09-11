@@ -13,6 +13,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
 )
@@ -374,7 +375,7 @@ func scanSubcommandFlags(sub string, args []string, allowed ...string) ([]string
 // parseProviderAddArgs expects exactly one positional name; unknown flags are
 // rejected rather than ignored, so a typo cannot create an unintended profile.
 func parseProviderAddArgs(args []string) (string, providerAddFlags, error) {
-	flags := providerAddFlags{api: "openai-responses"}
+	flags := providerAddFlags{api: protocol.OpenAIResponses}
 	name := ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]

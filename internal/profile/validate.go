@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 // ValidateResponsesMode rejects a responsesMode/api combination the proxy cannot
@@ -15,10 +16,10 @@ func ValidateResponsesMode(p config.ProviderProfile) error {
 		mode = "auto"
 	}
 	api := p.API
-	if mode == "passthrough" && api != "openai-responses" {
+	if mode == "passthrough" && api != protocol.OpenAIResponses {
 		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
 	}
-	if mode == "convert" && api != "openai-completions" {
+	if mode == "convert" && api != protocol.OpenAIChat {
 		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
 	}
 	return nil

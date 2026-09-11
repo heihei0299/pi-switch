@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 func handleGetConfig(c *gin.Context) {
@@ -90,10 +91,10 @@ func validateProfileResponsesMode(api, mode string) error {
 	if mode == "auto" {
 		return nil
 	}
-	if mode == "passthrough" && api != "openai-responses" {
+	if mode == "passthrough" && api != protocol.OpenAIResponses {
 		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
 	}
-	if mode == "convert" && api != "openai-completions" {
+	if mode == "convert" && api != protocol.OpenAIChat {
 		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
 	}
 	if mode != "passthrough" && mode != "convert" {
@@ -599,10 +600,10 @@ func handleGetCredits(c *gin.Context) {
 // shared by GET /api/presets and `pi-switch preset`.
 func ProviderPresets() []map[string]interface{} {
 	return []map[string]interface{}{
-		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": "openai-completions", "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
-		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": "anthropic-messages", "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
-		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": "google-generative-ai", "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
-		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": "openai-completions", "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
+		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
+		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": protocol.AnthropicMessages, "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
+		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": protocol.GoogleGenerativeAI, "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
+		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
 	}
 }
 
@@ -638,11 +639,10 @@ func handleValidate(c *gin.Context) {
 		return
 	}
 	issues := []map[string]interface{}{}
-	allowedAPIs := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
 	for name, prof := range cfg.Profiles {
 		if prof.API == "" {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": "api required"})
-		} else if !allowedAPIs[prof.API] {
+		} else if !protocol.IsKnown(prof.API) {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": fmt.Sprintf("unsupported api %s", prof.API)})
 		}
 		if prof.BaseURL == "" && len(prof.Upstreams) == 0 {

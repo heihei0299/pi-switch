@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 type ModelCost struct {
@@ -82,8 +84,7 @@ func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 		return fmt.Errorf("api is required for each upstream")
 	}
 	effectiveMode := u.EffectiveResponsesMode(profile.ResponsesMode)
-	allowed := map[string]bool{"openai-completions": true, "openai-responses": true, "anthropic-messages": true, "google-generative-ai": true}
-	if !allowed[u.API] {
+	if !protocol.IsKnown(u.API) {
 		return fmt.Errorf("unsupported api %s", u.API)
 	}
 	if effectiveMode == "" {
@@ -92,10 +93,10 @@ func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	if effectiveMode == "auto" {
 		return nil
 	}
-	if effectiveMode == "passthrough" && u.API != "openai-responses" {
+	if effectiveMode == "passthrough" && u.API != protocol.OpenAIResponses {
 		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", u.API)
 	}
-	if effectiveMode == "convert" && u.API != "openai-completions" {
+	if effectiveMode == "convert" && u.API != protocol.OpenAIChat {
 		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", u.API)
 	}
 	if effectiveMode != "passthrough" && effectiveMode != "convert" {
@@ -325,13 +326,13 @@ func DefaultConfig() PiSwitchConfig {
 		Current: &pp,
 		Profiles: map[string]ProviderProfile{
 			"test-provider": {
-				API:           "openai-completions",
+				API:           protocol.OpenAIChat,
 				ResponsesMode: "auto",
 				BaseURL:       "https://api.openai.com/v1",
 				APIKey:        "sk-prototype-not-real",
 				Upstreams: []Upstream{{
 					Name:          &channel,
-					API:           "openai-completions",
+					API:           protocol.OpenAIChat,
 					BaseURL:       "https://api.openai.com/v1",
 					APIKey:        "sk-prototype-not-real",
 					Models:        []ModelEntry{{ID: "gpt-4o-mini", ContextWindow: 128000, MaxTokens: 16384, Cost: &ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075}}},

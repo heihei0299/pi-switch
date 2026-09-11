@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
 type ResponsesConversionError struct {
@@ -20,10 +22,10 @@ func ValidateResponsesMode(api, mode string) error {
 	if mode == "auto" {
 		return nil
 	}
-	if mode == "passthrough" && api != "openai-responses" {
+	if mode == "passthrough" && api != protocol.OpenAIResponses {
 		return fmt.Errorf("responsesMode passthrough requires api openai-responses, got %s", api)
 	}
-	if mode == "convert" && api != "openai-completions" {
+	if mode == "convert" && api != protocol.OpenAIChat {
 		return fmt.Errorf("responsesMode convert requires api openai-completions, got %s", api)
 	}
 	if mode != "passthrough" && mode != "convert" {
@@ -33,14 +35,14 @@ func ValidateResponsesMode(api, mode string) error {
 }
 
 func IsNativeResponsesPassthrough(api, mode string) bool {
-	if api != "openai-responses" {
+	if api != protocol.OpenAIResponses {
 		return false
 	}
 	return mode == "auto" || mode == "passthrough"
 }
 
 func IsChatConvert(api, mode string) bool {
-	if api != "openai-completions" {
+	if api != protocol.OpenAIChat {
 		return false
 	}
 	return mode == "auto" || mode == "convert"

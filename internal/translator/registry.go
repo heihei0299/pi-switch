@@ -1,6 +1,10 @@
 package translator
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/heihei0299/pi-switch/internal/protocol"
+)
 
 // Format identifies one side of a protocol conversion, mirroring
 // CLIProxyAPI's sdk/translator Format registry in a map-based form.
@@ -124,12 +128,15 @@ func inboundFormat(proto string) (Format, error) {
 }
 
 func upstreamFormat(api string) (Format, error) {
+	if !protocol.CanProxy(api) {
+		return "", fmt.Errorf("unsupported api %q", api)
+	}
 	switch api {
-	case "openai-responses":
+	case protocol.OpenAIResponses:
 		return FormatOpenAIResponses, nil
-	case "openai-completions":
+	case protocol.OpenAIChat:
 		return FormatOpenAIChat, nil
-	case "anthropic-messages":
+	case protocol.AnthropicMessages:
 		return FormatAnthropic, nil
 	default:
 		return "", fmt.Errorf("unsupported api %q", api)
@@ -170,10 +177,10 @@ func PlanRequest(proto, api, mode string) (Plan, error) {
 		if err := ValidateResponsesMode(api, mode); err != nil {
 			return Plan{}, err
 		}
-		if api == "openai-responses" && !IsNativeResponsesPassthrough(api, mode) {
+		if api == protocol.OpenAIResponses && !IsNativeResponsesPassthrough(api, mode) {
 			return Plan{}, fmt.Errorf("profile api %s does not support responses with mode %q", api, mode)
 		}
-		if api == "openai-completions" && proto == "responses" && !IsChatConvert(api, mode) {
+		if api == protocol.OpenAIChat && proto == "responses" && !IsChatConvert(api, mode) {
 			return Plan{}, fmt.Errorf("profile api %s does not support responses with mode %q", api, mode)
 		}
 		return Plan{From: from, To: to, UpstreamPath: upstreamPathFor(to), Passthrough: true}, nil
@@ -189,11 +196,11 @@ func PlanRequest(proto, api, mode string) (Plan, error) {
 			return Plan{}, fmt.Errorf("profile api %s does not support chat with mode %q", api, mode)
 		}
 	case from == FormatAnthropic && to == FormatOpenAIChat:
-		if api != "openai-completions" {
+		if api != protocol.OpenAIChat {
 			return Plan{}, fmt.Errorf("profile api %s does not support messages", api)
 		}
 	case from == FormatOpenAIChat && to == FormatAnthropic:
-		if api != "anthropic-messages" {
+		if api != protocol.AnthropicMessages {
 			return Plan{}, fmt.Errorf("profile api %s does not support chat", api)
 		}
 	default:
