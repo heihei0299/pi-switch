@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { diffGateway, validateGatewayJson } from "./gatewayDiff";
+import { diffGateway, makeFixedProviderSet, validateGatewayJson } from "./gatewayDiff";
+
+const FIXED = makeFixedProviderSet([
+  { key: "pi-switch-res", api: "openai-responses" },
+  { key: "pi-switch-chat", api: "openai-completions" },
+]);
 
 describe("gateway preview/apply lifecycle placeholder", () => {
   it("diffGateway drives status bar pending count", () => {
@@ -12,7 +17,7 @@ describe("gateway preview/apply lifecycle placeholder", () => {
 
   it("validateGatewayJson accepts valid gateway with models", () => {
     const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } } };
-    const res = validateGatewayJson(JSON.stringify(valid));
+    const res = validateGatewayJson(JSON.stringify(valid), FIXED);
     expect(res.ok).toBe(true);
     expect(res.value).toEqual(valid);
   });

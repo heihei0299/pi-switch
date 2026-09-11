@@ -132,33 +132,48 @@ export interface ValidateResult {
   value?: Record<string, unknown>;
 }
 
-const SUPPORTED_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
-
-// Single source of truth for the providers this UI maintains. Mirrors the
-// backend predicate internal/gateway.IsFixedGatewayProvider.
-const FIXED_GATEWAY_PROVIDERS = ["pi-switch-res", "pi-switch-chat"] as const;
-
-// Each fixed provider only accepts one API shape.
-const FIXED_GATEWAY_API: Record<(typeof FIXED_GATEWAY_PROVIDERS)[number], string> = {
-  "pi-switch-res": "openai-responses",
-  "pi-switch-chat": "openai-completions",
-};
-
-export function isFixedGatewayProvider(key: string): boolean {
-  return (FIXED_GATEWAY_PROVIDERS as readonly string[]).includes(key);
+// Fixed-provider membership + per-key API contract come from the backend
+// preview (`fixed_providers`). The UI must not hardcode or mirror that list.
+export interface FixedProviderSet {
+  readonly keys: ReadonlySet<string>;
+  readonly apiByKey: ReadonlyMap<string, string>;
 }
 
-export function filterFixedGatewayProviders(providers: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(providers).filter(([k]) => isFixedGatewayProvider(k)));
+export function makeFixedProviderSet(
+  list: readonly { key: string; api: string }[] | undefined,
+): FixedProviderSet {
+  const keys = new Set<string>();
+  const apiByKey = new Map<string, string>();
+  for (const provider of list ?? []) {
+    if (!provider?.key) continue;
+    keys.add(provider.key);
+    if (provider.api) apiByKey.set(provider.key, provider.api);
+  }
+  return { keys, apiByKey };
+}
+
+export function isFixedGatewayProvider(key: string, fixed: FixedProviderSet): boolean {
+  return fixed.keys.has(key);
+}
+
+export function filterFixedGatewayProviders(
+  providers: Record<string, unknown>,
+  fixed: FixedProviderSet,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(providers).filter(([k]) => fixed.keys.has(k)));
 }
 
 // Keep diff entries that belong to a fixed provider. The backend emits bare
 // provider keys, but the shared GatewayDiff shape also allows composite
 // `provider/model` entries, so match `key` or `key/...` instead of splitting
 // on "/" (model ids may legitimately contain slashes for wild providers).
-export function filterFixedGatewayDiff(diff: GatewayDiff): GatewayDiff {
-  const keepFixed = (entry: string) =>
-    FIXED_GATEWAY_PROVIDERS.some((provider) => entry === provider || entry.startsWith(`${provider}/`));
+export function filterFixedGatewayDiff(diff: GatewayDiff, fixed: FixedProviderSet): GatewayDiff {
+  const keepFixed = (entry: string) => {
+    for (const provider of fixed.keys) {
+      if (entry === provider || entry.startsWith(`${provider}/`)) return true;
+    }
+    return false;
+  };
   return {
     added: diff.added.filter(keepFixed),
     removed: diff.removed.filter(keepFixed),
@@ -166,7 +181,7 @@ export function filterFixedGatewayDiff(diff: GatewayDiff): GatewayDiff {
   };
 }
 
-export function validateGatewayJson(text: string): ValidateResult {
+export function validateGatewayJson(text: string, fixed: FixedProviderSet): ValidateResult {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -187,7 +202,7 @@ export function validateGatewayJson(text: string): ValidateResult {
     }
     const filtered: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(provs as Record<string, unknown>)) {
-      if (!isFixedGatewayProvider(key)) continue;
+      if (!fixed.keys.has(key)) continue;
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         return { ok: false, error: `gateway.providers[${key}] must be object` };
       }
@@ -196,10 +211,7 @@ export function validateGatewayJson(text: string): ValidateResult {
       if (typeof api !== "string" || !api) {
         return { ok: false, error: `gateway.providers[${key}].api is required` };
       }
-      if (!SUPPORTED_APIS.includes(api as string)) {
-        return { ok: false, error: `gateway.providers[${key}].api is not supported: ${api}` };
-      }
-      const requiredApi = FIXED_GATEWAY_API[key as (typeof FIXED_GATEWAY_PROVIDERS)[number]];
+      const requiredApi = fixed.apiByKey.get(key);
       if (requiredApi && api !== requiredApi) {
         return { ok: false, error: `gateway.providers[${key}].api must be ${requiredApi}` };
       }

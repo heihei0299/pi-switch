@@ -5,6 +5,7 @@ import type {
   DaemonResult,
   DoctorCheck,
   EnrichStats,
+  FixedGatewayProvider,
   GatewayDiff,
   GatewayPreview,
   ModelCost,
@@ -463,6 +464,15 @@ function decodeGatewayDiff(value: unknown, path: string): GatewayDiff {
   };
 }
 
+function decodeFixedGatewayProviderAt(value: unknown, path: string): FixedGatewayProvider {
+  const raw = object(value, path);
+  return {
+    ...raw,
+    key: requiredString(raw, "key", path),
+    api: requiredString(raw, "api", path),
+  };
+}
+
 function decodePreviewGroupAt(value: unknown, path: string): PreviewGroup {
   const raw = object(value, path);
   const models = arrayField(raw, "models", path, (entry, itemPath) => {
@@ -505,6 +515,9 @@ export function decodeGatewayPreview(value: unknown): GatewayPreview {
     ? arrayField(raw, "groups", "gatewayPreview", decodePreviewGroupAt)
     : [];
   out.diagnostics = has(raw, "diagnostics") ? arrayOfObjects(raw.diagnostics, "gatewayPreview.diagnostics") : undefined;
+  out.fixed_providers = has(raw, "fixed_providers")
+    ? arrayField(raw, "fixed_providers", "gatewayPreview", decodeFixedGatewayProviderAt)
+    : [];
   out.removed = has(raw, "removed") ? stringArray(raw.removed, "gatewayPreview.removed") : [];
   out.enrich = has(raw, "enrich") ? decodePreviewEnrich(raw.enrich, "gatewayPreview.enrich") : undefined;
   return out;

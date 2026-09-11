@@ -83,15 +83,16 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}) {
 		proposedForResp = provs
 	}
 	c.JSON(200, gin.H{
-		"current":       currentForResp,
-		"proposed":      proposedForResp,
-		"conflicts":     plan.Conflicts,
-		"diagnostics":   plan.Diagnostics,
-		"pending_count": plan.PendingCount,
-		"groups":        plan.Groups,
-		"removed":       plan.PreviewRemoved,
-		"diff":          gin.H{"added": plan.Added, "removed": plan.Removed, "changed": plan.Changed},
-		"enrich":        gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning},
+		"current":         currentForResp,
+		"proposed":        proposedForResp,
+		"conflicts":       plan.Conflicts,
+		"diagnostics":     plan.Diagnostics,
+		"pending_count":   plan.PendingCount,
+		"groups":          plan.Groups,
+		"removed":         plan.PreviewRemoved,
+		"diff":            gin.H{"added": plan.Added, "removed": plan.Removed, "changed": plan.Changed},
+		"enrich":          gin.H{"enriched": summary.Enriched, "skipped": summary.Skipped, "stale": summary.Stale, "warning": summary.Warning},
+		"fixed_providers": gateway.FixedGatewayProviders(),
 	})
 }
 func buildGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {

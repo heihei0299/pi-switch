@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { validateGatewayJson } from "./gatewayDiff";
+import { makeFixedProviderSet, validateGatewayJson } from "./gatewayDiff";
+
+const FIXED = makeFixedProviderSet([
+  { key: "pi-switch-res", api: "openai-responses" },
+  { key: "pi-switch-chat", api: "openai-completions" },
+]);
 
 describe("fixed gateway validation", () => {
   it("ignores a third provider using the pi-switch proxy identity", () => {
@@ -13,7 +18,7 @@ describe("fixed gateway validation", () => {
         },
       },
     };
-    const result = validateGatewayJson(JSON.stringify(value));
+    const result = validateGatewayJson(JSON.stringify(value), FIXED);
     expect(result.ok).toBe(true);
     expect(result.value).toEqual({ providers: {} });
   });
@@ -28,7 +33,7 @@ describe("fixed gateway validation", () => {
         },
       },
     };
-    const result = validateGatewayJson(JSON.stringify(value));
+    const result = validateGatewayJson(JSON.stringify(value), FIXED);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/openai-responses/);
   });

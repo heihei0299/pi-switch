@@ -289,6 +289,13 @@ export interface GatewayDiff {
   changed: string[];
 }
 
+// Gateway-owned provider key + the single API it accepts. The backend sends the
+// list with every preview so the UI never mirrors/hardcodes it.
+export interface FixedGatewayProvider {
+  key: string;
+  api: string;
+}
+
 export interface GatewayPreview {
   current: Record<string, unknown> | null;
   proposed: Record<string, unknown> | null;
@@ -299,6 +306,7 @@ export interface GatewayPreview {
   groups: PreviewGroup[];
   removed: string[];
   enrich?: PreviewEnrich;
+  fixed_providers?: FixedGatewayProvider[];
 }
 
 // 网关预览 enrich 摘要（与后端 enrich gin.H 同步）。

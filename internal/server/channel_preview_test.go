@@ -46,6 +46,19 @@ func TestGatewayPreview_GroupsBySupplierChannel(t *testing.T) {
 	if _, ok := resp["proposed"]; !ok {
 		t.Fatalf("proposed missing")
 	}
+	// 固定 provider 契约随 preview 下发，前端据此过滤，不再镜像硬编码名单。
+	fixed, ok := resp["fixed_providers"].([]interface{})
+	if !ok || len(fixed) != 2 {
+		t.Fatalf("fixed_providers missing/invalid: %v", resp["fixed_providers"])
+	}
+	fixedAPI := map[string]string{}
+	for _, f := range fixed {
+		fm := f.(map[string]interface{})
+		fixedAPI[fm["key"].(string)] = fm["api"].(string)
+	}
+	if fixedAPI["pi-switch-res"] != "openai-responses" || fixedAPI["pi-switch-chat"] != "openai-completions" {
+		t.Fatalf("fixed_providers = %v", fixedAPI)
+	}
 	// 分组断言
 	groups, ok := resp["groups"].([]interface{})
 	if !ok {

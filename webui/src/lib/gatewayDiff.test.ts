@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { detectConflicts, diffGateway, filterFixedGatewayDiff, filterFixedGatewayProviders, isFixedGatewayProvider, validateGatewayJson } from "./gatewayDiff";
+import {
+  detectConflicts,
+  diffGateway,
+  filterFixedGatewayDiff,
+  filterFixedGatewayProviders,
+  isFixedGatewayProvider,
+  makeFixedProviderSet,
+  validateGatewayJson,
+} from "./gatewayDiff";
+
+// The backend sends this with every preview; tests pin a representative contract.
+const FIXED = makeFixedProviderSet([
+  { key: "pi-switch-res", api: "openai-responses" },
+  { key: "pi-switch-chat", api: "openai-completions" },
+]);
+const validate = (text: string) => validateGatewayJson(text, FIXED);
 
 describe("gatewayDiff", () => {
   describe("diffGateway", () => {
@@ -59,10 +74,26 @@ describe("gatewayDiff", () => {
 
   describe("fixed provider filtering", () => {
     it("recognizes only the gateway-owned provider keys", () => {
-      expect(isFixedGatewayProvider("pi-switch-chat")).toBe(true);
-      expect(isFixedGatewayProvider("pi-switch-res")).toBe(true);
-      expect(isFixedGatewayProvider("cpa")).toBe(false);
-      expect(isFixedGatewayProvider("oc/chat")).toBe(false);
+      expect(isFixedGatewayProvider("pi-switch-chat", FIXED)).toBe(true);
+      expect(isFixedGatewayProvider("pi-switch-res", FIXED)).toBe(true);
+      expect(isFixedGatewayProvider("cpa", FIXED)).toBe(false);
+      expect(isFixedGatewayProvider("oc/chat", FIXED)).toBe(false);
+    });
+
+    it("honors whatever fixed set the backend declares (no frontend mirror)", () => {
+      const custom = makeFixedProviderSet([{ key: "vendor-gw", api: "openai-completions" }]);
+      expect(isFixedGatewayProvider("vendor-gw", custom)).toBe(true);
+      expect(isFixedGatewayProvider("pi-switch-chat", custom)).toBe(false);
+      const providers = {
+        "vendor-gw": { api: "openai-completions", models: [] },
+        "pi-switch-chat": { api: "openai-completions", models: [] },
+      };
+      expect(Object.keys(filterFixedGatewayProviders(providers, custom))).toEqual(["vendor-gw"]);
+      // and validation uses the declared API contract
+      const text = JSON.stringify({ providers: { "vendor-gw": { api: "openai-responses", baseUrl: "http://a/v1", models: [] } } });
+      const res = validateGatewayJson(text, custom);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/openai-completions/);
     });
 
     it("keeps fixed providers and drops wild ones", () => {
@@ -71,7 +102,7 @@ describe("gatewayDiff", () => {
         cpa: { api: "openai-responses", models: [] },
         "pi-switch-res": { api: "openai-responses", models: [] },
       };
-      expect(Object.keys(filterFixedGatewayProviders(providers)).sort()).toEqual([
+      expect(Object.keys(filterFixedGatewayProviders(providers, FIXED)).sort()).toEqual([
         "pi-switch-chat",
         "pi-switch-res",
       ]);
@@ -85,7 +116,7 @@ describe("gatewayDiff", () => {
         removed: ["pi-switch-res/old", "sup/main/m1", "wild/with/many/slashes"],
         changed: ["pi-switch-chat", "cpa", "oc/chat/m1"],
       };
-      expect(filterFixedGatewayDiff(diff)).toEqual({
+      expect(filterFixedGatewayDiff(diff, FIXED)).toEqual({
         added: ["pi-switch-chat", "pi-switch-chat/m2"],
         removed: ["pi-switch-res/old"],
         changed: ["pi-switch-chat"],
@@ -95,45 +126,45 @@ describe("gatewayDiff", () => {
 
   describe("validateGatewayJson", () => {
     it("rejects invalid JSON", () => {
-      const res = validateGatewayJson("{ broken");
+      const res = validate("{ broken");
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/JSON/);
     });
 
     it("rejects a missing providers wrapper", () => {
-      const res = validateGatewayJson(JSON.stringify({}));
+      const res = validate(JSON.stringify({}));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/providers/);
     });
 
     it("rejects invalid api", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "invalid", baseUrl: "http://a/v1", models: [] } } }));
+      const res = validate(JSON.stringify({ providers: { "pi-switch-chat": { api: "invalid", baseUrl: "http://a/v1", models: [] } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/api/);
     });
 
     it("rejects invalid baseUrl", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "not-a-url", models: [] } } }));
+      const res = validate(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "not-a-url", models: [] } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/baseUrl/);
     });
 
     it("rejects models not array", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://a/v1", models: "bad" } } }));
+      const res = validate(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://a/v1", models: "bad" } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/models/);
     });
 
     it("accepts valid gateway", () => {
       const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", apiKey: "x", models: [{ id: "m" }], proxy: false } } };
-      const res = validateGatewayJson(JSON.stringify(valid));
+      const res = validate(JSON.stringify(valid));
       expect(res.ok).toBe(true);
       expect(res.value).toEqual(valid);
     });
 
     it("rejects model without id", () => {
       const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ noId: 1 }] } } };
-      const res = validateGatewayJson(JSON.stringify(valid));
+      const res = validate(JSON.stringify(valid));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/id/);
     });
@@ -148,7 +179,7 @@ describe("gatewayDiff", () => {
           },
         },
       };
-      expect(validateGatewayJson(JSON.stringify(valid))).toEqual({ ok: true, value: valid });
+      expect(validate(JSON.stringify(valid))).toEqual({ ok: true, value: valid });
     });
 
     it("rejects slash in a fixed provider model id", () => {
@@ -161,7 +192,7 @@ describe("gatewayDiff", () => {
           },
         },
       };
-      const res = validateGatewayJson(JSON.stringify(invalid));
+      const res = validate(JSON.stringify(invalid));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/must not contain/);
     });
@@ -181,7 +212,7 @@ describe("gatewayDiff", () => {
           },
         },
       };
-      const res = validateGatewayJson(JSON.stringify(input));
+      const res = validate(JSON.stringify(input));
       expect(res.ok).toBe(true);
       expect(res.value).toEqual({
         providers: {

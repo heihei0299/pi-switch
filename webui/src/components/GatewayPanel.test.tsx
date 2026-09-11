@@ -15,6 +15,11 @@ function renderGateway(refresh = vi.fn(async () => {})) {
   );
 }
 
+const FIXED_PROVIDERS = [
+  { key: "pi-switch-res", api: "openai-responses" },
+  { key: "pi-switch-chat", api: "openai-completions" },
+];
+
 const channelGateway = (models: Array<Record<string, unknown>>) => ({
   "pi-switch-chat": {
     api: "openai-completions",
@@ -36,6 +41,7 @@ function backendPreview(
     proposed,
     conflicts: [],
     pending_count: current === proposed ? 0 : 1,
+    fixed_providers: FIXED_PROVIDERS,
     diff: { added: [], removed: [], changed: [] },
     groups: [],
     removed: [],
@@ -257,6 +263,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     },
     conflicts: [],
     pending_count: 1,
+    fixed_providers: FIXED_PROVIDERS,
     diff: { added: ["pi-switch-chat/b1"], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
@@ -307,6 +314,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
       ...groupedPreview,
       current: {},
       pending_count: 2,
+      fixed_providers: FIXED_PROVIDERS,
       diff: { added: ["pi-switch-chat/m1", "pi-switch-chat/b1"], removed: [], changed: [] },
       groups: groupedPreview.groups.map((group) => ({
         ...group,
@@ -350,6 +358,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
         },
         conflicts: [],
         pending_count: selectedModels.length,
+        fixed_providers: FIXED_PROVIDERS,
         diff: { added: [], removed: [], changed: [] },
         groups,
         removed: [],
@@ -523,6 +532,7 @@ describe("GatewayPanel canonical draft", () => {
         proposed: { ...providers, ...wild },
         conflicts: [],
         pending_count: 1,
+        fixed_providers: FIXED_PROVIDERS,
         diff: { added: ["pi-switch-chat/m", "cpa/ocg/muse-1.3"], removed: [], changed: [] },
         groups: [],
         removed: [],
@@ -591,6 +601,7 @@ describe("GatewayPanel canonical draft", () => {
       proposed: canonicalProposed,
       conflicts: [],
       pending_count: 1,
+      fixed_providers: FIXED_PROVIDERS,
       diff: { added: [], removed: ["pi-switch/oc/responses/gpt-5.6-luna"], changed: [] },
       groups: [],
       removed: ["pi-switch/oc/responses/gpt-5.6-luna"],
@@ -638,6 +649,7 @@ describe("GatewayPanel unchecked persistence", () => {
     },
     conflicts: [],
     pending_count: 1,
+    fixed_providers: FIXED_PROVIDERS,
     diff: { added: ["pi-switch-chat/b1"], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
@@ -696,6 +708,7 @@ describe("GatewayPanel selection preview", () => {
         proposed: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-live" }, { id: "chat-new" }] } },
         conflicts: [],
         pending_count: 1,
+        fixed_providers: FIXED_PROVIDERS,
         diff: { added: ["pi-switch-chat/chat-new"], removed: [], changed: [] },
         groups: [{ supplier: "deepseek", channel: "main", gatewayProvider: "pi-switch-chat", models: [
           { id: "chat-live", status: "published" },
@@ -708,6 +721,7 @@ describe("GatewayPanel selection preview", () => {
         proposed: { "pi-switch-chat": { api: "openai-completions", models: [{ id: "chat-new" }] } },
         conflicts: [],
         pending_count: 1,
+        fixed_providers: FIXED_PROVIDERS,
         diff: { added: ["pi-switch-chat/chat-new"], removed: ["pi-switch-chat/chat-live"], changed: [] },
         groups: [{ supplier: "deepseek", channel: "main", gatewayProvider: "pi-switch-chat", models: [{ id: "chat-new", status: "pending" }] }],
         removed: [],
@@ -768,6 +782,7 @@ describe("GatewayPanel fixed provider projection", () => {
 		diff: { added: ["pi-switch-chat/chat-new"], removed: [], changed: [] },
       conflicts: [],
       pending_count: 1,
+      fixed_providers: FIXED_PROVIDERS,
       groups: [
         {
           supplier: "deepseek",
@@ -805,6 +820,28 @@ vi.spyOn(api, "getState").mockResolvedValue({ settings: { proxy: { host: "127.0.
     expect(providers["pi-switch-res"].models.map((m) => m.id)).toEqual(["res-live"]);
     expect(providers["deepseek/main"]).toBeUndefined();
     expect(providers["oc/responses"]).toBeUndefined();
+  });
+
+  it("honors the fixed providers the server declares (no frontend mirror)", async () => {
+    const gatewayValue = {
+      "vendor-gw": {
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:43112/v1",
+        models: [{ id: "custom-m1" }],
+        proxy: false,
+      },
+    };
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(gatewayValue, gatewayValue, {
+      fixed_providers: [{ key: "vendor-gw", api: "openai-completions" }],
+    }) as any);
+    renderGateway();
+    // the server-declared provider is read into the editor and passes validation
+    await waitFor(() => {
+      expect(screen.getByLabelText("gateway json")).toHaveValue(
+        JSON.stringify({ providers: gatewayValue }, null, 2),
+      );
+    });
+    expect(screen.getByText(/JSON valid/)).toBeInTheDocument();
   });
 });
 

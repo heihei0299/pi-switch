@@ -134,4 +134,22 @@ describe("API runtime contract boundary", () => {
     expect(result.byProvider.demo.cachedTokens).toBe(2);
     expect(result.recentRequestTotal).toBe(0);
   });
+
+  it("decodes server-declared fixed providers on gateway preview", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
+      current: {},
+      proposed: {},
+      conflicts: [],
+      pending_count: 0,
+      diff: { added: [], removed: [], changed: [] },
+      groups: [],
+      removed: [],
+      fixed_providers: [{ key: "pi-switch-chat", api: "openai-completions" }],
+    })));
+
+    const preview = await api.previewGateway();
+    expect(preview.fixed_providers).toEqual([
+      { key: "pi-switch-chat", api: "openai-completions" },
+    ]);
+  });
 });

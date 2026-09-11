@@ -5,7 +5,14 @@ import { useI18n } from "../i18n";
 import { useToast } from "./ui";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, type ModelDraft } from "../lib/piModel";
-import { filterFixedGatewayDiff, filterFixedGatewayProviders, isFixedGatewayProvider, validateGatewayJson } from "../lib/gatewayDiff";
+import {
+  filterFixedGatewayDiff,
+  filterFixedGatewayProviders,
+  isFixedGatewayProvider,
+  makeFixedProviderSet,
+  validateGatewayJson,
+  type FixedProviderSet,
+} from "../lib/gatewayDiff";
 import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { GatewayDiff, GatewayPreview, GatewaySelection, ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
@@ -33,6 +40,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   });
   const [backendPending, setBackendPending] = useState<number | null>(null);
   const [rawDraftDirty, setRawDraftDirty] = useState(false);
+  // 固定 provider 名单/API 契约由后端 preview 下发，前端不硬编码。
+  const [fixedProviders, setFixedProviders] = useState<FixedProviderSet>(() => makeFixedProviderSet([]));
   // 二次勾选：按供应商/渠道分组的发布选择（网关 id 粒度），默认只勾选已发布。
   const [groups, setGroups] = useState<PreviewGroup[]>([]);
   const [removedIds, setRemovedIds] = useState<string[]>([]);
@@ -73,8 +82,12 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     checkedOverride?: Set<string>,
     view: "current" | "proposed" = "proposed",
   ) => {
-    const cur = filterFixedGatewayProviders(asRecord(preview.current));
-    const prop = filterFixedGatewayProviders(asRecord(preview.proposed));
+    // Backend owns the fixed-provider contract; keep this preview's copy in
+    // state so validation/filtering use exactly what the backend declared.
+    const fixed = makeFixedProviderSet(preview.fixed_providers);
+    setFixedProviders(fixed);
+    const cur = filterFixedGatewayProviders(asRecord(preview.current), fixed);
+    const prop = filterFixedGatewayProviders(asRecord(preview.proposed), fixed);
     const groupsFromServer = preview.groups;
     const removedArr = preview.removed ?? [];
     const nextProposed = prop ?? {};
@@ -90,7 +103,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     // UI only reads the fixed gateway set: drop wild third-party keys from the
     // displayed diff. pending_count/conflicts stay backend-canonical (wild is
     // never counted by the backend for these fixed providers).
-    const diff = filterFixedGatewayDiff(preview.diff);
+    const diff = filterFixedGatewayDiff(preview.diff, fixed);
     setBackendDiff(diff);
     setBackendPending(preview.pending_count);
     setGroups(groupsFromServer);
@@ -148,7 +161,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   }, []);
 
   const [rawText, setRawText] = useState("{}");
-  const rawValidation = useMemo(() => validateGatewayJson(rawText), [rawText]);
+  const rawValidation = useMemo(
+    () => validateGatewayJson(rawText, fixedProviders),
+    [rawText, fixedProviders],
+  );
   const gatewayErrorLine = useMemo(() => {
     try {
       JSON.parse(rawText);
@@ -167,7 +183,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
   function handleRawChange(text: string) {
     setRawText(text);
     setRawDraftDirty(true);
-    const parsed = validateGatewayJson(text);
+    const parsed = validateGatewayJson(text, fixedProviders);
     if (!parsed.ok || !parsed.value) return;
 		const providers = asRecord(parsed.value.providers);
 		setCanonicalDraft(providers);
@@ -239,7 +255,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       }
       const selection = !rawDraftDirty && groups.length > 0 ? checked : undefined;
       const hasCurrentGatewayModels = Object.entries(current ?? {}).some(([providerKey, entry]) => {
-        if (!isFixedGatewayProvider(providerKey)) return false;
+        if (!isFixedGatewayProvider(providerKey, fixedProviders)) return false;
         const models = asRecord(entry).models;
         return Array.isArray(models) && models.length > 0;
       });
@@ -253,10 +269,12 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
         ? { draft }
         : { selected: selectedGatewayModels(selection), draft };
       const preview = await api.previewGateway(previewInput);
+      const fixed = makeFixedProviderSet(preview.fixed_providers);
+      setFixedProviders(fixed);
       if (preview.conflicts.length > 0) {
         setConflicts(preview.conflicts);
         setBackendPending(preview.pending_count);
-        setBackendDiff(filterFixedGatewayDiff(preview.diff));
+        setBackendDiff(filterFixedGatewayDiff(preview.diff, fixed));
         throw new Error(preview.conflicts.join("; "));
       }
       await api.applyGateway({ providers: preview.proposed });

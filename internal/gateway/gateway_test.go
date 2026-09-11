@@ -138,6 +138,32 @@ func TestPreviewPendingConvergesAfterPublish(t *testing.T) {
 	}
 }
 
+func TestFixedGatewayProvidersContract(t *testing.T) {
+	got := FixedGatewayProviders()
+	if len(got) != 2 {
+		t.Fatalf("FixedGatewayProviders len = %d, want 2: %v", len(got), got)
+	}
+	apiByKey := map[string]string{}
+	for _, p := range got {
+		apiByKey[p.Key] = p.API
+		if !IsFixedGatewayProvider(p.Key) {
+			t.Fatalf("FixedGatewayProviders contains non-fixed key %q", p.Key)
+		}
+		if gatewayProviderForAPI(p.API) != p.Key {
+			t.Fatalf("api %q maps to %q, not %q", p.API, gatewayProviderForAPI(p.API), p.Key)
+		}
+	}
+	want := map[string]string{
+		"pi-switch-res":  "openai-responses",
+		"pi-switch-chat": "openai-completions",
+	}
+	for key, api := range want {
+		if apiByKey[key] != api {
+			t.Fatalf("FixedGatewayProviders[%s] api = %q, want %q", key, apiByKey[key], api)
+		}
+	}
+}
+
 func TestCanonicalGatewayPlanUnifiesViews(t *testing.T) {
 	channel := "main"
 	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{
