@@ -1,66 +1,42 @@
 # pi-switch 可维护性提升 Spec
 
 - 基准：`main @ fd4c32b`
-- 目标：不重写、不换技术栈，消除重复规则和跨入口行为漂移。
+- 目标：在不重写、不换技术栈的前提下，减少重复规则、入口漂移和持久化旁路。
 
-## 1. 核心原则
+## 原则
 
-> 一个事实一个来源，一个业务动作一个实现。
+1. 一个事实只有一个来源。
+2. 一个业务动作只有一个实现。
+3. Adapter 只负责输入、输出和展示，不复制业务规则。
+4. 只抽取已经出现多个消费者的业务能力。
+5. 不为“架构整洁”增加无实际需求的层和 interface。
 
-本轮重点：
+## 本轮范围
 
-1. Config 读写语义统一。
-2. Gateway CLI / TUI / WebUI 行为统一。
-3. TUI 不再维护 Stats SQL。
-4. HTTP 与 CLI 共享的 Profile 业务逐步移出 `server`。
-5. Protocol 支持范围只有一个事实来源。
+### Config
 
-## 2. 不做
+`internal/config` 是配置读写唯一边界。
 
-本轮不引入：
-
-- `internal/app` / UseCase / Repository 层。
-- 无第二实现的 interface。
-- CQRS / Event Bus / DI Framework。
-- Gateway 全量类型化。
-- 全面 API 重写。
-
-保留 Gin、Bubble Tea、SQLite、React。
-
-## 3. Config
-
-只有配置文件不存在时允许返回默认配置：
+读取语义：
 
 ```text
-不存在       → DefaultConfig
-JSON 损坏    → error
-权限/I/O错误 → error
-字段类型错误 → error
+文件不存在      → DefaultConfig
+JSON 损坏       → error
+权限 / I/O 错误 → error
+字段类型错误    → error
 ```
 
-所有配置写入统一由 `internal/config` 完成。
-
-保存要求：
+写入要求：
 
 ```text
-CreateTemp
-→ 0600
-→ Write
-→ Close/Sync
-→ Rename
+CreateTemp → 0600 → Write → Sync/Close → Rename
 ```
 
-禁止：
+禁止 server、CLI、TUI 自行实现 config 写盘逻辑。
 
-- server / TUI / CLI 自己写 `config.json`。
-- 固定 `config.json.tmp`。
-- 吞掉保存错误。
+### Gateway
 
-## 4. Gateway
-
-保留现有 Canonical Plan。
-
-显式区分：
+保留现有 Canonical Plan，但显式区分：
 
 ```text
 Generated Plan = 根据 config 自动生成
@@ -77,44 +53,17 @@ PublishPlan(...)
 
 禁止通过 `edited == nil` 推断业务语义。
 
-WebUI、CLI、TUI 的 Generated 行为必须一致，并统一包含：
+WebUI、CLI、TUI 的 Generated preview/publish 必须走同一逻辑，并共享 metadata enrich、published metadata preservation、third-party preservation、validation 和 diff/conflict。
 
-- proposal
-- metadata enrich
-- published metadata preservation
-- third-party provider preservation
-- validation
-- diff/conflict
-
-连续发布相同配置时应满足：
-
-```text
-PendingCount == 0
-```
-
-## 5. Stats / TUI
+### Stats / TUI
 
 统计语义统一归 `internal/stats`。
 
-TUI 不得直接：
+TUI 不直接访问 SQLite，不包含 `db.Query` / `db.QueryRow` 等 SQL 逻辑，只负责交互和展示。
 
-- `GetDB`
-- `db.Query`
-- `db.QueryRow`
+### Profile
 
-TUI 只负责交互、展示和格式化。
-
-## 6. Profile
-
-已经同时被 HTTP 和 CLI 使用的 Provider 业务，逐步移出 `internal/server`。
-
-目标：
-
-```text
-HTTP ─┐
-      ├→ internal/profile
-CLI ──┘
-```
+已经同时被 HTTP 与 CLI 使用的 Provider 业务，后续移出 `internal/server`，形成小型 `internal/profile` domain。
 
 优先迁移：
 
@@ -124,13 +73,13 @@ CLI ──┘
 - SetExposedModels
 - TestUpstream
 
-不要求一次搬完整个 `profile_handlers.go`。
+不要求一次迁完全部 profile handler。
 
-## 7. Protocol
+### Protocol
 
-统一 API 标识和能力判断。
+统一 API 标识与支持能力，避免 `config`、`gateway`、`translator` 各维护一份列表。
 
-建议 `internal/protocol` 提供：
+建议提供：
 
 ```go
 IsKnown(...)
@@ -138,42 +87,31 @@ CanProxy(...)
 CanGateway(...)
 ```
 
-避免 `config`、`gateway`、`translator` 各维护一份支持列表。
+保持简单，不建立复杂 capability framework。
 
-`translator` 继续只负责协议转换。
+## 不做
 
-## 8. 后续项
+本轮不做：
 
-以下不进入第一阶段：
+- `internal/app` / UseCase / Repository 分层。
+- 无第二实现的 interface。
+- CQRS / Event Bus / DI Framework。
+- Gateway 全量类型化。
+- Proxy 全量重构。
+- OpenAPI / TS 自动生成。
+- Stats SQL 性能优化。
+- Config cache。
+- WebUI 大规模组件拆分。
 
-- Proxy core 提取。
-- SQLite versioned migration。
-- Typed HTTP DTO。
-- TS 类型自动生成。
-- Gateway typed model。
-- Stats SQL 优化。
-- WebUI 大组件拆分。
+## 完成标准
 
-只有出现明确维护成本时再做。
-
-## 9. 架构约束
-
-长期保持：
-
-- TUI 不写 SQL。
-- Domain package 不依赖 server。
-- Adapter 不复制业务规则。
-- Config 写入只有一个实现。
-- Gateway Generated flow 只有一个实现。
-- Protocol capability 只有一个来源。
-
-## 10. 第一阶段完成标准
+第一阶段完成后应满足：
 
 - [ ] Config 错误不再被当成默认配置。
 - [ ] `config.json` 新建权限为 0600。
 - [ ] Config 保存只有一个实现。
 - [ ] Gateway Generated / Draft 语义显式。
-- [ ] CLI / TUI / WebUI Generated Gateway 一致。
+- [ ] CLI / TUI / WebUI Generated Gateway 行为一致。
 - [ ] TUI 不直接访问 SQLite。
 
-达到这些条件后暂停并重新审查，不继续机械重构。
+达到以上状态后先复评，再决定是否继续 Profile / Protocol 收敛。
