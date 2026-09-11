@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -164,5 +165,22 @@ func TestLoadConfigAtPath_MissingOrNullProfilesIsEmpty(t *testing.T) {
 		if cfg.Profiles == nil || len(cfg.Profiles) != 0 {
 			t.Fatalf("profiles for %s = %#v, want empty map", body, cfg.Profiles)
 		}
+	}
+}
+
+// system-contract 2.2: `exposedModels: null` is a boundary error and must name the
+// offending field so the operator can find it.
+func TestLoadConfigAtPath_NullExposedModelsNamesField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"profiles":{"p":{"upstreams":[{"name":"m","exposedModels":null}]}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := LoadConfigAtPath(path)
+	if err == nil {
+		t.Fatal("exposedModels:null loaded without error")
+	}
+	if !strings.Contains(err.Error(), "exposedModels") {
+		t.Fatalf("error %q does not name the offending field", err)
 	}
 }

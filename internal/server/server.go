@@ -211,7 +211,12 @@ func NewProxyRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	if !IsLoopback(opts.BindHost) {
-		r.Use(basicAuthMiddleware(opts.Password, "/v1"))
+		// Inference surface: system-contract 2.8 keeps the OpenAI error object even
+		// for the shared 401, because these responses go to OpenAI-compatible clients.
+		r.Use(basicAuthMiddleware(opts.Password, gin.H{"error": gin.H{
+			"message": "Unauthorized",
+			"type":    "invalid_request_error",
+		}}, "/v1"))
 	}
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
@@ -242,7 +247,8 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 	// Startup validation normally refuses this state before binding; installing
 	// the guard anyway means reaching it cannot silently fail open.
 	if !IsLoopback(opts.BindHost) {
-		r.Use(basicAuthMiddleware(opts.Password, "/api"))
+		// Management surface: system-contract 2.8 answers a bare string message.
+		r.Use(basicAuthMiddleware(opts.Password, gin.H{"error": "Unauthorized"}, "/api"))
 	}
 	// Record the enforced mode for handlers that report it back to clients.
 	r.Use(func(c *gin.Context) {
@@ -496,15 +502,17 @@ func ResolveAuthOptions(bindHost string, generate bool, announce func(string)) (
 // basicAuthMiddleware protects the guarded prefixes with the single
 // admin:<password> pair. Health probes are deliberately left reachable so that a
 // misconfigured listener stays diagnosable; proxies pass their own prefix set
-// instead of getting a second authentication implementation.
-func basicAuthMiddleware(password string, guardedPrefixes ...string) gin.HandlerFunc {
+// instead of getting a second authentication implementation. The 401 body is the
+// caller's surface envelope (system-contract 2.8): management passes a bare
+// message, inference the OpenAI error object.
+func basicAuthMiddleware(password string, unauthorized gin.H, guardedPrefixes ...string) gin.HandlerFunc {
 	if len(guardedPrefixes) == 0 {
 		guardedPrefixes = []string{"/api"}
 	}
 	expected := adminUser + ":" + password
 	reject := func(c *gin.Context) {
 		c.Header("WWW-Authenticate", `Basic realm="pi-switch"`)
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.AbortWithStatusJSON(http.StatusUnauthorized, unauthorized)
 	}
 	return func(c *gin.Context) {
 		guarded := false

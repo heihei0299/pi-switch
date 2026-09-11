@@ -50,6 +50,26 @@ type Upstream struct {
 	ExposedModels []string     `json:"exposedModels,omitempty"`
 }
 
+// UnmarshalJSON rejects `exposedModels: null` at the boundary. encoding/json folds
+// null into a nil slice, but null is neither "missing" (legacy migration owns that)
+// nor "[]" (explicit zero exposure) — system-contract 2.2. Keeping the rule on the
+// field means the JSON name has one owner instead of a second schema walker.
+func (u *Upstream) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if v, ok := raw["exposedModels"]; ok && isJSONNull(v) {
+		return fmt.Errorf("exposedModels must not be null")
+	}
+	type upstreamAlias Upstream
+	return json.Unmarshal(data, (*upstreamAlias)(u))
+}
+
+func isJSONNull(v json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(v), []byte("null"))
+}
+
 func (u Upstream) EffectiveResponsesMode(fallback string) string {
 	if u.ResponsesMode != "" {
 		return u.ResponsesMode
@@ -437,9 +457,6 @@ func ParseConfig(b []byte) (PiSwitchConfig, error) {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return PiSwitchConfig{}, err
 	}
-	if err := rejectNullExposedModels(raw); err != nil {
-		return PiSwitchConfig{}, err
-	}
 	cfg := DefaultConfig()
 	if v, ok := raw["version"]; ok {
 		if err := json.Unmarshal(v, &cfg.Version); err != nil {
@@ -471,49 +488,6 @@ func ParseConfig(b []byte) (PiSwitchConfig, error) {
 	}
 	cfg.Version = normalizeConfigVersion(cfg.Version)
 	return cfg, nil
-}
-
-// rejectNullExposedModels keeps `exposedModels: null` — distinct from missing
-// (legacy migration owns that) and from `[]` (explicit zero exposure) — out of the
-// config boundary. encoding/json turns null into a nil slice, so this has to look
-// at the raw shape to report the field path instead of silently accepting it.
-func rejectNullExposedModels(raw map[string]json.RawMessage) error {
-	profilesRaw, ok := raw["profiles"]
-	if !ok {
-		return nil
-	}
-	var profiles map[string]json.RawMessage
-	if err := json.Unmarshal(profilesRaw, &profiles); err != nil || profiles == nil {
-		return nil // not an object; the typed parse reports the real error
-	}
-	for name, profileRaw := range profiles {
-		var profile map[string]json.RawMessage
-		if err := json.Unmarshal(profileRaw, &profile); err != nil || profile == nil {
-			continue
-		}
-		upstreamsRaw, ok := profile["upstreams"]
-		if !ok {
-			continue
-		}
-		var upstreams []json.RawMessage
-		if err := json.Unmarshal(upstreamsRaw, &upstreams); err != nil {
-			continue
-		}
-		for i, upstreamRaw := range upstreams {
-			var upstream map[string]json.RawMessage
-			if err := json.Unmarshal(upstreamRaw, &upstream); err != nil || upstream == nil {
-				continue
-			}
-			if v, ok := upstream["exposedModels"]; ok && isJSONNull(v) {
-				return fmt.Errorf("profiles.%s.upstreams[%d].exposedModels must not be null", name, i)
-			}
-		}
-	}
-	return nil
-}
-
-func isJSONNull(v json.RawMessage) bool {
-	return bytes.Equal(bytes.TrimSpace(v), []byte("null"))
 }
 
 // LoadConfigAtPath reads and parses the config file at path.

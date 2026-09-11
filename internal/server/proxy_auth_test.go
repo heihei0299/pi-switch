@@ -86,6 +86,19 @@ func TestProxyAuth_RejectionIsTheMiddlewareAnswer(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Fatalf("Content-Type = %q, want JSON (an upstream rejection would be text/plain)", ct)
 	}
+	// system-contract 2.8: the inference surface keeps the OpenAI error object.
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode 401 body: %v (%s)", err, w.Body.String())
+	}
+	if body.Error.Message == "" || body.Error.Type == "" {
+		t.Fatalf("inference 401 envelope = %s, want {\"error\":{\"message\":...,\"type\":...}}", w.Body.String())
+	}
 }
 
 // B2: an exposed proxy without credentials must refuse the inference routes.

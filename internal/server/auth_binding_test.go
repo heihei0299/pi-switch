@@ -102,6 +102,13 @@ func TestMgmtAuth_NonLoopbackWithoutPasswordIsRejected(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/config with bind host 0.0.0.0 and no password = %d, want 401", w.Code)
 	}
+	// system-contract 2.8: the management surface answers a bare string message.
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error == "" {
+		t.Fatalf("management 401 envelope = %s, want {\"error\":\"...\"}", w.Body.String())
+	}
 }
 
 // B3: with a password configured, only the correct admin credential is served.
