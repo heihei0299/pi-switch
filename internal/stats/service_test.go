@@ -124,14 +124,18 @@ func TestStatsServicePaginationIsDeterministic(t *testing.T) {
 }
 
 // ARCH-06: the TUI status line reads Summary from this package instead of
-// running its own SQL. Only successful requests count; unknown cost contributes
-// nothing while missing token facts count as zero.
+// running its own SQL. It uses the same countable() rule as Stats: successful
+// requests count, but only ones with both prompt and completion usage contribute
+// tokens/cost.
 func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
 	db := openStatsDB(t)
 	center := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	insertFact(t, db, center.Format(time.RFC3339), "p", "m", 1, int64(10), int64(5), int64(2), nil, 0.25, "c1", nil, nil)
 	insertFact(t, db, center.Add(time.Minute).Format(time.RFC3339), "p", "m", 1, nil, nil, nil, nil, nil, "c2", nil, nil)
 	insertFact(t, db, center.Add(2*time.Minute).Format(time.RFC3339), "p", "m", 0, int64(99), int64(99), int64(99), nil, 9.0, "c3", nil, nil)
+	// Partial usage: successful, but completion is unknown. Countable() excludes it
+	// from the token/cost totals, so it must not be summed as a zero-completion row.
+	insertFact(t, db, center.Add(3*time.Minute).Format(time.RFC3339), "p", "m", 1, int64(50), nil, nil, nil, 5.0, "c4", nil, nil)
 	insertFact(t, db, center.Add(-48*time.Hour).Format(time.RFC3339), "old", "m", 1, int64(7), int64(3), int64(1), nil, 1.0, "old", nil, nil)
 
 	service := Service{DB: db}
@@ -139,7 +143,7 @@ func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all.Requests != 3 || all.PromptTokens != 17 || all.CompletionTokens != 8 || all.CachedTokens != 3 {
+	if all.Requests != 4 || all.PromptTokens != 17 || all.CompletionTokens != 8 || all.CachedTokens != 3 {
 		t.Fatalf("all-time summary = %+v", all)
 	}
 	if all.Cost == nil || *all.Cost != 1.25 {
@@ -150,7 +154,7 @@ func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if windowed.Requests != 2 || windowed.PromptTokens != 10 || windowed.Cost == nil || *windowed.Cost != 0.25 {
+	if windowed.Requests != 3 || windowed.PromptTokens != 10 || windowed.Cost == nil || *windowed.Cost != 0.25 {
 		t.Fatalf("windowed summary = %+v", windowed)
 	}
 }

@@ -98,6 +98,7 @@ func TestLoadConfigAtPath_StrictErrors(t *testing.T) {
 		"proxy field wrong type":     write("proxy.json", `{"settings":{"proxy":{"port":"x"}}}`),
 		"writeMode wrong type":       write("writemode.json", `{"settings":{"writeMode":7}}`),
 		"invalid conversationSource": write("conv.json", `{"settings":{"conversationSource":"bogus"}}`),
+		"exposedModels null":         write("exposed-null.json", `{"profiles":{"p":{"upstreams":[{"name":"m","exposedModels":null}]}}}`),
 		"unreadable path":            filepath.Join(dir, "as-dir"),
 	}
 	for name, path := range cases {
@@ -140,5 +141,28 @@ func TestLoadConfigAtPath_PartialSettingsKeepDefaults(t *testing.T) {
 	cb := cfg.Settings.Proxy.CircuitBreaker
 	if !cb.Enabled || cb.FailureThreshold != 3 || cb.CooldownSeconds != 60 {
 		t.Fatalf("circuit breaker defaults lost: %+v", cb)
+	}
+}
+
+// system-contract 2.2: a config file without `profiles` (and one with an explicit
+// null) has no profiles. The DefaultConfig placeholder belongs to the missing-file
+// default only, never to an explicit config that omits the key.
+func TestLoadConfigAtPath_MissingOrNullProfilesIsEmpty(t *testing.T) {
+	for _, body := range []string{
+		`{"version":2}`,
+		`{"version":2,"profiles":null}`,
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.json")
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := LoadConfigAtPath(path)
+		if err != nil {
+			t.Fatalf("load %s: %v", body, err)
+		}
+		if cfg.Profiles == nil || len(cfg.Profiles) != 0 {
+			t.Fatalf("profiles for %s = %#v, want empty map", body, cfg.Profiles)
+		}
 	}
 }

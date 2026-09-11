@@ -73,8 +73,9 @@ func New(cfg config.PiSwitchConfig) Model {
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m *Model) refreshGateway() {
-	// The unified generated entry point; nil current means "no published gateway
-	// yet", so the count is the config-derived model total.
+	// Config-derived model count for the status line. It is not the publishable
+	// preview payload (that is gateway.BuildEnrichedGeneratedPlan, used by publish
+	// below): enrichment only fills model metadata, so it cannot change this count.
 	preview := gateway.BuildGeneratedPlan(m.cfg, nil).Proposed
 	total := 0
 	if provs, ok := preview["providers"].(map[string]interface{}); ok {
@@ -93,7 +94,7 @@ func (m *Model) refreshGateway() {
 }
 
 func (m *Model) refreshStats() {
-	service, err := stats.OpenService(m.cfg.Settings.ConversationSource)
+	service, err := stats.OpenSummaryService()
 	if err != nil {
 		m.statsBrief = "stats: db unavailable"
 		return

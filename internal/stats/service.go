@@ -22,16 +22,16 @@ type Service struct {
 	Candidates []conversation.Candidate
 }
 
-// OpenService opens the default request database and returns a Service bound to
-// conversationSource. Callers that only need Summary (the TUI status line) do not
-// need attribution candidates; the source still selects the mode for the other
-// methods.
-func OpenService(conversationSource string) (Service, error) {
+// OpenSummaryService returns a Service bound to the default request database for
+// the Summary path. Source is Off because Summary never attributes requests to
+// conversations, so this service cannot be asked for a conversation view that
+// would silently come back empty.
+func OpenSummaryService() (Service, error) {
 	db, err := store.GetDB()
 	if err != nil {
 		return Service{}, err
 	}
-	return Service{DB: db, Source: conversation.Source(conversationSource)}, nil
+	return Service{DB: db, Source: conversation.SourceOff}, nil
 }
 
 // Summary is the compact aggregate behind the TUI status line: successful
@@ -45,9 +45,10 @@ type Summary struct {
 	Cost             *float64 `json:"cost"`
 }
 
-// Summary aggregates successful requests in window (nil means all time). Missing
-// token facts count as zero, matching the previous TUI query; a request whose
-// cost is unknown contributes nothing to Cost rather than a zero.
+// Summary aggregates successful requests in window (nil means all time). It uses
+// the same countable() rule as Stats: only requests with both prompt and
+// completion usage contribute tokens/cost, so a partial usage fact is never
+// summed into a total. Requests counts every successful row.
 func (s Service) Summary(window *Window) (Summary, error) {
 	var out Summary
 	err := s.forEachFact(window, "ASC", func(fact RequestFact) error {
@@ -55,17 +56,15 @@ func (s Service) Summary(window *Window) (Summary, error) {
 			return nil
 		}
 		out.Requests++
-		if fact.PromptTokens != nil {
+		if fact.countable() {
 			out.PromptTokens += *fact.PromptTokens
-		}
-		if fact.CompletionTokens != nil {
 			out.CompletionTokens += *fact.CompletionTokens
-		}
-		if fact.CachedTokens != nil {
-			out.CachedTokens += *fact.CachedTokens
-		}
-		if fact.Cost != nil {
-			out.Cost = addCost(out.Cost, *fact.Cost)
+			if fact.CachedTokens != nil {
+				out.CachedTokens += *fact.CachedTokens
+			}
+			if fact.Cost != nil {
+				out.Cost = addCost(out.Cost, *fact.Cost)
+			}
 		}
 		return nil
 	})

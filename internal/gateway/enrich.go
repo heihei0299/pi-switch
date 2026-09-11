@@ -21,6 +21,7 @@ func BuildEnrichedGeneratedPlan(cfg config.PiSwitchConfig, current map[string]in
 // It prefers provider/bare lookup using the supplier's resolved models.dev provider
 // (or supplier name as hint) to disambiguate duplicate bare ids, and overwrites
 // stale defaults (e.g. 128000→1048576) when the catalog provides non-zero values.
+// It mutates proposed in place.
 //
 // It is exported so preview and publish paths share one implementation instead of
 // each adapter re-deriving the lookup rules.

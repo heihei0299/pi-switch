@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,11 +314,18 @@ func DefaultConfig() PiSwitchConfig {
 	}
 }
 
+// normalizeConfigVersion is the single version floor shared by load and save, so
+// the v1→v2 rule has one source instead of one copy per entry point.
+func normalizeConfigVersion(v uint32) uint32 {
+	if v < 2 {
+		return 2
+	}
+	return v
+}
+
 func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
 	out := cfg
-	if out.Version < 2 {
-		out.Version = 2
-	}
+	out.Version = normalizeConfigVersion(out.Version)
 	if out.Settings.ConversationSource == "" {
 		out.Settings.ConversationSource = "sessionScan"
 	}
@@ -346,7 +354,7 @@ func ResolvePath() string {
 // writeFileAtomic writes data to path through a temp file in the same directory,
 // fsyncs it and renames it into place. Writing to a temp file means path either
 // keeps its previous content or holds the complete new content, and the rename
-// preserves the temp file's 0600 mode so the config is never world-readable.
+// preserves the temp file's 0600 mode.
 func writeFileAtomic(path string, data []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
 	if err != nil {
@@ -388,10 +396,8 @@ func writeFileAtomic(path string, data []byte) error {
 // this so that no caller skips the migration or the 0600 atomic write.
 func SaveAtPath(cfg PiSwitchConfig, path string) error {
 	cfg = MigratedForSave(cfg)
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -422,13 +428,16 @@ func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
 }
 
 // ParseConfig parses config JSON with the same semantics every entry point uses:
-// fields default from DefaultConfig, an explicit "profiles" replaces the
-// placeholder profile, and any wrong field type is an error. Callers that write
-// config back must parse through here first so they never persist raw JSON that
-// the loader would reject.
+// fields default from DefaultConfig, a present "profiles" replaces the
+// placeholder profile (a config file without the key has no profiles), and any
+// wrong field type is an error. Callers that write config back must parse through
+// here first so they never persist raw JSON that the loader would reject.
 func ParseConfig(b []byte) (PiSwitchConfig, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
+		return PiSwitchConfig{}, err
+	}
+	if err := rejectNullExposedModels(raw); err != nil {
 		return PiSwitchConfig{}, err
 	}
 	cfg := DefaultConfig()
@@ -442,10 +451,12 @@ func ParseConfig(b []byte) (PiSwitchConfig, error) {
 			return PiSwitchConfig{}, fmt.Errorf("current: %w", err)
 		}
 	}
+	// A config file that names its profiles (even an empty object) replaces the
+	// DefaultConfig placeholder. A file without the key has no profiles at all —
+	// the placeholder only belongs to the missing-file default, never to an
+	// explicit config that happens to omit the key.
+	cfg.Profiles = map[string]ProviderProfile{}
 	if v, ok := raw["profiles"]; ok {
-		// Replace the placeholder profile instead of merging the file's profiles
-		// into it.
-		cfg.Profiles = map[string]ProviderProfile{}
 		if err := json.Unmarshal(v, &cfg.Profiles); err != nil {
 			return PiSwitchConfig{}, fmt.Errorf("profiles: %w", err)
 		}
@@ -458,13 +469,51 @@ func ParseConfig(b []byte) (PiSwitchConfig, error) {
 			return PiSwitchConfig{}, fmt.Errorf("settings: %w", err)
 		}
 	}
-	// A v1 file is normalized in memory on load; MigratedForSave re-applies the
-	// same rule when writing. The settings defaults no longer need re-doing here:
-	// cfg starts from DefaultConfig and Settings.UnmarshalJSON owns its backfill.
-	if cfg.Version < 2 {
-		cfg.Version = 2
-	}
+	cfg.Version = normalizeConfigVersion(cfg.Version)
 	return cfg, nil
+}
+
+// rejectNullExposedModels keeps `exposedModels: null` — distinct from missing
+// (legacy migration owns that) and from `[]` (explicit zero exposure) — out of the
+// config boundary. encoding/json turns null into a nil slice, so this has to look
+// at the raw shape to report the field path instead of silently accepting it.
+func rejectNullExposedModels(raw map[string]json.RawMessage) error {
+	profilesRaw, ok := raw["profiles"]
+	if !ok {
+		return nil
+	}
+	var profiles map[string]json.RawMessage
+	if err := json.Unmarshal(profilesRaw, &profiles); err != nil || profiles == nil {
+		return nil // not an object; the typed parse reports the real error
+	}
+	for name, profileRaw := range profiles {
+		var profile map[string]json.RawMessage
+		if err := json.Unmarshal(profileRaw, &profile); err != nil || profile == nil {
+			continue
+		}
+		upstreamsRaw, ok := profile["upstreams"]
+		if !ok {
+			continue
+		}
+		var upstreams []json.RawMessage
+		if err := json.Unmarshal(upstreamsRaw, &upstreams); err != nil {
+			continue
+		}
+		for i, upstreamRaw := range upstreams {
+			var upstream map[string]json.RawMessage
+			if err := json.Unmarshal(upstreamRaw, &upstream); err != nil || upstream == nil {
+				continue
+			}
+			if v, ok := upstream["exposedModels"]; ok && isJSONNull(v) {
+				return fmt.Errorf("profiles.%s.upstreams[%d].exposedModels must not be null", name, i)
+			}
+		}
+	}
+	return nil
+}
+
+func isJSONNull(v json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(v), []byte("null"))
 }
 
 // LoadConfigAtPath reads and parses the config file at path.

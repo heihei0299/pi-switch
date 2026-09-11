@@ -210,7 +210,7 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
+	c.JSON(200, gatewayPublishOK(cfg, gw))
 }
 
 // gatewayHealthPayload reports the gateway's state. has_models_file and
@@ -270,14 +270,17 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
+	var toPublish map[string]interface{}
 	var plan gateway.CanonicalGatewayPlan
 	if body != nil && len(body) > 0 {
 		if _, ok := body["providers"]; !ok {
 			c.JSON(400, gin.H{"error": "providers is required"})
 			return
 		}
-		plan, _ = buildDraftGatewayPlan(cfg, current, body)
+		toPublish = body
+		plan, _ = buildDraftGatewayPlan(cfg, current, toPublish)
 	} else {
+		toPublish = gateway.BuildProposedGatewayEntry(cfg)
 		plan, _ = buildGeneratedGatewayPlan(cfg, current)
 	}
 	if len(plan.Conflicts) > 0 {
@@ -288,5 +291,5 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
+	c.JSON(200, gatewayPublishOK(cfg, toPublish))
 }
