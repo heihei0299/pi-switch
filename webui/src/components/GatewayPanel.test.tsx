@@ -16,7 +16,7 @@ function renderGateway(refresh = vi.fn(async () => {})) {
 }
 
 const channelGateway = (models: Array<Record<string, unknown>>) => ({
-  "oc/chat": {
+  "pi-switch-chat": {
     api: "openai-completions",
     baseUrl: "http://127.0.0.1:43112/v1",
     models,
@@ -56,7 +56,7 @@ describe("GatewayPanel gateway-sep", () => {
 
   it("shows Current vs Proposed status bar with diff and pending count", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
-      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+      diff: { added: ["pi-switch-chat/m2"], removed: [], changed: [] },
     }) as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
@@ -66,6 +66,22 @@ describe("GatewayPanel gateway-sep", () => {
     expect(screen.getByText(/~0 changed/)).toBeInTheDocument();
     expect(screen.getByText(/待发布数: 1/)).toBeInTheDocument();
     expect(screen.getByText(/上次发布时间/)).toBeInTheDocument();
+  });
+
+  it("counts only fixed providers in the status bar diff", async () => {
+    vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
+      diff: {
+        added: ["pi-switch-chat/m2", "cpa/ocg/muse-1.3"],
+        removed: ["pi-switch-chat/m0", "sup/main/m1"],
+        changed: ["pi-switch-chat", "cpa"],
+      },
+    }) as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
+    // wild entries are dropped; counts must reflect only the fixed set
+    expect(screen.getByText(/\+1 added/)).toBeInTheDocument();
+    expect(screen.getByText(/-1 removed/)).toBeInTheDocument();
+    expect(screen.getByText(/~1 changed/)).toBeInTheDocument();
   });
 
 
@@ -79,7 +95,7 @@ describe("GatewayPanel gateway-sep", () => {
   it("clicking 应用到 Pi calls PUT /models/gateway and on success refresh and clears pending", async () => {
     vi.spyOn(api, "previewGateway")
       .mockResolvedValueOnce(backendPreview(currentGw, proposedGw, {
-        diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+        diff: { added: ["pi-switch-chat/m2"], removed: [], changed: [] },
       }) as any)
       .mockResolvedValueOnce(backendPreview(proposedGw, proposedGw) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
@@ -93,8 +109,8 @@ describe("GatewayPanel gateway-sep", () => {
     await waitFor(() => expect(apply).toHaveBeenCalled());
     // apply payload should be parseable gateway
     const payload = apply.mock.calls[0][0] as any;
-    expect(payload.providers["oc/chat"].api).toBe("openai-completions");
-    expect(payload.providers["oc/chat"].baseUrl).toBe("http://127.0.0.1:43112/v1");
+    expect(payload.providers["pi-switch-chat"].api).toBe("openai-completions");
+    expect(payload.providers["pi-switch-chat"].baseUrl).toBe("http://127.0.0.1:43112/v1");
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText(/待发布数: 0/)).toBeInTheDocument());
     // lastPublishAt should be set (not 尚未发布)
@@ -104,7 +120,7 @@ describe("GatewayPanel gateway-sep", () => {
 
   it("does not mutate proxy settings from the gateway base URL", async () => {
     const gateway = {
-      "oc/chat": {
+      "pi-switch-chat": {
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:8317/v1",
         models: [{ id: "new-model" }],
@@ -127,7 +143,7 @@ describe("GatewayPanel gateway-sep", () => {
 
   it("preserves provider compat when applying a gateway", async () => {
     const gateway = {
-      "oc/chat": {
+      "pi-switch-chat": {
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:43112/v1",
         compat: { sendSessionAffinityHeaders: true },
@@ -142,12 +158,12 @@ describe("GatewayPanel gateway-sep", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用到 Pi" }));
     await waitFor(() => expect(apply).toHaveBeenCalled());
     const payload = apply.mock.calls[0][0] as any;
-    expect(payload.providers["oc/chat"].compat).toEqual({ sendSessionAffinityHeaders: true });
+    expect(payload.providers["pi-switch-chat"].compat).toEqual({ sendSessionAffinityHeaders: true });
   });
 
   it("failed apply retains config and does not refresh or clear pending", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
-      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+      diff: { added: ["pi-switch-chat/m2"], removed: [], changed: [] },
     }) as any);
     vi.spyOn(api, "applyGateway").mockRejectedValue(new Error("apply failed"));
     const refresh = vi.fn(async () => {});
@@ -166,7 +182,7 @@ describe("GatewayPanel gateway-sep", () => {
 
   it("shows 上次发布时间 after successful publish and persists", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(null, proposedGw, {
-      diff: { added: ["oc/chat/m1", "oc/chat/m2"], removed: [], changed: [] },
+      diff: { added: ["pi-switch-chat/m1", "pi-switch-chat/m2"], removed: [], changed: [] },
     }) as any);
     vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     // Initially no current -> shows 尚未发布
@@ -176,7 +192,7 @@ describe("GatewayPanel gateway-sep", () => {
     // after publish, should show timestamp
     vi.spyOn(api, "previewGateway")
       .mockResolvedValueOnce(backendPreview(null, proposedGw, {
-        diff: { added: ["oc/chat/m1", "oc/chat/m2"], removed: [], changed: [] },
+        diff: { added: ["pi-switch-chat/m1", "pi-switch-chat/m2"], removed: [], changed: [] },
       }) as any)
       .mockResolvedValueOnce(backendPreview(proposedGw, proposedGw) as any);
     vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
@@ -224,7 +240,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
   });
   const groupedPreview = {
     current: {
-      "sup/main": {
+      "pi-switch-chat": {
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:43112/v1",
         models: [{ id: "m1" }],
@@ -232,22 +248,16 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
       },
     },
     proposed: {
-      "sup/main": {
+      "pi-switch-chat": {
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:43112/v1",
-        models: [{ id: "m1" }],
-        proxy: false,
-      },
-      "sup/bk": {
-        api: "openai-completions",
-        baseUrl: "http://127.0.0.1:43113/v1",
-        models: [{ id: "b1" }],
+        models: [{ id: "m1" }, { id: "b1" }],
         proxy: false,
       },
     },
     conflicts: [],
     pending_count: 1,
-    diff: { added: ["sup/bk/b1"], removed: [], changed: [] },
+    diff: { added: ["pi-switch-chat/b1"], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
       { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },
@@ -287,8 +297,8 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     for (const [key, prov] of Object.entries(providers ?? {})) {
       for (const m of prov.models) allIds.push(`${key}/${m.id}`);
     }
-    expect(allIds).toContain("sup/main/m1");
-    expect(allIds).toContain("sup/bk/b1");
+    expect(allIds).toContain("pi-switch-chat/m1");
+    expect(allIds).toContain("pi-switch-chat/b1");
     expect(allIds).not.toContain("ghost/x");
   });
 
@@ -297,7 +307,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
       ...groupedPreview,
       current: {},
       pending_count: 2,
-      diff: { added: ["sup/main/m1", "sup/bk/b1"], removed: [], changed: [] },
+      diff: { added: ["pi-switch-chat/m1", "pi-switch-chat/b1"], removed: [], changed: [] },
       groups: groupedPreview.groups.map((group) => ({
         ...group,
         models: group.models.map((model) => ({ ...model, status: "pending" as const })),
@@ -393,7 +403,7 @@ describe("GatewayPanel canonical draft", () => {
 
   it("renders structured preview and publishes the backend proposal", async () => {
     vi.spyOn(api, "previewGateway").mockResolvedValue(backendPreview(currentGw, proposedGw, {
-      diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+      diff: { added: ["pi-switch-chat/m2"], removed: [], changed: [] },
     }) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
     renderGateway();
@@ -470,7 +480,7 @@ describe("GatewayPanel canonical draft", () => {
   it("sends edited JSON to backend preview before publishing", async () => {
     const preview = vi.spyOn(api, "previewGateway")
       .mockResolvedValueOnce(backendPreview(currentGw, proposedGw, {
-        diff: { added: ["oc/chat/m2"], removed: [], changed: [] },
+        diff: { added: ["pi-switch-chat/m2"], removed: [], changed: [] },
       }) as any)
       .mockResolvedValue(backendPreview(proposedGw, proposedGw) as any);
     const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
@@ -496,7 +506,70 @@ describe("GatewayPanel canonical draft", () => {
     expect(apply.mock.calls[0][0]).toEqual({ providers: proposedGw });
   });
 
-  it("shows persisted legacy ids on initial load", async () => {
+  it("drops wild cpa providers end-to-end (validate, preview, apply, reload)", async () => {
+    const wild = {
+      cpa: {
+        api: "openai-responses",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        models: [{ id: "ocg/muse-1.3" }],
+      },
+    };
+    const preview = vi.spyOn(api, "previewGateway").mockImplementation(async (input) => {
+      const providers = ((input?.draft as any)?.providers ?? {}) as Record<string, unknown>;
+      // Backend keeps wild keys via its merge semantics: proposed echoes the
+      // fixed draft *plus* the wild provider. The UI must still never read it.
+      return {
+        current: {},
+        proposed: { ...providers, ...wild },
+        conflicts: [],
+        pending_count: 1,
+        diff: { added: ["pi-switch-chat/m", "cpa/ocg/muse-1.3"], removed: [], changed: [] },
+        groups: [],
+        removed: [],
+      } as any;
+    });
+    const apply = vi.spyOn(api, "applyGateway").mockResolvedValue({ ok: true } as any);
+    renderGateway();
+    await waitFor(() => expect(screen.getByLabelText("gateway json")).toBeInTheDocument());
+
+    const raw = {
+      providers: {
+        ...wild,
+        "pi-switch-chat": {
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:43112/v1",
+          models: [{ id: "m" }],
+        },
+      },
+    };
+    fireEvent.change(screen.getByLabelText("gateway json"), {
+      target: { value: JSON.stringify(raw) },
+    });
+    // wild provider must not fail validation
+    await waitFor(() => expect(screen.getByText(/JSON valid/)).toBeInTheDocument());
+    const applyBtn = screen.getByRole("button", { name: "应用到 Pi" });
+    await waitFor(() => expect(applyBtn).toBeEnabled());
+    fireEvent.click(applyBtn);
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+
+    // the validated draft (value) sent to preview has wild keys stripped
+    const draftCall = preview.mock.calls.find(
+      ([arg]) => arg && typeof arg === "object" && "draft" in (arg as Record<string, unknown>),
+    );
+    expect(draftCall).toBeTruthy();
+    expect(Object.keys((draftCall![0] as any).draft.providers)).toEqual(["pi-switch-chat"]);
+    // the apply payload is the backend proposal (wild preserved for the backend)
+    expect((apply.mock.calls[0][0] as any).providers["pi-switch-chat"]).toBeTruthy();
+    // after publish/reload the editor rawText is projected back to the fixed set
+    await waitFor(() => {
+      expect((screen.getByLabelText("gateway json") as HTMLTextAreaElement).value).not.toContain("cpa");
+    });
+  });
+
+  it("ignores wild legacy provider keys on initial load", async () => {
+    // Locked decision: UI only reads the fixed gateway set. Legacy single-key
+    // (`pi-switch`) and per-channel (`oc/responses`) providers are wild and
+    // must not leak into the editor/draft, even though the backend keeps them.
     const legacyCurrent = {
       "pi-switch": {
         api: "openai-responses",
@@ -524,7 +597,12 @@ describe("GatewayPanel canonical draft", () => {
     } as any);
     renderGateway();
     await waitFor(() => expect(screen.getByText(/Current vs Proposed/)).toBeInTheDocument());
-    expect(screen.getByDisplayValue("oc/responses/gpt-5.6-luna")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("gateway json")).toHaveValue(
+        JSON.stringify({ providers: {} }, null, 2),
+      );
+    });
+    expect(screen.queryByDisplayValue("oc/responses/gpt-5.6-luna")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("gpt-5.6-luna")).not.toBeInTheDocument();
   });
 });
@@ -554,14 +632,13 @@ describe("GatewayPanel unchecked persistence", () => {
   });
 
   const persistPreview = {
-    current: { "sup/main": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } },
+    current: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } },
     proposed: {
-      "sup/main": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false },
-      "sup/bk": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "b1" }], proxy: false },
+      "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }, { id: "b1" }], proxy: false },
     },
     conflicts: [],
     pending_count: 1,
-    diff: { added: [], removed: [], changed: [] },
+    diff: { added: ["pi-switch-chat/b1"], removed: [], changed: [] },
     groups: [
       { supplier: "sup", channel: "main", models: [{ id: "m1", status: "published" }] },
       { supplier: "sup", channel: "bk", models: [{ id: "b1", status: "pending" }] },

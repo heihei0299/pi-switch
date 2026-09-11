@@ -5,7 +5,7 @@ import { useI18n } from "../i18n";
 import { useToast } from "./ui";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, type ModelDraft } from "../lib/piModel";
-import { filterFixedGatewayProviders, validateGatewayJson } from "../lib/gatewayDiff";
+import { filterFixedGatewayDiff, filterFixedGatewayProviders, isFixedGatewayProvider, validateGatewayJson } from "../lib/gatewayDiff";
 import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { GatewayDiff, GatewayPreview, GatewaySelection, ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
@@ -87,7 +87,10 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     setRawText(JSON.stringify({ providers: nextDisplayed }, null, 2));
     setRawDraftDirty(false);
     setConflicts(preview.conflicts);
-    const diff = preview.diff;
+    // UI only reads the fixed gateway set: drop wild third-party keys from the
+    // displayed diff. pending_count/conflicts stay backend-canonical (wild is
+    // never counted by the backend for these fixed providers).
+    const diff = filterFixedGatewayDiff(preview.diff);
     setBackendDiff(diff);
     setBackendPending(preview.pending_count);
     setGroups(groupsFromServer);
@@ -236,7 +239,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       }
       const selection = !rawDraftDirty && groups.length > 0 ? checked : undefined;
       const hasCurrentGatewayModels = Object.entries(current ?? {}).some(([providerKey, entry]) => {
-        if (providerKey !== "pi-switch-res" && providerKey !== "pi-switch-chat") return false;
+        if (!isFixedGatewayProvider(providerKey)) return false;
         const models = asRecord(entry).models;
         return Array.isArray(models) && models.length > 0;
       });
@@ -253,7 +256,7 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
       if (preview.conflicts.length > 0) {
         setConflicts(preview.conflicts);
         setBackendPending(preview.pending_count);
-        setBackendDiff(preview.diff);
+        setBackendDiff(filterFixedGatewayDiff(preview.diff));
         throw new Error(preview.conflicts.join("; "));
       }
       await api.applyGateway({ providers: preview.proposed });

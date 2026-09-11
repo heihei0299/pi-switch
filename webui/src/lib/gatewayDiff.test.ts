@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectConflicts, diffGateway, validateGatewayJson } from "./gatewayDiff";
+import { detectConflicts, diffGateway, filterFixedGatewayDiff, filterFixedGatewayProviders, isFixedGatewayProvider, validateGatewayJson } from "./gatewayDiff";
 
 describe("gatewayDiff", () => {
   describe("diffGateway", () => {
@@ -54,6 +54,42 @@ describe("gatewayDiff", () => {
       const current = { "sup/chat": { api: "openai-completions", baseUrl: "http://a/v1", models: [] } };
       const proposed = { "sup/chat": { api: "openai-completions", baseUrl: "http://a/v1", models: [] } };
       expect(detectConflicts(current, proposed, ["sup/chat"])).toEqual([]);
+    });
+  });
+
+  describe("fixed provider filtering", () => {
+    it("recognizes only the gateway-owned provider keys", () => {
+      expect(isFixedGatewayProvider("pi-switch-chat")).toBe(true);
+      expect(isFixedGatewayProvider("pi-switch-res")).toBe(true);
+      expect(isFixedGatewayProvider("cpa")).toBe(false);
+      expect(isFixedGatewayProvider("oc/chat")).toBe(false);
+    });
+
+    it("keeps fixed providers and drops wild ones", () => {
+      const providers = {
+        "pi-switch-chat": { api: "openai-completions", models: [] },
+        cpa: { api: "openai-responses", models: [] },
+        "pi-switch-res": { api: "openai-responses", models: [] },
+      };
+      expect(Object.keys(filterFixedGatewayProviders(providers)).sort()).toEqual([
+        "pi-switch-chat",
+        "pi-switch-res",
+      ]);
+    });
+
+    it("drops wild entries from added/removed/changed without splitting keys", () => {
+      const diff = {
+        // fixed bare key + fixed composite, wild keys with slashes, and a wild
+        // key that merely *starts with* a fixed provider name
+        added: ["pi-switch-chat", "pi-switch-chat/m2", "cpa/ocg/muse-1.3", "pi-switch-chat-evil/x"],
+        removed: ["pi-switch-res/old", "sup/main/m1", "wild/with/many/slashes"],
+        changed: ["pi-switch-chat", "cpa", "oc/chat/m1"],
+      };
+      expect(filterFixedGatewayDiff(diff)).toEqual({
+        added: ["pi-switch-chat", "pi-switch-chat/m2"],
+        removed: ["pi-switch-res/old"],
+        changed: ["pi-switch-chat"],
+      });
     });
   });
 

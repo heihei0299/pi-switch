@@ -134,12 +134,36 @@ export interface ValidateResult {
 
 const SUPPORTED_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
 
+// Single source of truth for the providers this UI maintains. Mirrors the
+// backend predicate internal/gateway.IsFixedGatewayProvider.
+const FIXED_GATEWAY_PROVIDERS = ["pi-switch-res", "pi-switch-chat"] as const;
+
+// Each fixed provider only accepts one API shape.
+const FIXED_GATEWAY_API: Record<(typeof FIXED_GATEWAY_PROVIDERS)[number], string> = {
+  "pi-switch-res": "openai-responses",
+  "pi-switch-chat": "openai-completions",
+};
+
 export function isFixedGatewayProvider(key: string): boolean {
-  return key === "pi-switch-res" || key === "pi-switch-chat";
+  return (FIXED_GATEWAY_PROVIDERS as readonly string[]).includes(key);
 }
 
 export function filterFixedGatewayProviders(providers: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(providers).filter(([k]) => isFixedGatewayProvider(k)));
+}
+
+// Keep diff entries that belong to a fixed provider. The backend emits bare
+// provider keys, but the shared GatewayDiff shape also allows composite
+// `provider/model` entries, so match `key` or `key/...` instead of splitting
+// on "/" (model ids may legitimately contain slashes for wild providers).
+export function filterFixedGatewayDiff(diff: GatewayDiff): GatewayDiff {
+  const keepFixed = (entry: string) =>
+    FIXED_GATEWAY_PROVIDERS.some((provider) => entry === provider || entry.startsWith(`${provider}/`));
+  return {
+    added: diff.added.filter(keepFixed),
+    removed: diff.removed.filter(keepFixed),
+    changed: diff.changed.filter(keepFixed),
+  };
 }
 
 export function validateGatewayJson(text: string): ValidateResult {
@@ -175,11 +199,9 @@ export function validateGatewayJson(text: string): ValidateResult {
       if (!SUPPORTED_APIS.includes(api as string)) {
         return { ok: false, error: `gateway.providers[${key}].api is not supported: ${api}` };
       }
-      if (key === "pi-switch-res" && api !== "openai-responses") {
-        return { ok: false, error: `gateway.providers[${key}].api must be openai-responses` };
-      }
-      if (key === "pi-switch-chat" && api !== "openai-completions") {
-        return { ok: false, error: `gateway.providers[${key}].api must be openai-completions` };
+      const requiredApi = FIXED_GATEWAY_API[key as (typeof FIXED_GATEWAY_PROVIDERS)[number]];
+      if (requiredApi && api !== requiredApi) {
+        return { ok: false, error: `gateway.providers[${key}].api must be ${requiredApi}` };
       }
       const baseUrl = rec["baseUrl"];
       if (typeof baseUrl !== "string" || !baseUrl) {
