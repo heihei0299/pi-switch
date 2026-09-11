@@ -11,6 +11,10 @@ import (
 )
 
 // The provider key the draft uses; the plan and the payload must name the same one.
+//
+// Deliberately pinned as a literal instead of derived from
+// gateway.FixedGatewayProviders(): that list is exported for the WebUI, while a Go
+// test here has to fail loudly if the published key is renamed, not follow it.
 const draftGatewayProvider = "pi-switch-chat"
 
 // Every catalog field conflicts with the draft values used below, so any field that

@@ -164,16 +164,9 @@ func handlePutProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid profile: %v", err)})
 		return
 	}
-	// 业务规则只从 typed profile 判定（responsesMode 规则在 internal/protocol 唯一）。
-	if err := profile.ValidateResponsesMode(prof); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := profile.ValidateProviderProfile(prof); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := config.ValidateProviderRetry(prof); err != nil {
+	// 业务规则只有一份（internal/profile，规则本身在 internal/protocol 唯一）：
+	// PUT 是覆写而不是新建，所以复用 ValidateProfile 而不是 CreateProfile。
+	if err := profile.ValidateProfile(prof); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

@@ -8,6 +8,21 @@ import (
 	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
+// ValidateProfile is the whole business-rule gate for one profile, in the order the
+// surfaces report it: responsesMode compatibility, then shape, then retry knobs. It
+// is the single sequence behind CreateProfile (POST /api/profiles, `provider add`)
+// and PUT /api/profiles/:name, which overwrites instead of creating and therefore
+// cannot reuse CreateProfile itself.
+func ValidateProfile(p config.ProviderProfile) error {
+	if err := ValidateResponsesMode(p); err != nil {
+		return err
+	}
+	if err := ValidateProviderProfile(p); err != nil {
+		return err
+	}
+	return config.ValidateProviderRetry(p)
+}
+
 // ValidateResponsesMode rejects a responsesMode/api combination the proxy cannot
 // execute. It delegates to the one protocol rule; an empty mode is "auto".
 func ValidateResponsesMode(p config.ProviderProfile) error {

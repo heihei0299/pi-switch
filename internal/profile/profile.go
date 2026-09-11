@@ -18,13 +18,7 @@ func CreateProfile(name string, prof config.ProviderProfile) error {
 	if name == "" {
 		return errors.New("name required")
 	}
-	if err := ValidateResponsesMode(prof); err != nil {
-		return err
-	}
-	if err := ValidateProviderProfile(prof); err != nil {
-		return err
-	}
-	if err := config.ValidateProviderRetry(prof); err != nil {
+	if err := ValidateProfile(prof); err != nil {
 		return err
 	}
 	cfg, err := loadConfig()

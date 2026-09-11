@@ -3,6 +3,7 @@ package profile
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
@@ -43,6 +44,34 @@ func TestCreateProfilePersistsAndRejectsDuplicates(t *testing.T) {
 	}
 	if err := CreateProfile("p", provider()); err == nil {
 		t.Fatal("duplicate profile accepted")
+	}
+}
+
+// ValidateProfile is the one sequence both the create path (CreateProfile) and the
+// overwriting PUT path run, so it must surface all three rule classes with the order
+// the surfaces report them in.
+func TestValidateProfileCoversAllThreeRuleClasses(t *testing.T) {
+	if err := ValidateProfile(provider()); err != nil {
+		t.Fatalf("valid profile rejected: %v", err)
+	}
+
+	mode := provider()
+	mode.ResponsesMode = "passthrough"
+	if err := ValidateProfile(mode); err == nil || !strings.Contains(err.Error(), "responsesMode") {
+		t.Fatalf("responsesMode rule missing: %v", err)
+	}
+
+	shape := provider()
+	shape.Upstreams[0].BaseURL = "ftp://example.test"
+	if err := ValidateProfile(shape); err == nil || !strings.Contains(err.Error(), "upstreams baseUrl") {
+		t.Fatalf("shape rule missing: %v", err)
+	}
+
+	tooManyRetries := config.MaxRequestRetry + 1
+	retry := provider()
+	retry.RequestRetry = &tooManyRetries
+	if err := ValidateProfile(retry); err == nil || !strings.Contains(err.Error(), "requestRetry") {
+		t.Fatalf("retry rule missing: %v", err)
 	}
 }
 
