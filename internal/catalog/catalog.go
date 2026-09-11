@@ -213,7 +213,8 @@ func fillAbsentFloat(m map[string]interface{}, key string, val float64) bool {
 
 // FillMissing 只补缺失字段，已有值不覆盖，返回是否有目录数据补入。
 // 数值一律写 float64（JSON 域归一，避免与落盘 float64 序列化分叉）。
-//   - name 为空补；contextWindow/maxTokens 缺失或 0 且目录非 0 则补
+//   - name 缺键补（写下的空串是「明确没有名字」，不覆盖；非法类型由 validation 负责）
+//   - contextWindow/maxTokens 缺失或 0 且目录非 0 则补
 //     （这两个字段的 0 不表示任何模型配置，编辑器也拒收 0，故按未声明处理）
 //   - input 缺失或空补；reasoning 缺键则按目录值补（含 false）
 //   - cost 缺失整设（含显式 cacheWrite:0，保 pending 收敛）；已存在则按子字段补缺，
@@ -221,7 +222,7 @@ func fillAbsentFloat(m map[string]interface{}, key string, val float64) bool {
 //   - 存量 cost 缺 cacheWrite 键时补零归一（保 pending 收敛），该归一不计入返回值
 func FillMissing(entry map[string]interface{}, meta Meta) bool {
 	filled := false
-	if s, _ := entry["name"].(string); strings.TrimSpace(s) == "" && strings.TrimSpace(meta.Name) != "" {
+	if _, has := entry["name"]; !has && strings.TrimSpace(meta.Name) != "" {
 		entry["name"] = meta.Name
 		filled = true
 	}

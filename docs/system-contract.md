@@ -37,6 +37,15 @@
 | `exposedModels: null` | 非法配置；在 boundary 报出字段路径错误，不转换为 `[]` 或全部暴露 |
 | model `id` 缺失、`null` 或空字符串 | 非法模型项；不生成空 ID 行、不发布、不路由 |
 | model metadata 缺失或 `contextWindow`/`maxTokens` 为 0 | 保留可用的本地模型项；不伪造 context/maxTokens/cost；clamp 不重写请求中的三个 max key，cost 记为 unknown |
+| `PUT /api/config`（整文件写入） | 只拦 `responsesMode`（唯一会让每个请求都失败的东西）；不跑完整 profile validation |
+| Profile CRUD（`POST /api/profiles`、`PUT /api/profiles/:name`、CLI `provider add`） | 跑完整 `profile.ValidateProfile`：responsesMode → profile shape → retry |
+
+写入门的校验强度差异是**有意的**，不是遗漏：
+
+1. loader（`ParseConfig`/`LoadConfigAtPath`）只保证结构合法（JSON + version/current），不校验 profile——它决定「这份配置能不能跑」，必须容忍半成品与遗留 shape。
+2. 因此整文件门不得比 loader 更严：`PUT /api/config` 只额外拦会在请求期全面失败的 `responsesMode`（`internal/translator/registry.go` 的请求期兜底规则），其余交给 `GET /api/config/validate`（只报告、不阻断）。
+3. Profile CRUD 是「手写一个 profile」，可以也应该严格拒收。
+4. 若要收紧整文件门，必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 ### 2.3 Gateway
 
@@ -118,7 +127,8 @@
 | 无模型 metadata/context/maxTokens 不伪造，三个 max key 不重写 | §2.2 model metadata；§2.4.5 | IMP-02 | clamp nil/zero metadata tests | 无 metadata 的真实请求保持客户端 max 值且不触发本地伪造 |
 | models 文件不存在时 current 为空，publish 创建目录并原子写 | §2.3 models file | IMP-05 | golden/atomic write tests | 真实 models.json 副本首次 publish 可被 Pi 解析 |
 | models.json 损坏/不可读时读取边界报错而非空 current | §2.3 models file | IMP-05 | gateway read boundary tests | 损坏文件下 `GET /api/models/gateway` 返回 500，不返回 `gateway: null` |
-| Draft 路径只补缺，显式 draft metadata 不被 catalog 覆盖 | §2.3 catalog enrich | IMP-05；后续 IMP-06 | draft enrich tests（1048576 vs 111） | 编辑 metadata 后 publish 落盘值仍为编辑值 |
+| Draft 路径只补缺，显式 draft metadata 不被 catalog 覆盖 | §2.3 catalog enrich | IMP-05；后续 IMP-06 | draft enrich tests（1048576 vs 111；空 name / cost 0） | 编辑 metadata 后 publish 落盘值仍为编辑值 |
+| 整文件门不比 loader 严，Profile CRUD 严格 | §2.2 写入门 | IMP-05 | whole-file door tolerance test | 同一 profile：`PUT /api/config` 收下，`POST /api/profiles` 400 |
 | providers 缺失/null 不删除不存在的第三方 provider | §2.3 providers | IMP-05 | current-empty/preservation tests | 真实第三方 provider 字节/结构保留 |
 | fixed provider 无 exposed model 时不保留 stale entry | §2.3 fixed provider | IMP-05 | stale provider cleanup tests | 删除模型后重新 preview/publish 不复活 |
 | Gateway-owned model metadata 由 canonical merge 保留，显式 draft 优先 | §2.3 Gateway metadata | IMP-05；后续 IMP-06 | manual metadata preservation tests | publish 后再次 preview pending 为 0 |

@@ -78,6 +78,36 @@ func TestStrictConfig_MissingFileStillServesDefault(t *testing.T) {
 	}
 }
 
+// system-contract §2.2「写入门的校验强度差异是有意的」：整文件门保存的是 loader
+// 能加载、进程能运行的东西，所以它不得比 loader 更严；同一个 profile 走 Profile CRUD
+// 则必须被拒。这条测试把两侧一起钉住，防止有人"顺手统一"后把不对称换成
+// 「能被自己加载运行、却拒绝保存」。
+func TestPutConfig_WholeFileDoorStaysTolerant(t *testing.T) {
+	isolateConfig(t)
+	r := NewMgmtRouter()
+
+	// 形状不合格（upstream baseUrl 没有 scheme）：CRUD 会拒，整文件门必须收下。
+	prof := `{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","api":"openai-completions","baseUrl":"ftp://example.test","apiKey":"k","models":[{"id":"m1"}]}]}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(`{"version":2,"profiles":{"p":`+prof+`}}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT /api/config with an ftp upstream = %d, want 200 (the whole-file door must not be stricter than the loader): %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/profiles", strings.NewReader(`{"name":"p","profile":`+prof+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/profiles with the same profile = %d, want 400 (Profile CRUD stays strict): %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "baseUrl") {
+		t.Fatalf("CRUD rejection should name the offending field: %s", w.Body.String())
+	}
+}
+
 // ARCH-02: PUT /api/config parses the body into the typed config before it
 // persists, so a body the strict loader would reject can never be written, and
 // the save goes through the 0600 atomic writer.

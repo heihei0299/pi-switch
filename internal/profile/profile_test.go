@@ -42,8 +42,8 @@ func TestCreateProfilePersistsAndRejectsDuplicates(t *testing.T) {
 	if _, ok := cfg.Profiles["p"]; !ok {
 		t.Fatalf("profile not persisted: %+v", cfg.Profiles)
 	}
-	if err := CreateProfile("p", provider()); err == nil {
-		t.Fatal("duplicate profile accepted")
+	if err := CreateProfile("p", provider()); !errors.Is(err, ErrProfileExists) {
+		t.Fatalf("duplicate profile = %v, want ErrProfileExists (a plain errors.New would let callers fall back to string matching)", err)
 	}
 }
 
@@ -88,6 +88,9 @@ func TestDuplicateProfileErrorKinds(t *testing.T) {
 	}
 	if err := DuplicateProfile("p", "q"); err != nil {
 		t.Fatalf("duplicate: %v", err)
+	}
+	if err := DuplicateProfile("q", "q"); !errors.Is(err, ErrProfileExists) {
+		t.Fatalf("existing target = %v, want ErrProfileExists", err)
 	}
 }
 

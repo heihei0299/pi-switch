@@ -181,6 +181,25 @@ func TestGatewayDraft_StatedZeroCostIsAFreePrice(t *testing.T) {
 	}
 }
 
+// 后续审查 P2：显式清空 name 是「没有名字」，不是「没写 name」。
+// 键存在即已声明——写下的空串必须活下来，否则 catalog 会把用户清掉的显示名写回去。
+func TestGatewayDraft_StatedEmptyNameIsNotRefilled(t *testing.T) {
+	dir := t.TempDir()
+	draftEnrichFixture(t, dir)
+	r := NewMgmtRouter()
+
+	cleared := publishDraft(t, r, draftModel(map[string]interface{}{"name": ""}))
+	if name := firstGatewayModel(t, cleared)["name"]; name != "" {
+		t.Fatalf("name = %v, want the stated empty string (catalog's Flash X must not be written back)", name)
+	}
+
+	// 缺键仍是空缺：不写 name 的 draft 照旧从目录拿到显示名。
+	filled := publishDraft(t, r, draftModel(map[string]interface{}{}))
+	if name := firstGatewayModel(t, filled)["name"]; name != "Flash X" {
+		t.Fatalf("name = %v, want the catalog's Flash X (an absent key is a gap)", name)
+	}
+}
+
 func firstGatewayModel(t *testing.T, providers map[string]interface{}) map[string]interface{} {
 	t.Helper()
 	entry, ok := providers[draftGatewayProvider].(map[string]interface{})
