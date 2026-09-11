@@ -331,7 +331,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
       return {
         current: {},
         proposed: {
-          "sup/main": {
+          "pi-switch-chat": {
             api: "openai-completions",
             baseUrl: "http://127.0.0.1:43112/v1",
             models: selectedModels,
@@ -354,7 +354,7 @@ describe("GatewayPanel supplier/channel groups + secondary selection", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "sup/main/m2" })).toBeChecked());
 
     const secondToggle = preview.mock.calls[2][0] as any;
-    expect(secondToggle.draft.providers["sup/main"].models).toEqual(models);
+    expect(secondToggle.draft.providers["pi-switch-chat"].models).toEqual(models);
   });
 
   it("subset pending follows the selection", async () => {

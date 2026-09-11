@@ -11,7 +11,7 @@ describe("gateway preview/apply lifecycle placeholder", () => {
   });
 
   it("validateGatewayJson accepts valid gateway with models", () => {
-    const valid = { providers: { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } } };
+    const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ id: "m1" }], proxy: false } } };
     const res = validateGatewayJson(JSON.stringify(valid));
     expect(res.ok).toBe(true);
     expect(res.value).toEqual(valid);

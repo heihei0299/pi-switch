@@ -134,6 +134,14 @@ export interface ValidateResult {
 
 const SUPPORTED_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
 
+export function isFixedGatewayProvider(key: string): boolean {
+  return key === "pi-switch-res" || key === "pi-switch-chat";
+}
+
+export function filterFixedGatewayProviders(providers: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(providers).filter(([k]) => isFixedGatewayProvider(k)));
+}
+
 export function validateGatewayJson(text: string): ValidateResult {
   let value: unknown;
   try {
@@ -146,13 +154,16 @@ export function validateGatewayJson(text: string): ValidateResult {
     return { ok: false, error: "gateway must be an object" };
   }
   const obj = value as Record<string, unknown>;
-  // Providers wrapper: { providers: { "supplier/channel": { api, baseUrl, models } } }
+  // Providers wrapper: { providers: { ... } }
+  // ponytail: UI彻底不读野生第三方，只校验网关维护的固定集，后端合并保留野生的。
   if ("providers" in obj) {
     const provs = obj["providers"];
     if (typeof provs !== "object" || provs === null || Array.isArray(provs)) {
       return { ok: false, error: "gateway.providers must be an object" };
     }
+    const filtered: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(provs as Record<string, unknown>)) {
+      if (!isFixedGatewayProvider(key)) continue;
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         return { ok: false, error: `gateway.providers[${key}] must be object` };
       }
@@ -169,9 +180,6 @@ export function validateGatewayJson(text: string): ValidateResult {
       }
       if (key === "pi-switch-chat" && api !== "openai-completions") {
         return { ok: false, error: `gateway.providers[${key}].api must be openai-completions` };
-      }
-      if (key !== "pi-switch-res" && key !== "pi-switch-chat" && rec["apiKey"] === "pi-switch-proxy") {
-        return { ok: false, error: `gateway.providers[${key}] cannot use the pi-switch proxy identity` };
       }
       const baseUrl = rec["baseUrl"];
       if (typeof baseUrl !== "string" || !baseUrl) {
@@ -194,8 +202,9 @@ export function validateGatewayJson(text: string): ValidateResult {
           return { ok: false, error: `gateway.providers[${key}].models[${i}].id must not contain "/"` };
         }
       }
+      filtered[key] = entry;
     }
-    return { ok: true, value: obj };
+    return { ok: true, value: { ...obj, providers: filtered } };
   }
   return { ok: false, error: "gateway.providers is required" };
 }

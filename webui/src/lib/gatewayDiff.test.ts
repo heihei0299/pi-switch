@@ -71,32 +71,32 @@ describe("gatewayDiff", () => {
     });
 
     it("rejects invalid api", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "sup/chat": { api: "invalid", baseUrl: "http://a/v1", models: [] } } }));
+      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "invalid", baseUrl: "http://a/v1", models: [] } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/api/);
     });
 
     it("rejects invalid baseUrl", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "sup/chat": { api: "openai-completions", baseUrl: "not-a-url", models: [] } } }));
+      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "not-a-url", models: [] } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/baseUrl/);
     });
 
     it("rejects models not array", () => {
-      const res = validateGatewayJson(JSON.stringify({ providers: { "sup/chat": { api: "openai-completions", baseUrl: "http://a/v1", models: "bad" } } }));
+      const res = validateGatewayJson(JSON.stringify({ providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://a/v1", models: "bad" } } }));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/models/);
     });
 
     it("accepts valid gateway", () => {
-      const valid = { providers: { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", apiKey: "x", models: [{ id: "m" }], proxy: false } } };
+      const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", apiKey: "x", models: [{ id: "m" }], proxy: false } } };
       const res = validateGatewayJson(JSON.stringify(valid));
       expect(res.ok).toBe(true);
       expect(res.value).toEqual(valid);
     });
 
     it("rejects model without id", () => {
-      const valid = { providers: { "sup/chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ noId: 1 }] } } };
+      const valid = { providers: { "pi-switch-chat": { api: "openai-completions", baseUrl: "http://127.0.0.1:43112/v1", models: [{ noId: 1 }] } } };
       const res = validateGatewayJson(JSON.stringify(valid));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/id/);
@@ -105,7 +105,7 @@ describe("gatewayDiff", () => {
     it("accepts a providers wrapper with bare ids", () => {
       const valid = {
         providers: {
-          "sup/chat": {
+          "pi-switch-chat": {
             api: "openai-completions",
             baseUrl: "http://127.0.0.1:43112/v1",
             models: [{ id: "m1" }],
@@ -115,10 +115,10 @@ describe("gatewayDiff", () => {
       expect(validateGatewayJson(JSON.stringify(valid))).toEqual({ ok: true, value: valid });
     });
 
-    it("rejects slash in a provider model id", () => {
+    it("rejects slash in a fixed provider model id", () => {
       const invalid = {
         providers: {
-          "sup/chat": {
+          "pi-switch-chat": {
             api: "openai-completions",
             baseUrl: "http://127.0.0.1:43112/v1",
             models: [{ id: "sup/chat/m1" }],
@@ -128,6 +128,30 @@ describe("gatewayDiff", () => {
       const res = validateGatewayJson(JSON.stringify(invalid));
       expect(res.ok).toBe(false);
       expect(res.error).toMatch(/must not contain/);
+    });
+
+    it("ignores third-party providers entirely", () => {
+      const input = {
+        providers: {
+          cpa: {
+            api: "openai-responses",
+            baseUrl: "http://127.0.0.1:8317/v1",
+            models: [{ id: "ocg/muse-1.3" }],
+          },
+          "pi-switch-chat": {
+            api: "openai-completions",
+            baseUrl: "http://127.0.0.1:43112/v1",
+            models: [{ id: "m" }],
+          },
+        },
+      };
+      const res = validateGatewayJson(JSON.stringify(input));
+      expect(res.ok).toBe(true);
+      expect(res.value).toEqual({
+        providers: {
+          "pi-switch-chat": input.providers["pi-switch-chat"],
+        },
+      });
     });
   });
 });

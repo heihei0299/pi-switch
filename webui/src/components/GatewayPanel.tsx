@@ -5,7 +5,7 @@ import { useI18n } from "../i18n";
 import { useToast } from "./ui";
 import { mutateAfterGatewayPublish } from "../store/swr";
 import { draftFromEntry, modelPreview, type ModelDraft } from "../lib/piModel";
-import { validateGatewayJson } from "../lib/gatewayDiff";
+import { filterFixedGatewayProviders, validateGatewayJson } from "../lib/gatewayDiff";
 import { addUncheckedId, loadUncheckedIds, removeUncheckedId } from "../lib/gatewayUnchecked";
 import type { GatewayDiff, GatewayPreview, GatewaySelection, ModelEntry, PreviewGroup } from "../types";
 import { JsonEditor } from "./JsonEditor";
@@ -73,8 +73,8 @@ export function GatewayPanel({ refresh }: { refresh: () => Promise<void> }) {
     checkedOverride?: Set<string>,
     view: "current" | "proposed" = "proposed",
   ) => {
-    const cur = preview.current;
-    const prop = preview.proposed;
+    const cur = filterFixedGatewayProviders(asRecord(preview.current));
+    const prop = filterFixedGatewayProviders(asRecord(preview.proposed));
     const groupsFromServer = preview.groups;
     const removedArr = preview.removed ?? [];
     const nextProposed = prop ?? {};
