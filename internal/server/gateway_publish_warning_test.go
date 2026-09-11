@@ -182,3 +182,76 @@ func TestGatewayPublish_WarningCarriesNoCredential(t *testing.T) {
 		t.Fatalf("the shared password was published into models.json: %s", raw)
 	}
 }
+
+// H5: the hazard is "a client reads one of OUR providers out of models.json and calls
+// the exposed proxy". A plan that publishes no pi-switch provider at all cannot produce
+// that 401 — here nothing is exposed, so the only entry is a hand-kept third-party
+// provider — and warning about it would be noise that also misdescribes what was
+// published.
+func TestGatewayPublish_StaysQuietWithoutOwnProviders(t *testing.T) {
+	publishableConfigWithoutExposedModels(t, "0.0.0.0")
+	r := NewMgmtRouter()
+
+	// Empty body: the generated flow, whose plan is built from config alone.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/gateway/publish", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	if warnings := warningsOf(t, w); len(warnings) != 0 {
+		t.Fatalf("a plan publishing no pi-switch provider warned about authentication: %v", warnings)
+	}
+	// The plan was not empty: the third-party entry really was published, so the
+	// silence above is the judgement, not a publish that did nothing.
+	raw, err := os.ReadFile(os.Getenv("PI_SWITCH_MODELS"))
+	if err != nil {
+		t.Fatalf("models.json not written: %v", err)
+	}
+	if !strings.Contains(string(raw), "third-party") {
+		t.Fatalf("the third-party entry was not published: %s", raw)
+	}
+	if strings.Contains(string(raw), `"pi-switch-chat"`) {
+		t.Fatalf("the fixture published a pi-switch provider: %s", raw)
+	}
+}
+
+// H6: the judgement does not read the apiKey value. A hand-edited fixed provider with a
+// real key reaches the client as `Authorization: Bearer <that key>`, and the exposed
+// proxy still answers 401, so it must warn exactly like the placeholder does.
+func TestGatewayPublish_WarnsWhateverTheFixedEntryKeySays(t *testing.T) {
+	publishableConfigWithProxyHost(t, "0.0.0.0")
+	retargeted := strings.Replace(publishPayload, `"apiKey":"pi-switch-proxy"`, `"apiKey":"sk-real"`, 1)
+	if retargeted == publishPayload {
+		t.Fatal("fixture changed: publishPayload no longer carries the placeholder key")
+	}
+	r := NewMgmtRouter()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/models/gateway", strings.NewReader(retargeted))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	assertAuthWarning(t, w)
+}
+
+// publishableConfigWithoutExposedModels is publishableConfigWithProxyHost with zero
+// exposure, plus the third-party provider a real models.json may already carry: the
+// generated plan then publishes that entry and none of pi-switch's own.
+func publishableConfigWithoutExposedModels(t *testing.T, proxyHost string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgJSON := `{"version":2,"profiles":{
+		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","upstreams":[
+			{"name":"main","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}]}]}},
+		"settings":{"providerPrefix":"pi-switch","gatewayApi":"openai-completions","proxy":{"host":"` + proxyHost + `","port":43112}}}`
+	writeChannelConfig(t, dir, cfgJSON)
+	modelsPath := filepath.Join(dir, "models.json")
+	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+	if err := os.WriteFile(modelsPath, []byte(`{"providers":{"third-party":{"api":"openai-completions","baseUrl":"https://third.example/v1","apiKey":"sk-real","models":[{"id":"m1"}]}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+}

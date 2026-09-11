@@ -144,20 +144,51 @@ func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]
 //
 // Only pi-switch's own providers are judged: a third-party provider the plan
 // carries over from models.json publishes someone else's endpoint, so where it
-// points says nothing about this proxy's authentication.
+// points says nothing about this proxy's authentication. That also means the caveat
+// needs at least one pi-switch provider to be part of what the plan publishes: a
+// plan that publishes none of them (every model unexposed, or a hand-kept
+// third-party provider as the only entry) cannot produce the 401 this warns about,
+// so it stays silent instead of complaining about entries pi-switch does not own.
+//
+// The entry's apiKey value is deliberately not part of the judgement. A Pi client
+// sends whatever sits in that field as a Bearer token, so a hand-edited fixed
+// provider carrying a real key gets the same 401 a placeholder-keyed one gets: the
+// hazard is the provider, not the literal placeholder. The reverse case needs no
+// handling — ValidateProposedGateway rejects any non-fixed provider whose apiKey is
+// the placeholder ("unsupported third pi-switch provider"), so the only placeholder
+// entries that can ever be published are the two fixed ones.
 //
 // Residual limit: a proxy started with a --host that differs from the configured one
 // is invisible here; the running daemon's host would be the exact source.
 func PublishedAuthCaveat(cfg config.PiSwitchConfig, published map[string]interface{}) string {
+	if !publishesFixedGatewayProvider(published) {
+		return ""
+	}
 	if !IsLoopback(cfg.Settings.Proxy.Host) || planReachesLan(published) {
 		return publishedAuthCaveatText
 	}
 	return ""
 }
 
+// publishesFixedGatewayProvider reports whether the plan publishes one of pi-switch's
+// own providers — the only entries a client reads from models.json and calls against
+// this proxy.
+func publishesFixedGatewayProvider(published map[string]interface{}) bool {
+	providers, _ := published["providers"].(map[string]interface{})
+	for key := range providers {
+		if gateway.IsFixedGatewayProvider(key) {
+			return true
+		}
+	}
+	return false
+}
+
 // publishedAuthCaveatText is the single copy of the operator-facing wording, shared
-// by the HTTP responses and `pi-switch gateway publish`.
-const publishedAuthCaveatText = `the proxy is exposed beyond loopback, so its /v1 surface requires HTTP Basic authentication, but the published providers carry "apiKey": "pi-switch-proxy", which clients send as a Bearer token — such clients get 401. Bind the proxy to loopback, or use a client that can send Basic.`
+// by the HTTP responses and `pi-switch gateway publish`. It describes the mechanism
+// rather than naming the placeholder: the judgement deliberately still warns for a
+// hand-edited fixed provider carrying a real key, where claiming the published
+// entries carry `apiKey: pi-switch-proxy` would misdescribe what was published.
+const publishedAuthCaveatText = `the proxy is exposed beyond loopback, so its /v1 surface requires HTTP Basic authentication, while clients reach the published pi-switch providers with a Bearer token — such clients get 401. Bind the proxy to loopback, or use a client that can send Basic.`
 
 // planReachesLan reports whether any published pi-switch entry points a client at a
 // host beyond loopback. The empty host and an unparsable URL are skipped: an entry
