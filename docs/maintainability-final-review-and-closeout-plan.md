@@ -303,12 +303,12 @@ validator interface
 至少增加：
 
 ```text
-[ ] CreateProfile flat google-generative-ai → error
-[ ] CreateProfile flat unknown-api → error
-[ ] CreateProfile flat openai-responses → allow
-[ ] POST /api/profiles flat google-generative-ai → 400
-[ ] PUT /api/profiles/:name flat google-generative-ai → 400
-[ ] CLI provider add --api google-generative-ai without --base-url → non-zero
+[x] CreateProfile flat google-generative-ai → error
+[x] CreateProfile flat unknown-api → error
+[x] CreateProfile flat openai-responses → allow
+[x] POST /api/profiles flat google-generative-ai → 400
+[x] PUT /api/profiles/:name flat google-generative-ai → 400
+[x] CLI provider add --api google-generative-ai without --base-url → non-zero
 ```
 
 其中核心 domain test 优先，HTTP/CLI 可按已有测试结构选择最小覆盖。
@@ -408,19 +408,19 @@ selected option disabled == true
 检查：
 
 ```text
-[ ] PUT /api/config 拒绝 CanProxy=false
-[ ] Profile CRUD flat path 也拒绝 CanProxy=false
-[ ] Profile CRUD flat unknown API 被拒绝
-[ ] channel Profile 仍按 ValidateUpstreamAPI 校验
-[ ] /api/config/validate 仍能诊断旧配置
-[ ] Preset 仍只提供可代理 API
-[ ] WebUI known unsupported API 显示但 disabled
-[ ] WebUI unknown API 显示但 disabled
-[ ] capability source 仍只有 internal/protocol
-[ ] Gateway 仍复用 Upstream.EffectiveAPI
-[ ] ProfileIssues 没有复制
-[ ] 没有新增 service/interface/registry
-[ ] system-contract 无重复条目
+[x] PUT /api/config 拒绝 CanProxy=false
+[x] Profile CRUD flat path 也拒绝 CanProxy=false
+[x] Profile CRUD flat unknown API 被拒绝
+[x] channel Profile 仍按 ValidateUpstreamAPI 校验
+[x] /api/config/validate 仍能诊断旧配置
+[x] Preset 仍只提供可代理 API
+[x] WebUI known unsupported API 显示但 disabled
+[x] WebUI unknown API 显示但 disabled
+[x] capability source 仍只有 internal/protocol
+[x] Gateway 仍复用 Upstream.EffectiveAPI
+[x] ProfileIssues 没有复制
+[x] 没有新增 service/interface/registry
+[x] system-contract 无重复条目
 ```
 
 ---
@@ -449,13 +449,14 @@ STOP
 满足：
 
 ```text
-[ ] Config door 与 Profile CRUD capability 一致
-[ ] flat profile 不再绕过 IsKnown / CanProxy
-[ ] UI 不提供服务端必拒绝的可选 API
-[ ] advisory 继续能诊断历史坏配置
-[ ] capability matrix 保持有效
-[ ] contract 与实现一致
-[ ] 没有新架构层
+[x] Config door 与 Profile CRUD capability 一致（例外：profile 既无 channel 又无 baseUrl/apiKey/headers
+    时整文件门不进入判定——该形状不可路由；CRUD 门与 advisory 门仍拒收。已记入 system-contract §2.2 第 2 条）
+[x] flat profile 不再绕过 IsKnown / CanProxy（三个授权门；`duplicate` 是逐字复制、不做判定，见 §11）
+[x] UI 不提供服务端必拒绝的可选 API
+[x] advisory 继续能诊断历史坏配置
+[x] capability matrix 保持有效
+[x] contract 与实现一致
+[x] 没有新架构层
 ```
 
 即可正式标记：
@@ -503,5 +504,13 @@ WebUI 大规模重构
 §7 最终验证清单全部通过：`PUT /api/config` capability matrix、Profile CRUD flat 路径、channel Profile 仍走 `ValidateUpstreamAPI`、advisory 仍能诊断旧配置、Preset 仍只提供可代理 API、WebUI 两种不可用值均 disabled、capability 单一来源仍为 `internal/protocol`、Gateway 仍复用 `Upstream.EffectiveAPI`、`ProfileIssues` 未复制、未新增 service/interface/registry、system-contract 无重复条目。
 
 同类项（已一并处理）：`ProfilesPanel.tsx` 的 responsesMode fallback option 原先也没有 `disabled`，现按同一原则加上。一处诚实修正：它比 api 那个弱——`saveLocal` 先用 `responsesModeError`/`allowedResponsesModes` 拦下保存（客户端给出「passthrough requires openai-responses」这类话术），旧 mode 到不了服务端；而 api 那项此前没有任何客户端规则，unknown 值会一路走到 400。所以这一项是「不提供写入口必拒的可选项」的一致性对齐，不是补一个真实漏洞。
+
+后续 code review（双轴：Standards + Spec；基准 `3a88157`）记录的两处例外与一处未采纳项：
+
+- **两门之间有意保留的差异**：profile 既无 channel 又无 baseUrl/apiKey/headers 时，整文件门按 `ResolvedUpstreams()` 判定、因此不进入 capability 判定（该形状没有任何 channel，route resolution 与 `/v1/models` 都不遍历它，本来就不可路由），而 CRUD 门与 advisory 门仍按 profile 顶层 api 拒收。已写进 system-contract §2.2 第 2 条，不再声称两门字面一致。
+- **未纳入的授权门**：`duplicate`（`POST /api/profiles/:name/duplicate`、`provider duplicate`）逐字复制既有 profile、不做 capability 判定；它的源只可能来自磁盘上的遗留/手工配置（三个授权门已拒收该形状），且 advisory 会报出来，故本轮不改。
+- **未采纳**：合并两个 capability matrix 测试——两份手写策略 map 是刻意的「新增 API 必须显式决策」守卫，合并会把两个门的期望耦合到一处。
+
+以上均不构成「继续修」的理由：按 §10，除非出现真实维护问题，本轮到此为止。
 
 > **maintainability initiative CLOSED**

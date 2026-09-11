@@ -77,11 +77,12 @@ func TestValidateProfileCoversAllThreeRuleClasses(t *testing.T) {
 }
 
 // A flat profile (no channels) *is* the effective pair, so the create path must
-// judge it by the same capability rule the whole-file config door applies:
-// unknown api rejected, known-but-unproxyable rejected, proxyable accepted.
-// The rule used to live only inside ProfileIssues' channel loop, so an absent
-// `upstreams` meant no verdict at all on this door — a flat google profile was
-// stored even though every request through it fails.
+// judge it by the same capability rule the other doors apply — protocol.CanProxy
+// through config.ValidateEffectiveChannelAPI: unknown api rejected,
+// known-but-unproxyable rejected, proxyable accepted. That rule used to be
+// reached only via ProfileIssues' channel loop (config.ValidateUpstreamAPI), so
+// an absent `upstreams` meant no verdict at all on this door — a flat google
+// profile was stored even though every request through it fails.
 func TestCreateProfileFlatProfileObeysCapabilityContract(t *testing.T) {
 	isolate(t)
 	flat := func(api string) config.ProviderProfile {
