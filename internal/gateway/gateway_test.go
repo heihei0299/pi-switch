@@ -501,3 +501,75 @@ func TestPublishRejectsInvalidCanonicalPlanWithoutWrite(t *testing.T) {
 		t.Fatalf("models.json changed after rejected publish: %s", got)
 	}
 }
+
+// ARCH-03: generated and draft planning are explicit entry points. A generated
+// plan may backfill published Gateway metadata (a hand-edited name/limit); a
+// draft owns its explicit values and must not be overwritten by them.
+func TestGeneratedPlanPreservesPublishedMetadataDraftDoesNot(t *testing.T) {
+	cfg := config.PiSwitchConfig{
+		Profiles: map[string]config.ProviderProfile{
+			"sup": {Upstreams: []config.Upstream{{
+				Name: strptr("main"), API: "openai-completions",
+				Models:        []config.ModelEntry{{ID: "m1", ContextWindow: 100, MaxTokens: 10, Name: strptr("ConfigName")}},
+				ExposedModels: []string{"m1"},
+			}}},
+		},
+	}
+	cfg.Settings.Proxy.Host = "127.0.0.1"
+	cfg.Settings.Proxy.Port = 43112
+	current := map[string]interface{}{"providers": map[string]interface{}{
+		gatewayChatProvider: map[string]interface{}{
+			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
+			"models": []interface{}{map[string]interface{}{
+				"id": "m1", "contextWindow": float64(999), "maxTokens": float64(99), "name": "PublishedName",
+			}},
+		},
+	}}
+
+	generated := BuildGeneratedPlan(cfg, current)
+	if len(generated.Conflicts) != 0 {
+		t.Fatalf("generated plan conflicts = %v", generated.Conflicts)
+	}
+	genModel := modelByID(t, generated.Proposed, "m1")
+	if genModel["name"] != "PublishedName" || genModel["contextWindow"] != float64(999) {
+		t.Fatalf("generated plan must preserve published metadata: %#v", genModel)
+	}
+
+	draft := map[string]interface{}{"providers": map[string]interface{}{
+		gatewayChatProvider: map[string]interface{}{
+			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
+			"models": []interface{}{map[string]interface{}{
+				"id": "m1", "contextWindow": float64(111), "maxTokens": float64(11), "name": "DraftName",
+			}},
+		},
+	}}
+	drafted := BuildDraftPlan(cfg, current, draft)
+	if len(drafted.Conflicts) != 0 {
+		t.Fatalf("draft plan conflicts = %v", drafted.Conflicts)
+	}
+	draftModel := modelByID(t, drafted.Proposed, "m1")
+	if draftModel["name"] != "DraftName" || draftModel["contextWindow"] != float64(111) {
+		t.Fatalf("draft plan must keep its explicit values: %#v", draftModel)
+	}
+
+	// A nil draft is an empty draft, not a request to build the generated plan.
+	if got := BuildDraftPlan(cfg, current, nil); len(got.Conflicts) == 0 {
+		t.Fatal("nil draft must conflict instead of falling back to the generated plan")
+	}
+}
+
+func modelByID(t *testing.T, gateway map[string]interface{}, id string) map[string]interface{} {
+	t.Helper()
+	providers, ok := getProviders(gateway)[gatewayChatProvider].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing %s provider in %#v", gatewayChatProvider, gateway)
+	}
+	for _, raw := range providers["models"].([]interface{}) {
+		model, ok := raw.(map[string]interface{})
+		if ok && model["id"] == id {
+			return model
+		}
+	}
+	t.Fatalf("model %q not found in %#v", id, gateway)
+	return nil
+}

@@ -878,14 +878,10 @@ func cloneGatewayMap(input map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
-func buildCanonicalProposedGateway(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) map[string]interface{} {
-	proposed := cloneGatewayMap(edited)
-	if proposed == nil {
-		proposed = BuildProposedGatewayEntry(cfg)
-	}
+func buildCanonicalProposedGateway(cfg config.PiSwitchConfig, current, proposed map[string]interface{}, preservePublishedMetadata bool) map[string]interface{} {
 	// A submitted draft owns its explicit name; a fresh canonical proposal
 	// reuses the name from the last published Gateway metadata.
-	merged := mergeGatewayExtra(current, proposed, managedProviderKeys(cfg), preservePublishedMetadata)
+	merged := mergeGatewayExtra(current, cloneGatewayMap(proposed), managedProviderKeys(cfg), preservePublishedMetadata)
 	curProvs := getProviders(current)
 	propProvs := getProviders(merged)
 	if propProvs == nil {
@@ -982,23 +978,49 @@ func validateThirdPartyEdits(cfg config.PiSwitchConfig, current, edited map[stri
 	return nil
 }
 
-// BuildCanonicalGatewayPlan derives every publish-facing view from one normalized proposed gateway.
-func BuildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}) CanonicalGatewayPlan {
-	return buildCanonicalGatewayPlan(cfg, current, edited, edited == nil)
+// BuildGeneratedPlan builds the canonical plan for a Gateway generated from
+// config alone. No user draft exists, so published Gateway metadata stays
+// authoritative wherever the config does not speak. current may be nil.
+func BuildGeneratedPlan(cfg config.PiSwitchConfig, current map[string]interface{}) CanonicalGatewayPlan {
+	return buildCanonicalGatewayPlan(cfg, current, BuildProposedGatewayEntry(cfg), true)
 }
 
-// BuildCanonicalGatewayPlanWithPublishedMetadata is used when the server has
-// enriched a generated proposal but still needs current Gateway-owned metadata
-// (for example a hand-edited model name or limit) to remain authoritative.
+// BuildDraftPlan builds the canonical plan for a user-edited draft. The draft is
+// the source of truth for its explicit values, so published metadata is not
+// imposed on it. A nil draft is an empty draft (and conflicts with "providers is
+// required"), never a request to fall back to the generated plan.
+func BuildDraftPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) CanonicalGatewayPlan {
+	if draft == nil {
+		draft = map[string]interface{}{}
+	}
+	return buildCanonicalGatewayPlan(cfg, current, draft, false)
+}
+
+// Deprecated: use BuildGeneratedPlan for generated proposals and BuildDraftPlan
+// for user drafts. This shim only exists while the entry points migrate.
+func BuildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}) CanonicalGatewayPlan {
+	if edited == nil {
+		return BuildGeneratedPlan(cfg, current)
+	}
+	return BuildDraftPlan(cfg, current, edited)
+}
+
+// Deprecated: use BuildGeneratedPlan / BuildDraftPlan.
 func BuildCanonicalGatewayPlanWithPublishedMetadata(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
+	if edited == nil {
+		if preservePublishedMetadata {
+			return BuildGeneratedPlan(cfg, current)
+		}
+		edited = map[string]interface{}{}
+	}
 	return buildCanonicalGatewayPlan(cfg, current, edited, preservePublishedMetadata)
 }
 
-func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
+func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, submitted map[string]interface{}, preservePublishedMetadata bool) CanonicalGatewayPlan {
 	if current == nil {
 		current = emptyGatewayWrapper()
 	}
-	proposed := buildCanonicalProposedGateway(cfg, current, edited, preservePublishedMetadata)
+	proposed := buildCanonicalProposedGateway(cfg, current, submitted, preservePublishedMetadata)
 	added, removed, changed := DiffGateway(current, proposed)
 	sort.Strings(added)
 	sort.Strings(removed)
@@ -1014,13 +1036,13 @@ func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, edited map[st
 	}
 	diagnostics := BuildGatewayDiagnostics(cfg)
 	conflicts := []string{}
-	if err := validateGatewayDraft(edited); err != nil {
+	if err := validateGatewayDraft(submitted); err != nil {
 		conflicts = append(conflicts, err.Error())
 	}
 	if err := ValidateProposedGateway(cfg, proposed); err != nil {
 		conflicts = append(conflicts, err.Error())
 	}
-	if err := validateThirdPartyEdits(cfg, current, edited); err != nil {
+	if err := validateThirdPartyEdits(cfg, current, submitted); err != nil {
 		conflicts = append(conflicts, err.Error())
 	}
 	groups, previewRemoved := BuildPreviewGroups(cfg, current, proposed)
