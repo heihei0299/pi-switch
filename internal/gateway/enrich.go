@@ -14,7 +14,7 @@ import (
 func BuildEnrichedGeneratedPlan(cfg config.PiSwitchConfig, current map[string]interface{}) (CanonicalGatewayPlan, catalog.EnrichSummary) {
 	proposal := BuildProposedGatewayEntry(cfg)
 	summary := EnrichProposedModels(cfg, proposal)
-	return BuildGeneratedPlanFromProposal(cfg, current, proposal), summary
+	return buildGeneratedPlanFromProposal(cfg, current, proposal), summary
 }
 
 // EnrichProposedModels fills gateway proposed models from the models.dev snapshot.

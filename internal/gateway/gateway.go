@@ -982,13 +982,13 @@ func validateThirdPartyEdits(cfg config.PiSwitchConfig, current, edited map[stri
 // config alone. No user draft exists, so published Gateway metadata stays
 // authoritative wherever the config does not speak. current may be nil.
 func BuildGeneratedPlan(cfg config.PiSwitchConfig, current map[string]interface{}) CanonicalGatewayPlan {
-	return BuildGeneratedPlanFromProposal(cfg, current, BuildProposedGatewayEntry(cfg))
+	return buildGeneratedPlanFromProposal(cfg, current, BuildProposedGatewayEntry(cfg))
 }
 
-// BuildGeneratedPlanFromProposal is BuildGeneratedPlan over an already-built
-// (and possibly enriched) generated proposal, so the derived diff/conflict/group
-// views are computed from exactly the proposal the caller will publish.
-func BuildGeneratedPlanFromProposal(cfg config.PiSwitchConfig, current, proposal map[string]interface{}) CanonicalGatewayPlan {
+// buildGeneratedPlanFromProposal is BuildGeneratedPlan over an already-built (and
+// possibly enriched) proposal, so the derived diff/conflict/group views are
+// computed from exactly the proposal the caller will publish.
+func buildGeneratedPlanFromProposal(cfg config.PiSwitchConfig, current, proposal map[string]interface{}) CanonicalGatewayPlan {
 	return buildCanonicalGatewayPlan(cfg, current, proposal, true)
 }
 
