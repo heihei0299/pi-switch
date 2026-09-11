@@ -97,6 +97,30 @@ func TestWaitForHealth_DoesNotSkipALiveChild(t *testing.T) {
 	}
 }
 
+// F3b: the wiring, not just the predicate.
+//
+// waitForHealth is covered directly above, but what the review found missing is
+// Start's own plumbing: spawn → Wait goroutine → early exit. This runs the real path
+// against a child that exits immediately (see TestMain), which is the case a pure
+// unit test cannot reach — and the case my first attempt got wrong while its unit test
+// passed.
+func TestStart_ReturnsQuicklyWhenItsChildDiesOnStartup(t *testing.T) {
+	isolatedDaemonDir(t)
+
+	started := time.Now()
+	_, err := Start(Proxy, "127.0.0.1", freePort(t))
+	elapsed := time.Since(started)
+
+	if err == nil {
+		t.Fatal("Start reported success although its child exited immediately")
+	}
+	// Without the Wait-goroutine signal this waits out all 15 attempts (≈3s here, up
+	// to ≈18s when probes time out), which is what the bound catches.
+	if elapsed > 2*time.Second {
+		t.Fatalf("Start waited out the health window (%s) for a child that was already gone: %v", elapsed, err)
+	}
+}
+
 // F3: the port-in-use condition is a typed error, so callers stop matching text.
 // The condition is injected through the daemon log, which is what Start inspects —
 // the same fixture shape the server-level test already used.

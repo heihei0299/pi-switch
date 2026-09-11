@@ -313,19 +313,17 @@ const startHealthAttempts = 15
 // held) cannot start answering later, so the remaining attempts only make the
 // operator wait. The failure is already determined in milliseconds.
 //
-// `exited` is closed by the Wait goroutine in Start, and it is the only reliable
-// signal: liveness must NOT be derived from the pid. Verified on this machine —
+// `exited` is closed by the Wait goroutine in Start (never nil at the only call
+// site), and it is the only reliable signal: liveness must NOT be derived from the pid. Verified on this machine —
 // after a child exits without being waited for, `ps -o stat=` reports `Z` while
 // `kill -0 <pid>` still succeeds, so a pid-based check calls a dead daemon alive
 // and the early exit never fires.
 func waitForHealth(info DaemonInfo, exited <-chan struct{}) bool {
 	for attempt := 0; attempt < startHealthAttempts; attempt++ {
-		if exited != nil {
-			select {
-			case <-exited:
-				return false
-			default:
-			}
+		select {
+		case <-exited:
+			return false
+		default:
 		}
 		if managedHealth(info, 1) {
 			return true
@@ -517,7 +515,11 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		removePidFile(s)
 		return DaemonResult{}, fmt.Errorf("cannot finalize daemon state: %w", err)
 	}
-	_ = cmd.Process.Release()
+	// Process.Release is deliberately NOT called: it is documented as the alternative
+	// to Wait, and the Wait goroutine above now owns the child. Measured both orders —
+	// when Wait has already started it survives Release, but Release *before* Wait makes
+	// Wait return within microseconds with `invalid argument`, which would close the
+	// `exited` channel while the daemon is still running.
 	msg := fmt.Sprintf("%s daemon started (PID %d) on http://%s:%d", s.Label, pid, host, port)
 	return DaemonResult{Running: true, Pid: &pid, Host: &host, Port: &port, StartedAt: &now, Message: msg}, nil
 }

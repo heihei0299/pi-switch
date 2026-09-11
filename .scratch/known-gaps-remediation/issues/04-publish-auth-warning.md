@@ -33,4 +33,12 @@ webui 与 proxy，警告可能与代理面的真实姿态不符——但它只�
 - [ ] 两个 README 记录该限制
 - [ ] 既有 publish 行为（成功写盘、冲突 400）不变
 
+**勘误（2026-09-11，`review-remediation/08`）**：本票在 spec 的验收框里写「`webui/src/api.ts`
+的 `proxyStart` 无调用点（已核）」——**假的**。`webui/src/components/ProxyPanel.tsx:66` 调用它；
+我当时 grep 的是错误的标识符（`startProxy`，实际叫 `proxyStart`）。
+可达性：清空 host 输入框后点 Start → body 变成 `{"host":""}` → 命中该分支（今日返回 501）。
+前端影响：`webui/src/api.ts:75` 对**对象型** `error` 退回用 `res.statusText`，故用户看到
+"Not Implemented"，可操作的 message 在 UI 里不可见（其余 7 个 501 端点同理）。
+正解是让前端读 `error.message`，改它需跑 tsc/vitest，列为后续项。
+
 **测试**：`internal/server/gateway_publish_warning_test.go`

@@ -31,35 +31,41 @@ func gatewayPublishConfig(t *testing.T, proxyHost string) {
 
 // W1: a proxy configured beyond loopback makes the command warn, and still publish.
 func TestHandleGatewayCLI_PublishWarnsWhenProxyIsBeyondLoopback(t *testing.T) {
-	gatewayPublishConfig(t, "192.168.1.5")
+	// "0.0.0.0" and "" are the review's counter-example: the published baseUrl is
+	// rewritten to 127.0.0.1, so a check that reads only the plan stays silent while
+	// the proxy really is exposed (and its published provider answers 401).
+	// The empty host is absent on purpose: the config loader normalizes it to
+	// 127.0.0.1, so it cannot express "every interface" here (only a runtime --host ""
+	// can, which the config does not record).
+	for _, host := range []string{"192.168.1.5", "0.0.0.0", "::"} {
+		t.Run("proxy.host="+host, func(t *testing.T) {
+			gatewayPublishConfig(t, host)
 
-	code, _, errOut := runCLIStreams(t, func() int {
-		handleGatewayCLI([]string{"publish"})
-		return 0
-	})
+			_, _, errOut := runCLIStreams(t, func() int {
+				handleGatewayCLI([]string{"publish"})
+				return 0
+			})
 
-	// handleGatewayCLI exits the process on failure, so reaching this point means it
-	// did not; the side effect is asserted separately.
-	if code != 0 {
-		t.Fatalf("publish exit = %d (%q)", code, errOut)
-	}
-	if _, err := os.Stat(os.Getenv("PI_SWITCH_MODELS")); err != nil {
-		t.Fatalf("publish did not write models.json: %v", err)
-	}
-	if !strings.Contains(errOut, "warning:") {
-		t.Fatalf("publishing to a proxy at 192.168.1.5 said nothing about authentication: %q", errOut)
-	}
-	for _, want := range []string{"Basic", "Bearer", "192.168.1.5"} {
-		if !strings.Contains(errOut, want) {
-			t.Fatalf("the warning does not mention %q: %q", want, errOut)
-		}
+			if _, err := os.Stat(os.Getenv("PI_SWITCH_MODELS")); err != nil {
+				t.Fatalf("publish did not write models.json: %v", err)
+			}
+			if !strings.Contains(errOut, "warning:") {
+				t.Fatalf("publishing for a proxy at %q said nothing about authentication: %q", host, errOut)
+			}
+			for _, want := range []string{"Basic", "Bearer"} {
+				if !strings.Contains(errOut, want) {
+					t.Fatalf("the warning does not mention %q: %q", want, errOut)
+				}
+			}
+		})
 	}
 }
 
-// W2: the default (loopback) deployment stays quiet, and the wildcard host is
-// rewritten by the gateway package, not warned about as a remote address.
+// W2: a loopback proxy stays quiet. The wildcard and empty hosts used to be listed
+// here as "loopback" — that reading was wrong (they listen on every interface) and it
+// hid the case the ticket is about, so they now belong to W1.
 func TestHandleGatewayCLI_PublishStaysQuietOnLoopback(t *testing.T) {
-	for _, host := range []string{"127.0.0.1", "0.0.0.0", ""} {
+	for _, host := range []string{"127.0.0.1", "::1"} {
 		t.Run("host="+host, func(t *testing.T) {
 			gatewayPublishConfig(t, host)
 
@@ -78,7 +84,7 @@ func TestHandleGatewayCLI_PublishStaysQuietOnLoopback(t *testing.T) {
 // W3: the warning must not carry the shared password — not publishing it is the
 // entire point of option A.
 func TestHandleGatewayCLI_PublishWarningCarriesNoCredential(t *testing.T) {
-	gatewayPublishConfig(t, "192.168.1.5")
+	gatewayPublishConfig(t, "0.0.0.0")
 	const secret = "s3cret-shared-password"
 	t.Setenv("PI_SWITCH_WEBUI_PASSWORD", secret)
 

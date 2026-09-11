@@ -8,27 +8,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/config"
 )
 
-// known-gaps/01 (F21), option A: the providers pi-switch publishes carry
-// `"apiKey": "pi-switch-proxy"` (gateway.go:236) with a baseUrl pointing at the
-// proxy (/v1), and a client sends that key as a Bearer token — while the proxy
-// guard only accepts HTTP Basic (server.go:486). On a listener that is not
-// loopback the guard is always installed, because ValidateBindAuth refuses to
-// start otherwise. So the published providers cannot authenticate there, and the
-// operator is never told.
+// F21 option A, corrected after review (review-remediation/01).
 //
-// Option A (chosen): say so plainly, publish nothing secret. These tests pin both
-// halves — the warning on a guarded listener, and silence on loopback so the
-// default deployment is not spammed.
+// The providers pi-switch publishes carry `"apiKey": "pi-switch-proxy"`, which a
+// client sends as a Bearer token, while the proxy's /v1 surface requires HTTP Basic
+// whenever it is bound beyond loopback (a bind beyond loopback always has a
+// password: ValidateBindAuth refuses to start without one).
+//
+// So the caveat must be judged from the PROXY's exposure. The first version judged
+// the bind address of the listener answering the request, and the CLI version judged
+// the published baseUrl — which BuildProposedGatewayEntry rewrites to 127.0.0.1 for
+// wildcard binds. Both were silent for a proxy on 0.0.0.0, whose published provider
+// answers 401.
 
-func publishableConfig(t *testing.T) {
+func publishableConfigWithProxyHost(t *testing.T, proxyHost string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfgJSON := `{"version":2,"profiles":{
 		"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"http://x","apiKey":"k","models":[],"upstreams":[
 			{"name":"main","baseUrl":"http://a","apiKey":"k","models":[{"id":"m1","contextWindow":100,"maxTokens":10}],"exposedModels":["m1"]}]}},
-		"settings":{"providerPrefix":"pi-switch","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112}}}`
+		"settings":{"providerPrefix":"pi-switch","gatewayApi":"openai-completions","proxy":{"host":"` + proxyHost + `","port":43112}}}`
 	writeChannelConfig(t, dir, cfgJSON)
 	t.Setenv("PI_SWITCH_MODELS", filepath.Join(dir, "models.json"))
 }
@@ -58,67 +61,119 @@ func warningsOf(t *testing.T, w *httptest.ResponseRecorder) []string {
 	return body.Warnings
 }
 
-// H1: publishing on a guarded listener warns that the published provider cannot
-// authenticate, and names both sides of the mismatch.
-func TestGatewayPublish_WarnsWhenPublishedProviderCannotAuthenticate(t *testing.T) {
-	publishableConfig(t)
-	r := NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "0.0.0.0", Password: testPassword})
-	auth := map[string]string{"Authorization": basicAuthHeader("admin", testPassword)}
+func assertAuthWarning(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	warnings := warningsOf(t, w)
+	if len(warnings) == 0 {
+		t.Fatalf("an exposed proxy produced no authentication warning: %s", w.Body.String())
+	}
+	joined := strings.Join(warnings, " ")
+	for _, want := range []string{"Basic", "Bearer"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the warning does not mention %q: %q", want, joined)
+		}
+	}
+}
 
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodPut, "/api/models/gateway"},
-		{http.MethodPost, "/api/gateway/publish"},
-	} {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			w := publishVia(t, r, tc.method, tc.path, auth)
-			if w.Code != http.StatusOK {
-				t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
-			}
-			warnings := warningsOf(t, w)
-			if len(warnings) == 0 {
-				t.Fatalf("publishing to a guarded listener said nothing about authentication: %s", w.Body.String())
-			}
-			joined := strings.Join(warnings, " ")
-			for _, want := range []string{"Basic", "Bearer"} {
-				if !strings.Contains(joined, want) {
-					t.Fatalf("the warning does not mention %q: %q", want, joined)
+// H1: an exposed proxy warns, on BOTH publish routes, whatever this listener is bound
+// to — including a wildcard host, whose published URL is rewritten to 127.0.0.1 so
+// that the plan alone reads as local.
+//
+// The empty host is deliberately NOT in this table: config.LoadConfigAtPath
+// normalizes an empty settings.proxy.host to 127.0.0.1 (config.go:151/198/388), so the
+// handler cannot see it. An empty host means "every interface" only as a *runtime*
+// bind address (--host ""), which the config cannot express — that case is the
+// documented residual limit of this caveat.
+func TestGatewayPublish_WarnsWhenTheProxyIsExposed(t *testing.T) {
+	for _, proxyHost := range []string{"0.0.0.0", "192.168.1.5", "::"} {
+		for _, route := range []struct{ method, path string }{
+			{http.MethodPut, "/api/models/gateway"},
+			{http.MethodPost, "/api/gateway/publish"},
+		} {
+			t.Run("proxy.host="+proxyHost+" "+route.path, func(t *testing.T) {
+				publishableConfigWithProxyHost(t, proxyHost)
+				r := NewMgmtRouter() // loopback listener on purpose: see H2
+
+				w := publishVia(t, r, route.method, route.path, nil)
+				if w.Code != http.StatusOK {
+					t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
 				}
-			}
-		})
+				assertAuthWarning(t, w)
+			})
+		}
 	}
 }
 
-// H2: loopback (the default deployment) stays quiet — the warning is about a real
-// limitation, not decoration.
-func TestGatewayPublish_StaysQuietOnLoopback(t *testing.T) {
-	publishableConfig(t)
-	r := NewMgmtRouter()
-
-	w := publishVia(t, r, http.MethodPut, "/api/models/gateway", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
-	}
-	if warnings := warningsOf(t, w); len(warnings) != 0 {
-		t.Fatalf("a loopback publish warned about authentication: %v", warnings)
-	}
-}
-
-// H3: the warning must never carry a credential. Option A exists precisely to
-// avoid publishing the shared password into ~/.pi/agent/models.json, and the same
-// rule holds for anything else the API hands back.
-func TestGatewayPublish_WarningCarriesNoCredential(t *testing.T) {
-	publishableConfig(t)
+// H2: a loopback proxy stays quiet even when this listener is bound beyond loopback.
+// Where the management API listens says nothing about whether the published provider
+// can authenticate — a loopback webui with an exposed proxy is a supported pairing,
+// and warning there would be noise.
+func TestGatewayPublish_StaysQuietWhenTheProxyIsLoopback(t *testing.T) {
+	publishableConfigWithProxyHost(t, "127.0.0.1")
 	r := NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "0.0.0.0", Password: testPassword})
 
 	w := publishVia(t, r, http.MethodPut, "/api/models/gateway", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)})
 	if w.Code != http.StatusOK {
 		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
 	}
-	body := w.Body.String()
-	if strings.Contains(body, testPassword) {
-		t.Fatalf("the response leaked the shared password: %s", body)
+	if warnings := warningsOf(t, w); len(warnings) != 0 {
+		t.Fatalf("a loopback proxy warned about authentication: %v", warnings)
 	}
-	// And nothing was written into the published file either.
+}
+
+// H3: the caveat also reads the entries themselves, so a hand-edited plan that points
+// clients at a LAN host is judged even when the configured proxy is loopback. This is
+// the exported seam the CLI shares; the HTTP cases above cannot reach it.
+func TestPublishedAuthCaveat_JudgesThePlanToo(t *testing.T) {
+	cases := []struct {
+		name      string
+		cfg       config.PiSwitchConfig
+		published map[string]interface{}
+		want      bool
+	}{
+		{"loopback proxy, loopback plan", configWithProxyHost("127.0.0.1"), planWithBaseURL("http://127.0.0.1:43112/v1"), false},
+		{"loopback proxy, LAN plan", configWithProxyHost("127.0.0.1"), planWithBaseURL("http://192.168.1.9:43112/v1"), true},
+		{"loopback proxy, no plan", configWithProxyHost("127.0.0.1"), nil, false},
+		{"wildcard proxy", configWithProxyHost("0.0.0.0"), planWithBaseURL("http://127.0.0.1:43112/v1"), true},
+		{"empty proxy host", configWithProxyHost(""), planWithBaseURL("http://127.0.0.1:43112/v1"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PublishedAuthCaveat(tc.cfg, tc.published) != ""
+			if got != tc.want {
+				t.Fatalf("caveat present = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func configWithProxyHost(host string) config.PiSwitchConfig {
+	var cfg config.PiSwitchConfig
+	cfg.Settings.Proxy.Host = host
+	return cfg
+}
+
+func planWithBaseURL(base string) map[string]interface{} {
+	return map[string]interface{}{
+		"providers": map[string]interface{}{
+			"pi-switch-chat": map[string]interface{}{"api": "openai-completions", "baseUrl": base, "apiKey": "pi-switch-proxy", "models": []interface{}{}},
+		},
+	}
+}
+
+// H4: the warning must never carry a credential — not publishing the shared password
+// into models.json is the entire point of option A.
+func TestGatewayPublish_WarningCarriesNoCredential(t *testing.T) {
+	publishableConfigWithProxyHost(t, "0.0.0.0")
+	r := NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "0.0.0.0", Password: testPassword})
+
+	w := publishVia(t, r, http.MethodPut, "/api/models/gateway", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)})
+	if w.Code != http.StatusOK {
+		t.Fatalf("publish = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), testPassword) {
+		t.Fatalf("the response leaked the shared password: %s", w.Body.String())
+	}
 	raw, err := os.ReadFile(os.Getenv("PI_SWITCH_MODELS"))
 	if err != nil {
 		t.Fatalf("models.json not written: %v", err)

@@ -62,20 +62,14 @@ func TestProxyStartError_ClassifiesByKindNotByWording(t *testing.T) {
 	// Deliberately free of the phrase the old implementation looked for.
 	err := fmt.Errorf("bind failed: %w", daemon.ErrPortInUse)
 
-	code, body := proxyStartError(err)
-	if code != http.StatusInternalServerError {
-		t.Fatalf("code = %d, want 500", code)
-	}
+	body := proxyStartError(err)
 	if _, ok := body["message"]; !ok {
 		t.Fatalf("a typed port-in-use error lost the message field: %v", body)
 	}
 
 	// The negative control: an unrelated failure keeps the plain shape, so the
 	// assertion above cannot pass for every error.
-	code, plain := proxyStartError(errors.New("boom"))
-	if code != http.StatusInternalServerError {
-		t.Fatalf("code = %d, want 500", code)
-	}
+	plain := proxyStartError(errors.New("boom"))
 	if _, ok := plain["message"]; ok {
 		t.Fatalf("an unrelated failure gained the port-in-use shape: %v", plain)
 	}

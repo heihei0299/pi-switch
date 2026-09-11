@@ -50,16 +50,21 @@ func handleInit(c *gin.Context) { c.JSON(501, notImplemented("config init")) }
 
 // proxyStartError maps a daemon.Start failure onto the HTTP answer.
 //
-// It classifies by error kind, not by text: an earlier version matched
-// `strings.Contains(err.Error(), "already in use")`, so the port-in-use answer
-// depended on wording that belongs to the daemon package (and that the daemon
-// package is free to reword). The two answer shapes are kept exactly as they
-// were, because callers read the extra `message` field.
-func proxyStartError(err error) (int, gin.H) {
+// It classifies by error kind, not by text: the previous version matched
+// `strings.Contains(err.Error(), "already in use")`, so the answer depended on wording
+// owned by the daemon package and free to change.
+//
+// Shape: every error carrying daemon.ErrPortInUse gets {"error":…, "message":…}
+// (callers read the second field), everything else gets {"error":…}. That now includes
+// the unmanaged-listener failures, which previously got the plain shape because the
+// words the old check looked for appear only in the log-derived failure — the extra
+// field there is the intended consequence of classifying by kind, not drift.
+func proxyStartError(err error) gin.H {
+	body := gin.H{"error": err.Error()}
 	if errors.Is(err, daemon.ErrPortInUse) {
-		return 500, gin.H{"error": err.Error(), "message": err.Error()}
+		body["message"] = err.Error()
 	}
-	return 500, gin.H{"error": err.Error()}
+	return body
 }
 
 func handleProxyStart(c *gin.Context) {
@@ -130,7 +135,7 @@ func handleProxyStart(c *gin.Context) {
 	if shouldDaemon {
 		res, err := daemon.Start(daemon.Proxy, host, uint16(port))
 		if err != nil {
-			c.JSON(proxyStartError(err))
+			c.JSON(500, proxyStartError(err))
 			return
 		}
 		c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid, "host": res.Host, "port": res.Port, "startedAt": res.StartedAt})
@@ -138,11 +143,9 @@ func handleProxyStart(c *gin.Context) {
 	}
 	// 走到这里说明请求既没要 daemon，也没给 host/port：它没有要求启动任何东西。
 	// 该分支不派生进程、不监听端口，所以不能回答"已启动"——那是纯粹的谎报。
-	// 与 P0 批已确立的 not_implemented 形状一致（config backups/init/export 等）。
-	c.JSON(501, gin.H{"error": gin.H{
-		"type":    "not_implemented",
-		"message": "in-process proxy start is not implemented; pass daemon:true (or host and port) to start the proxy daemon",
-	}})
+	// 用 kernel 的 notImplemented（config backups/init/export 等 7 处同款），
+	// 不手写同一份信封；括号内是这一处特需的可操作提示。
+	c.JSON(501, notImplemented("in-process proxy start (pass daemon:true, or host and port, to start the daemon)"))
 }
 func handleProxyStop(c *gin.Context) {
 	res, _ := daemon.Stop(daemon.Proxy)

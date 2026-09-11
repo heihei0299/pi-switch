@@ -126,8 +126,10 @@ pi-switch package import                           # Import packages found in th
 # Known limitation beyond loopback: the proxy then accepts HTTP Basic only, while
 # the providers pi-switch publishes to ~/.pi/agent/models.json carry a Bearer-style
 # apiKey ("pi-switch-proxy"). Clients using those published providers get 401, and
-# `gateway publish` says so. Bind the proxy to loopback, or use a client that can
-# send Basic. The shared password is deliberately never written into models.json.
+# `gateway publish` warns about it (judged from the configured proxy host, so a
+# proxy started with a --host that differs from the config is not covered). Bind
+# the proxy to loopback, or use a client that can send Basic. The shared password
+# is deliberately never written into models.json.
 pi-switch webui start --daemon [--host <ip>] [--port <port>] [--generate-password]
 pi-switch webui status
 pi-switch webui stop

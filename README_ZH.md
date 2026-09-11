@@ -123,7 +123,8 @@ pi-switch package import                           # 从 pi agent 目录导入�
 #
 # 超出 loopback 时的已知限制：代理此时只接受 HTTP Basic，而 pi-switch 发布到
 # ~/.pi/agent/models.json 的 provider 携带 Bearer 形式的 apiKey（"pi-switch-proxy"）。
-# 使用这些已发布 provider 的客户端会拿到 401，`gateway publish` 会就此给出警告。
+# 使用这些已发布 provider 的客户端会拿到 401，`gateway publish` 会就此给出警告
+# （以配置里的代理 host 判定，故运行期用与配置不同的 --host 启动的代理不在覆盖内）。
 # 把代理绑回 loopback，或改用能发送 Basic 的客户端。共享密码有意**不**写进
 # models.json。
 pi-switch webui start --daemon [--host <ip>] [--port <端口>] [--generate-password]

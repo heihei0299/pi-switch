@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"strings"
 
@@ -186,35 +187,62 @@ func enrichProposedModels(proposed map[string]interface{}) catalog.EnrichSummary
 	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
-// gatewayPublishAuthWarning reports a limitation an operator cannot see from the
-// published file: the providers pi-switch writes carry `"apiKey":
-// "pi-switch-proxy"` (internal/gateway/gateway.go), which a client sends as a
-// Bearer token, while the proxy guard only accepts HTTP Basic
-// (basicAuthMiddleware). Beyond loopback the guard is always installed, because
-// ValidateBindAuth refuses to start without a password — so there the published
-// providers cannot authenticate at all.
+// PublishedAuthCaveat reports the authentication caveat for the providers a plan
+// publishes, or "" when there is none.
 //
-// The bind address is the only runtime fact available, and it is exactly why this
-// cannot be derived from the config file: an empty host means every interface.
-// Judging by it can only over-warn when the webui and the proxy are started with
-// different hosts, which is the safe direction.
+// The caveat exists because the published entries carry `"apiKey":
+// "pi-switch-proxy"`, which a client sends as a Bearer token, while the proxy's /v1
+// surface requires HTTP Basic whenever it is bound beyond loopback — and a bind
+// beyond loopback always has a password, because ValidateBindAuth refuses to start
+// without one.
 //
-// Nothing here may include a credential: the whole point of warning (rather than
-// publishing a working key) is that the shared password must not land in
-// ~/.pi/agent/models.json.
-func gatewayPublishAuthWarning(c *gin.Context) []string {
-	if IsLoopback(effectiveBindHost(requestAuthOptions(c).BindHost)) {
-		return nil
+// It deliberately does NOT judge the bind address of the listener answering the
+// request: where the management API listens says nothing about whether the proxy
+// surface authenticates (a loopback webui with an exposed proxy is a supported
+// pairing, and warning there would be noise). And it cannot judge the published
+// baseUrl alone either: BuildProposedGatewayEntry rewrites a wildcard or empty host
+// to 127.0.0.1, so the plan reads as local exactly when the proxy is exposed. The
+// configured proxy host is therefore the primary source, with the plan's own
+// baseUrls as a second, so a hand-edited plan is judged too.
+//
+// Residual limit: a proxy started with a --host that differs from the configured one
+// is invisible here; the running daemon's host would be the exact source.
+func PublishedAuthCaveat(cfg config.PiSwitchConfig, published map[string]interface{}) string {
+	if !IsLoopback(cfg.Settings.Proxy.Host) || planReachesLan(published) {
+		return publishedAuthCaveatText
 	}
-	return []string{`this listener is bound beyond loopback, so /v1 requires HTTP Basic authentication, but the published providers carry "apiKey": "pi-switch-proxy", which clients send as a Bearer token — such clients get 401. Point them at a Basic-capable configuration, or bind the proxy to loopback.`}
+	return ""
 }
 
-// gatewayPublishOK is the success body for a publish, with the warning attached
-// only when there is one (a loopback publish stays byte-identical to before).
-func gatewayPublishOK(c *gin.Context) gin.H {
+// publishedAuthCaveatText is the single copy of the operator-facing wording, shared
+// by the HTTP responses and `pi-switch gateway publish`.
+const publishedAuthCaveatText = `the proxy is exposed beyond loopback, so its /v1 surface requires HTTP Basic authentication, but the published providers carry "apiKey": "pi-switch-proxy", which clients send as a Bearer token — such clients get 401. Bind the proxy to loopback, or use a client that can send Basic.`
+
+// planReachesLan reports whether any published entry points a client at a host
+// beyond loopback. The empty host and an unparsable URL are skipped: an entry
+// without a usable baseUrl makes no claim about reachability.
+func planReachesLan(published map[string]interface{}) bool {
+	providers, _ := published["providers"].(map[string]interface{})
+	for _, raw := range providers {
+		entry, _ := raw.(map[string]interface{})
+		base, _ := entry["baseUrl"].(string)
+		u, err := url.Parse(base)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		if !IsLoopback(u.Hostname()) {
+			return true
+		}
+	}
+	return false
+}
+
+// gatewayPublishOK is the success body for a publish, with the caveat attached only
+// when there is one (a loopback proxy stays byte-identical to before).
+func gatewayPublishOK(cfg config.PiSwitchConfig, published map[string]interface{}) gin.H {
 	resp := gin.H{"ok": true}
-	if warnings := gatewayPublishAuthWarning(c); len(warnings) > 0 {
-		resp["warnings"] = warnings
+	if caveat := PublishedAuthCaveat(cfg, published); caveat != "" {
+		resp["warnings"] = []string{caveat}
 	}
 	return resp
 }
@@ -245,7 +273,7 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(c))
+	c.JSON(200, gatewayPublishOK(cfg, gw))
 }
 
 // gatewayHealthPayload reports the gateway's state. has_models_file and
@@ -255,7 +283,7 @@ func handlePutGateway(c *gin.Context) {
 // record to date. has_models_file used to be one of those constants (literally
 // `true`), which made "already published" always true for a frontend that decodes
 // it as a required boolean.
-func gatewayHealthPayload(c *gin.Context) gin.H {
+func gatewayHealthPayload() gin.H {
 	cfg, _, _ := config.LoadConfigAtPath(configPath())
 	_, statErr := os.Stat(gateway.ModelsPath())
 	return gin.H{
@@ -270,7 +298,7 @@ func gatewayHealthPayload(c *gin.Context) gin.H {
 }
 
 func handleGatewayHealth(c *gin.Context) {
-	c.JSON(200, gatewayHealthPayload(c))
+	c.JSON(200, gatewayHealthPayload())
 }
 func handleGatewayStart(c *gin.Context) {
 	c.JSON(200, gin.H{"running": true, "mode": "logical-isolation", "gateway_id": "pi-switch"})
@@ -319,5 +347,5 @@ func handleGatewayPublish(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(c))
+	c.JSON(200, gatewayPublishOK(cfg, toPublish))
 }
