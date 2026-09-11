@@ -108,103 +108,17 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generate
 	})
 }
 
-// buildGeneratedGatewayPlan builds the config-derived proposal, enriches it from
-// the catalog, and computes the canonical generated plan from that same proposal.
+// buildGeneratedGatewayPlan is the shared generated flow: the gateway package
+// builds, enriches and plans from one proposal.
 func buildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	proposal := gateway.BuildProposedGatewayEntry(cfg)
-	summary := enrichProposedModels(cfg, proposal)
-	return gateway.BuildGeneratedPlanFromProposal(cfg, current, proposal), summary
+	return gateway.BuildEnrichedGeneratedPlan(cfg, current)
 }
 
 // buildDraftGatewayPlan builds the canonical plan for a user draft, enriching the
 // draft from the catalog first so the plan's derived views match what is published.
 func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	summary := enrichProposedModels(cfg, draft)
+	summary := gateway.EnrichProposedModels(cfg, draft)
 	return gateway.BuildDraftPlan(cfg, current, draft), summary
-}
-
-// enrichProposedModels fills gateway proposed models from the models.dev snapshot.
-// It prefers provider/bare lookup using the supplier's resolved modelsDevProvider
-// (or supplier name as hint) to disambiguate duplicate bare ids, and overwrites
-// stale defaults (e.g. 128000→1048576) when the catalog provides non-zero values.
-// It takes the already-loaded cfg so the caller's config read is the only one.
-func enrichProposedModels(cfg config.PiSwitchConfig, proposed map[string]interface{}) catalog.EnrichSummary {
-	snap, stale, warning := catalog.Ensure()
-	enriched, skipped := 0, 0
-	// Fixed gateway providers use bare ids; resolve catalog metadata through the originating supplier.
-	modelSuppliers := map[string]string{}
-	ambiguousModelSuppliers := map[string]bool{}
-	for supplier, prof := range cfg.Profiles {
-		for _, upstream := range prof.Upstreams {
-			for _, id := range upstream.ExposedModels {
-				if previous, ok := modelSuppliers[id]; ok && previous != supplier {
-					delete(modelSuppliers, id)
-					ambiguousModelSuppliers[id] = true
-					continue
-				}
-				if !ambiguousModelSuppliers[id] {
-					modelSuppliers[id] = supplier
-				}
-			}
-		}
-	}
-	if provs, ok := proposed["providers"].(map[string]interface{}); ok {
-		for providerKey, pv := range provs {
-			entry, ok := pv.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			models, _ := entry["models"].([]interface{})
-			// Non-fixed provider entries use the provider key as their supplier hint.
-			supplierHint := providerKey
-			if idx := strings.Index(providerKey, "/"); idx > 0 {
-				supplierHint = providerKey[:idx]
-			}
-			for _, m := range models {
-				mm, ok := m.(map[string]interface{})
-				if !ok {
-					skipped++
-					continue
-				}
-				id, _ := mm["id"].(string)
-				supplier := supplierHint
-				if providerKey == "pi-switch-res" || providerKey == "pi-switch-chat" {
-					supplier = modelSuppliers[id]
-				}
-				if id == "" {
-					skipped++
-					continue
-				}
-				var meta catalog.Meta
-				var found bool
-				if supplier != "" {
-					if prof, ok := cfg.Profiles[supplier]; ok {
-						pk := resolveModelsDevProvider(prof)
-						if pk != "" {
-							meta, found = snap.LookupWithProvider(id, pk)
-						}
-					}
-					if !found {
-						meta, found = snap.LookupWithProvider(id, supplier)
-					}
-				}
-				if !found {
-					meta, found = snap.Lookup(id)
-				}
-				if !found {
-					skipped++
-					continue
-				}
-				if catalog.FillOverwrite(mm, meta) {
-					enriched++
-				} else {
-					skipped++
-				}
-			}
-		}
-		return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
-	}
-	return catalog.EnrichSummary{Enriched: enriched, Skipped: skipped, Stale: stale, Warning: warning}
 }
 
 // PublishedAuthCaveat reports the authentication caveat for the providers a plan

@@ -584,3 +584,49 @@ func modelByID(t *testing.T, gateway map[string]interface{}, id string) map[stri
 	t.Fatalf("model %q not found in %#v", id, gateway)
 	return nil
 }
+
+// ARCH-05: one shared enrich implementation feeds every generated flow. The
+// models.dev snapshot is injected through PI_SWITCH_CATALOG so the test never
+// touches the network.
+func TestEnrichProposedModelsUsesSharedCatalog(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	snapshot := `{"openai":{"models":{"gpt-test":{"name":"GPT Test","reasoning":true,` +
+		`"limit":{"context":1048576,"output":131072},` +
+		`"cost":{"input":0.5,"output":1.5,"cache_read":0.1},` +
+		`"modalities":{"input":["text","image"]}}}}}`
+	if err := os.WriteFile(catalogPath, []byte(snapshot), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
+
+	cfg := config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{
+		"p": {Preset: strptr("openai"), Upstreams: []config.Upstream{{
+			Name: strptr("main"), API: "openai-completions",
+			Models:        []config.ModelEntry{{ID: "gpt-test", ContextWindow: 128000, MaxTokens: 10}},
+			ExposedModels: []string{"gpt-test"},
+		}}},
+	}}
+	cfg.Settings.Proxy.Host = "127.0.0.1"
+	cfg.Settings.Proxy.Port = 43112
+
+	proposal := BuildProposedGatewayEntry(cfg)
+	summary := EnrichProposedModels(cfg, proposal)
+	if summary.Enriched == 0 {
+		t.Fatalf("enrich summary = %+v, want at least one model enriched", summary)
+	}
+	model := modelByID(t, proposal, "gpt-test")
+	if model["contextWindow"] != float64(1048576) || model["name"] != "GPT Test" {
+		t.Fatalf("enriched model = %#v, want catalog metadata", model)
+	}
+
+	// BuildEnrichedGeneratedPlan returns the same enrich result inside the plan.
+	plan, planSummary := BuildEnrichedGeneratedPlan(cfg, nil)
+	if planSummary.Enriched != summary.Enriched {
+		t.Fatalf("plan enrich = %+v, want %+v", planSummary, summary)
+	}
+	planned := modelByID(t, plan.Proposed, "gpt-test")
+	if planned["contextWindow"] != float64(1048576) {
+		t.Fatalf("planned model = %#v, want enriched metadata", planned)
+	}
+}

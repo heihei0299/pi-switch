@@ -908,13 +908,14 @@ func handleGatewayCLI(args []string) {
 	}
 	switch args[0] {
 	case "publish", "apply":
-		toPublish := gateway.BuildProposedGatewayEntry(cfg)
 		current, err := gateway.ReadCurrent()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
-		if err := gateway.PublishPlan(gateway.BuildGeneratedPlanFromProposal(cfg, current, toPublish)); err != nil {
+		// Same enriched generated flow as the WebUI preview/publish.
+		plan, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
+		if err := gateway.PublishPlan(plan); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -923,7 +924,7 @@ func handleGatewayCLI(args []string) {
 		// 发布的 provider 携带 Bearer 形式的 apiKey，而代理面一旦超出 loopback 就只
 		// 接受 HTTP Basic。判定以**配置里的代理 host** 为主、条目自身 baseUrl 为辅——
 		// 只看 baseUrl 会被 gateway 包的通配改写（→127.0.0.1）骗过去。
-		if caveat := server.PublishedAuthCaveat(cfg, toPublish); caveat != "" {
+		if caveat := server.PublishedAuthCaveat(cfg, plan.Proposed); caveat != "" {
 			fmt.Fprintln(os.Stderr, "warning: "+caveat)
 		}
 	case "status":
@@ -935,7 +936,7 @@ func handleGatewayCLI(args []string) {
 			os.Exit(1)
 		}
 		// Same generated flow as publish, so the preview shows what publish writes.
-		plan := gateway.BuildGeneratedPlan(cfg, current)
+		plan, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
 		b, _ := json.MarshalIndent(plan.Proposed, "", "  ")
 		fmt.Println(string(b))
 	default:

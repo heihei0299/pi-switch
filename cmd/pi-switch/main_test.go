@@ -75,6 +75,13 @@ func isolateCLI(t *testing.T) {
 	// daemon state (pid/lock/log) would otherwise be read from the real
 	// ~/.pi-switch and report the developer's running daemons.
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	// An empty fresh catalog snapshot keeps the shared gateway enrich step off
+	// the network (and off the developer's real models.dev cache).
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
 }
 
 // runCLI captures stdout while fn runs, so a test asserts what a script

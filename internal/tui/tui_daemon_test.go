@@ -236,6 +236,12 @@ func TestTuiDaemon_S2_GPublishAndRefresh(t *testing.T) {
 	_ = config.SaveAtPath(cfg, cfgPath)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_MODELS", modelsPath)
+	// Keep the shared enrich step off the network: an empty fresh snapshot.
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
 	loaded, _, _ := config.LoadConfigAtPath(cfgPath)
 	m := New(loaded)
 	m.tab = 1

@@ -109,6 +109,30 @@ type ProviderProfile struct {
 	RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
 }
 
+// presetModelsDevProviders maps the built-in presets to their models.dev provider
+// id. It is the only place that translation lives, so profile metadata lookup and
+// model enrichment cannot drift apart.
+var presetModelsDevProviders = map[string]string{
+	"openai": "openai", "anthropic": "anthropic", "google": "google",
+	"deepseek": "deepseek", "xai": "xai", "moonshot": "moonshot",
+	"qwen": "qwen", "cohere": "cohere", "mistral": "mistral", "azure": "azure",
+}
+
+// ModelsDevProviderKey resolves the models.dev provider id for this profile: an
+// explicit modelsDevProvider wins, then the known preset mapping. "" means the
+// profile does not identify a models.dev provider.
+func (p ProviderProfile) ModelsDevProviderKey() string {
+	if p.ModelsDevProvider != nil && *p.ModelsDevProvider != "" {
+		return *p.ModelsDevProvider
+	}
+	if p.Preset != nil {
+		if v, ok := presetModelsDevProviders[*p.Preset]; ok {
+			return v
+		}
+	}
+	return ""
+}
+
 type CircuitBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
 	FailureThreshold int  `json:"failureThreshold"`

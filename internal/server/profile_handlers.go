@@ -750,21 +750,8 @@ func handleFetchModels(c *gin.Context) {
 	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
 }
 
-func resolveModelsDevProvider(prof config.ProviderProfile) string {
-	if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
-		return *prof.ModelsDevProvider
-	}
-	if prof.Preset != nil {
-		presetToDev := map[string]string{"openai": "openai", "anthropic": "anthropic", "google": "google", "deepseek": "deepseek", "xai": "xai", "moonshot": "moonshot", "qwen": "qwen", "cohere": "cohere", "mistral": "mistral", "azure": "azure"}
-		if v, ok := presetToDev[*prof.Preset]; ok {
-			return v
-		}
-	}
-	return ""
-}
-
 func enrichModelsWithCatalog(models []map[string]interface{}, prof config.ProviderProfile) (enriched, skipped, failed int, warning string) {
-	providerKey := resolveModelsDevProvider(prof)
+	providerKey := prof.ModelsDevProviderKey()
 	if providerKey == "" {
 		return 0, len(models), 0, "no modelsDevProvider"
 	}
