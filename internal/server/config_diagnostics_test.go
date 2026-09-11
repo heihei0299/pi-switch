@@ -32,6 +32,27 @@ func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 		t.Fatalf("rejection must name the channel and the rule: %s", body)
 	}
 
+	// profile 未声明 responsesMode（合法，等于 auto）而 channel 配 passthrough：不能因为
+	// 「profile 字段不全」整段跳过——effective 组合一样是请求期必失败。
+	w = put(`{"p":{"api":"openai-completions","baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","baseUrl":"https://example.test/v1","apiKey":"k","api":"openai-completions","responsesMode":"passthrough","models":[{"id":"m1"}]}]}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/config without a profile-level responsesMode = %d, want 400 (the channel pair is still judged): %s", w.Code, w.Body.String())
+	}
+
+	// legacy flat profile（无 upstreams）：ResolvedUpstreams 合成的 channel 就是运行期那一个，
+	// 它的 effective 组合仍必须被判定。
+	w = put(`{"p":{"api":"openai-completions","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/config with a legacy flat mismatch = %d, want 400 (the synthesized channel is the runtime's): %s", w.Code, w.Body.String())
+	}
+
+	// profile 顶层组合不兼容，即使每个 channel 都覆盖它：门仍拒绝——配置自身声明了一个
+	// 不兼容的组合，这条是既有行为（§2.2 第 4 条），也是本门唯一比 runtime 严的地方。
+	w = put(`{"p":{"api":"openai-completions","responsesMode":"passthrough","baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","baseUrl":"https://example.test/v1","apiKey":"k","api":"openai-responses","responsesMode":"passthrough","models":[{"id":"m1"}]}]}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/config with a bad profile-level pair = %d, want 400 (the profile's own pair must be self-consistent): %s", w.Code, w.Body.String())
+	}
+
 	// channel 未声明 api：回退 profile api（运行期同样如此），不得因此拒绝保存。
 	w = put(`{"p":{"api":"openai-completions","responsesMode":"auto","baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}}`)
 	if w.Code != http.StatusOK {
@@ -39,10 +60,27 @@ func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 	}
 }
 
+// profile 与 channel 都没有 api：请求期 upstreamFormat("") 必失败，因此是运行期必失败
+// 的组合，整文件门必须拒绝（不能当成「无可判定」放过）。
+func TestPutConfig_RejectsAChannelPairWithNoAPIAnywhere(t *testing.T) {
+	isolateConfig(t)
+	w := httptest.NewRecorder()
+	body := `{"version":2,"profiles":{"p":{"baseUrl":"https://example.test/v1","apiKey":"k","upstreams":[{"name":"main","baseUrl":"https://example.test/v1","apiKey":"k","models":[{"id":"m1"}]}]}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	NewMgmtRouter().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/config with no api anywhere = %d, want 400 (body=%s)", w.Code, w.Body.String())
+	}
+	if msg := w.Body.String(); !strings.Contains(msg, "api is required") {
+		t.Fatalf("rejection should say which rule failed: %s", msg)
+	}
+}
+
 // 后续审查 P2（b）：宽松保存必须配完整 advisory validation —— shape/channel/model
 // 诊断整份来自 profile.ProfileIssues，且逐条带字段路径。
 func TestValidate_ReportsProfileShapeIssues(t *testing.T) {
-	isolateConfig(t)
+	// writeChannelConfig 自己写 PI_SWITCH_CONFIG，所以这里不再单独 isolateConfig。
 	// 一个 profile 同时踩多种 shape 问题：channel baseUrl 无 scheme、重复 channel 名、
 	// 模型 id 为空、exposedModels 指向池外模型。
 	cfg := `{"version":2,"profiles":{"p":{

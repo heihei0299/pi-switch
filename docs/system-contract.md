@@ -37,17 +37,17 @@
 | `exposedModels: null` | 非法配置；在 boundary 报出字段路径错误，不转换为 `[]` 或全部暴露 |
 | model `id` 缺失、`null` 或空字符串 | 非法模型项；不生成空 ID 行、不发布、不路由 |
 | model metadata 缺失或 `contextWindow`/`maxTokens` 为 0 | 保留可用的本地模型项；不伪造 context/maxTokens/cost；clamp 不重写请求中的三个 max key，cost 记为 unknown |
-| `PUT /api/config`（整文件写入） | 只拦会在请求期全面失败的组合：profile 级 responsesMode，以及每个 channel 的 effective responsesMode（channel 未声明 api 时回退 profile api）；不跑完整 profile validation |
+| `PUT /api/config`（整文件写入） | 按运行期同一口径逐个 channel 判定 effective api/responsesMode（channel 声明优先、否则回退 profile；legacy flat profile 由 `ResolvedUpstreams` 合成同一 channel）；不跑 shape/模型/channel 名校验 |
 | Profile CRUD（`POST /api/profiles`、`PUT /api/profiles/:name`、CLI `provider add`） | 跑完整 `profile.ValidateProfile`：responsesMode → profile shape → retry |
-| `GET /api/config/validate`（advisory） | 报告完整诊断、不阻断也不写入：profile/channel/model shape 逐条来自 `profile.ProfileIssues`（带字段路径），外加 api/baseUrl/no-models/modelsDevProvider/retry/settings 检查 |
+| `GET /api/config/validate`（advisory） | 报告完整诊断、不阻断也不写入：profile/channel/model shape 逐条来自 `profile.ProfileIssues`（带字段路径），外加 api/baseUrl/no-models/modelsDevProvider/retry/settings 检查。它是 **CRUD 门规则集**的镜像，因此会比运行期更严（例如要求每个 channel 自带 api） |
 
 写入门的校验强度差异是**有意的**，不是遗漏：
 
 1. loader（`ParseConfig`/`LoadConfigAtPath`）只决定配置能不能被解析和加载（JSON + version/current），不校验 profile——它能加载的配置未必都能跑，所以它不作为拒绝保存的依据。
-2. 因此整文件门只拦「运行期必然失败」的东西（`translator.PlanRequest` 请求期会拒绝的 effective api/mode 组合），其余交给 advisory 的 `GET /api/config/validate`。
+2. 整文件门只拦运行期会被 `translator.PlanRequest` 拒绝的 effective api/mode 组合（含「profile 与 channel 都没有 api」这种必失败情形）；判定的是兼容性，不是可代理性——`IsKnown` 通过但当前不可代理的 api 不在此门拦截，由 capability 与请求期兜底负责。
 3. Profile CRUD 是「手写一个 profile」，可以也应该严格拒收。
-4. 整文件门不得比 loader/runtime 更严：例如 channel 未声明 api 时按 profile api 判定，而不是要求每个 channel 自带 api——后者属于 CRUD 门（`ValidateUpstreamAPI`）的规则。
-5. 若要进一步收紧整文件门，必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
+4. 整文件门的 channel 判定不比 runtime 严：按 channel 的 effective 组合，channel 覆盖了 profile 的组合时以 channel 为准，channel 未声明 api 时按 profile api 判定——要求每个 channel 自带 api 属于 CRUD 门（`ValidateUpstreamAPI`）的规则。门唯一比 runtime 严的地方是**保留的 profile 顶层组合检查**：profile 自身声明了不兼容组合时就拒绝，即使每个 channel 都覆盖了它（配置自身必须自洽）。
+5. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 ### 2.3 Gateway
 

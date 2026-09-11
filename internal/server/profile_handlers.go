@@ -39,18 +39,20 @@ func handlePutConfig(c *gin.Context) {
 		return
 	}
 	for name, prof := range cfg.Profiles {
-		if prof.API == "" || prof.ResponsesMode == "" {
-			continue
+		// 第一层：profile 顶层组合自身必须自洽（原先的检查保留）。注意这里不再因为
+		// responsesMode 为空而整段跳过——空 mode 等于 auto，是合法声明，不该顺带放过
+		// channel 检查。
+		if prof.API != "" {
+			if err := protocol.ValidateResponsesMode(prof.API, prof.ResponsesMode); err != nil {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
+				return
+			}
 		}
-		if err := protocol.ValidateResponsesMode(prof.API, prof.ResponsesMode); err != nil {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
-			return
-		}
-		// 每个 channel 按「effective api + effective responsesMode」判定：显式声明 api 的
-		// channel 配了不兼容的 mode，就是 translator.PlanRequest 在请求期必然拒绝的组合。
-		// 未声明 api 的 channel 回退 profile api —— 与运行期一致，不算错误（整文件门不得
-		// 比 loader/runtime 更严，见 system-contract §2.2）。
-		for idx, u := range prof.Upstreams {
+		// 第二层：与运行期同一口径——请求路径先 narrowToChannel(ResolvedUpstreams()[i])，
+		// 再交给 translator.PlanRequest；所以逐个 channel 判它的 effective api/mode
+		// （channel 声明优先、否则回退 profile）。legacy flat profile 由 ResolvedUpstreams
+		// 合成同一个 channel。shape/模型/channel 名校验不在此门（CRUD 门的规则，见 §2.2）。
+		for idx, u := range prof.ResolvedUpstreams() {
 			if err := config.ValidateEffectiveChannelAPI(u, prof); err != nil {
 				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: upstreams[%d]: %s", name, idx, err.Error())})
 				return

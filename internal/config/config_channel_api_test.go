@@ -25,9 +25,9 @@ func TestChannelAPI_EffectiveRulesForTheTolerantDoor(t *testing.T) {
 	if err := ValidateEffectiveChannelAPI(Upstream{}, prof); err != nil {
 		t.Fatalf("channel without its own api = %v, want nil (the profile api is the fallback)", err)
 	}
-	// 两处都没有 api：无可判定内容，不是错误。
-	if err := ValidateEffectiveChannelAPI(Upstream{}, ProviderProfile{}); err != nil {
-		t.Fatalf("no api anywhere = %v, want nil (nothing to judge)", err)
+	// 两处都没有 api：运行期 upstreamFormat("") 必失败，所以是错误而不是「无可判定」。
+	if err := ValidateEffectiveChannelAPI(Upstream{}, ProviderProfile{}); err == nil {
+		t.Fatal("no api anywhere must be rejected (every request through that channel fails)")
 	}
 	// 显式声明 api 但 mode 不兼容：请求期必被 translator.PlanRequest 拒绝。
 	if err := ValidateEffectiveChannelAPI(Upstream{API: "openai-completions"}, ProviderProfile{ResponsesMode: "passthrough"}); err == nil {

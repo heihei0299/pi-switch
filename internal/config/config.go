@@ -90,14 +90,15 @@ func (u Upstream) EffectiveAPI(fallback string) string {
 }
 
 // ValidateEffectiveChannelAPI checks the api/mode pair a channel will actually be
-// called with — effective api, effective mode — without demanding that the channel
-// declare its own api. This is the rule for the tolerant whole-file door, which must
-// not reject a config the loader and the runtime both accept; an empty effective api
-// means "nothing to judge" (incomplete profile), not an error.
+// called with — effective api, effective mode — which is exactly what the request
+// path resolves before translator.PlanRequest (narrowToChannel over
+// ResolvedUpstreams). It does not demand that the channel declare its own api, but a
+// pair with no api anywhere is not "nothing to judge": every request through that
+// channel fails, so it is an error like any other incompatible pair.
 func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
 	api := u.EffectiveAPI(profile.API)
 	if api == "" {
-		return nil
+		return fmt.Errorf("api is required (neither the profile nor the channel declares one)")
 	}
 	if !protocol.IsKnown(api) {
 		return fmt.Errorf("unsupported api %s", api)
