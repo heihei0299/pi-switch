@@ -169,7 +169,7 @@ func handlePutSettings(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
-	if err := validateSettingsRetry(s); err != nil {
+	if err := config.ValidateSettingsRetry(s); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

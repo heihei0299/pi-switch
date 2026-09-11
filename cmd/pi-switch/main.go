@@ -12,6 +12,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
+	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
 )
@@ -492,7 +493,7 @@ func handleProvider(args []string) int {
 				ExposedModels: []string{},
 			}}
 		}
-		if err := server.CreateProfile(name, prof); err != nil {
+		if err := profile.CreateProfile(name, prof); err != nil {
 			fmt.Fprintf(os.Stderr, "provider add failed: %v\n", err)
 			return 1
 		}
@@ -508,7 +509,7 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		src, as := positional[0], flags["--as"]
-		if err := server.DuplicateProfile(src, as); err != nil {
+		if err := profile.DuplicateProfile(src, as); err != nil {
 			fmt.Fprintf(os.Stderr, "provider duplicate failed: %v\n", err)
 			return 1
 		}
@@ -523,7 +524,7 @@ func handleProvider(args []string) int {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
 			return 1
 		}
-		success, message, ms := server.TestProfileUpstream(prof)
+		success, message, ms := profile.TestProfileUpstream(prof)
 		if !success {
 			fmt.Fprintf(os.Stderr, "provider test %s: %s (%dms)\n", args[1], message, ms)
 			return 1
@@ -548,7 +549,7 @@ func handleProvider(args []string) int {
 		// --channel 走渠道定向拉取（enrich 后合并入该渠道并落盘），与 handler 同一实现；
 		// 不给渠道时保持只读列出，不写盘。
 		if channel := flags["--channel"]; channel != "" {
-			ids, counts, err := server.FetchChannelModels(name, channel)
+			ids, counts, err := profile.FetchChannelModels(name, channel)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "provider fetch-models %s: %v\n", name, err)
 				return 1
@@ -560,7 +561,7 @@ func handleProvider(args []string) int {
 			fmt.Println(string(b))
 			return 0
 		}
-		ids, lastErr := server.FetchUpstreamModelIDs(prof)
+		ids, lastErr := profile.FetchUpstreamModelIDs(prof)
 		if lastErr != "" {
 			fmt.Fprintf(os.Stderr, "provider fetch-models %s: %s\n", name, lastErr)
 			return 1
@@ -600,7 +601,7 @@ func handleProvider(args []string) int {
 			fmt.Fprintln(os.Stderr, "provider expose: --channel <channel> required (profile has multiple channels)")
 			return 1
 		}
-		if err := server.SetExposedModels(name, channel, ids); err != nil {
+		if err := profile.SetExposedModels(name, channel, ids); err != nil {
 			fmt.Fprintf(os.Stderr, "provider expose failed: %v\n", err)
 			return 1
 		}

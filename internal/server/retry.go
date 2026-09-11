@@ -23,8 +23,9 @@ import (
 // This file is NOT inert: the channel helpers below ARE on the live proxy path.
 // `narrowToChannel` is called by `handleChatCompletions`/`handleStream`
 // (`proxy_handlers.go`), `profForAttempt`/`candidateCooldownKeys` serve the
-// validators, and `validateRetryFields` plus `validateSettingsRetry` are called
-// from the profile and settings handlers to reject malformed retry knobs.
+// validators, and `config.ValidateProviderRetry` plus
+// `config.ValidateSettingsRetry` are called from the profile and settings handlers
+// to reject malformed retry knobs.
 //
 // The scheduling engine is retained on purpose rather than deleted:
 // `.scratch/remove-failover-chain/spec.md` keeps the primitives (§3 决策) and the
@@ -52,17 +53,18 @@ const (
 	defaultRequestRetry         = 3
 	defaultMaxRetryIntervalSecs = 30
 	legacyTransientCooldown     = 60 * time.Second
-	maxRequestRetry             = 10
 	streamErrorBodyLimit        = 64 << 10
 )
 
 type retryAction string
 
+// The accepted action strings live in internal/config so the write-path
+// validation and the runtime classifier cannot drift.
 const (
-	actionStop                retryAction = "stop"
-	actionStopAndCooldown     retryAction = "stop-and-cooldown"
-	actionContinue            retryAction = "continue"
-	actionContinueAndCooldown retryAction = "continue-and-cooldown"
+	actionStop                retryAction = retryAction(config.RetryStop)
+	actionStopAndCooldown     retryAction = retryAction(config.RetryStopAndCooldown)
+	actionContinue            retryAction = retryAction(config.RetryContinue)
+	actionContinueAndCooldown retryAction = retryAction(config.RetryContinueAndCooldown)
 )
 
 func (a retryAction) shouldStop() bool {
@@ -71,15 +73,6 @@ func (a retryAction) shouldStop() bool {
 
 func (a retryAction) shouldCooldown() bool {
 	return a == actionStopAndCooldown || a == actionContinueAndCooldown
-}
-
-func validRetryAction(s string) bool {
-	switch retryAction(s) {
-	case actionStop, actionStopAndCooldown, actionContinue, actionContinueAndCooldown:
-		return true
-	default:
-		return false
-	}
 }
 
 // retryNow and retrySleep are injectable for deterministic tests (no
@@ -193,14 +186,14 @@ func orderedChannels(prof *config.ProviderProfile) []int {
 func effectiveRequestRetry(cfg *config.PiSwitchConfig, prof *config.ProviderProfile) int {
 	if prof != nil {
 		if ch := primaryChannel(prof); ch != nil && ch.RequestRetry != nil && *ch.RequestRetry >= 0 {
-			return min(*ch.RequestRetry, maxRequestRetry)
+			return min(*ch.RequestRetry, config.MaxRequestRetry)
 		}
 		if prof.RequestRetry != nil && *prof.RequestRetry >= 0 {
-			return min(*prof.RequestRetry, maxRequestRetry)
+			return min(*prof.RequestRetry, config.MaxRequestRetry)
 		}
 	}
 	if cfg != nil && cfg.Settings.Proxy.RequestRetry != nil && *cfg.Settings.Proxy.RequestRetry >= 0 {
-		return min(*cfg.Settings.Proxy.RequestRetry, maxRequestRetry)
+		return min(*cfg.Settings.Proxy.RequestRetry, config.MaxRequestRetry)
 	}
 	return defaultRequestRetry
 }
@@ -277,7 +270,7 @@ func ruleMatches(rule config.RequestScopedError, body []byte) bool {
 // Custom rules match on status first, then optional body substrings.
 func classifyUpstreamError(status int, body []byte, prof *config.ProviderProfile, cfg *config.PiSwitchConfig) retryAction {
 	for _, rule := range activeScopedRules(prof, cfg) {
-		if rule.Status == status && validRetryAction(rule.Action) && ruleMatches(rule, body) {
+		if rule.Status == status && config.ValidRetryAction(rule.Action) && ruleMatches(rule, body) {
 			return retryAction(rule.Action)
 		}
 	}
@@ -461,66 +454,4 @@ func coolingHint(keys []string) string {
 		return ""
 	}
 	return fmt.Sprintf(" (all candidates cooling, earliest retry in %s)", earliest.Sub(now).Round(time.Second))
-}
-
-// validateRetryFields checks the retry-related knobs of one profile for the
-// management write paths (400 on violation).
-func validateRetryFields(p config.ProviderProfile) error {
-	if err := checkRequestRetry(p.RequestRetry, "requestRetry"); err != nil {
-		return err
-	}
-	for _, u := range p.Upstreams {
-		if err := checkRequestRetry(u.RequestRetry, "upstreams.requestRetry"); err != nil {
-			return err
-		}
-	}
-	if err := validateScopedRules(p.RequestScopedErrors, "requestScopedErrors"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateScopedRules(rules []config.RequestScopedError, what string) error {
-	for i, rule := range rules {
-		if rule.Status < 100 || rule.Status > 599 {
-			return fmt.Errorf("%s[%d].status must be 100-599, got %d", what, i, rule.Status)
-		}
-		if !validRetryAction(rule.Action) {
-			return fmt.Errorf("%s[%d].action must be stop|stop-and-cooldown|continue|continue-and-cooldown, got %q", what, i, rule.Action)
-		}
-	}
-	return nil
-}
-
-func checkRequestRetry(v *int, field string) error {
-	if v == nil || *v < 0 {
-		return nil // nil/negative inherits
-	}
-	if *v > maxRequestRetry {
-		return fmt.Errorf("%s must be 0-%d, got %d", field, maxRequestRetry, *v)
-	}
-	return nil
-}
-
-// validateSettingsRetry checks the global retry knobs for PUT /api/settings.
-func validateSettingsRetry(s config.Settings) error {
-	px := s.Proxy
-	if err := checkRequestRetry(px.RequestRetry, "proxy.requestRetry"); err != nil {
-		return err
-	}
-	if px.MaxRetryCredentials < 0 {
-		return fmt.Errorf("proxy.maxRetryCredentials must be >= 0, got %d", px.MaxRetryCredentials)
-	}
-	if px.MaxRetryInterval != nil && *px.MaxRetryInterval < 0 {
-		// Negative means "never wait" only via explicit <=0 check at runtime;
-		// accept any negative as never-wait (no validation error).
-		return nil
-	}
-	if v := px.TransientErrorCooldownSeconds; v != nil && *v < -1 {
-		return fmt.Errorf("proxy.transientErrorCooldownSeconds must be >= -1, got %d", *v)
-	}
-	if err := validateScopedRules(px.RequestScopedErrors, "proxy.requestScopedErrors"); err != nil {
-		return err
-	}
-	return nil
 }
