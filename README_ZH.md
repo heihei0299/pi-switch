@@ -148,7 +148,7 @@ pi-switch stats                                     # 未实现——退出码�
 | 🌐 **WebUI（主界面）** | 浏览器控制面板 `http://127.0.0.1:43110` — Profiles 增删改查、Gateway `Current vs Proposed` 差异与 `Apply to Pi`、Proxy 启停、Stats 仪表（时间窗口/自动刷新）、Packages、Settings、Doctor。Daemon 托管（独立 pid/log/port），本地回环免认证、非回环 Basic 认证。 |
 | 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、**多渠道**（`upstreams[]` 含 api/baseUrl/apiKey/headers/weight/name，每条渠道拥有自己的 `models`/`exposedModels` 分区）、按渠道 fetch/expose、网关发布与二级模型选择、配置 Responses API 透传/转换模式 |
 | ⇥ **cc-switch 导入** | **未实现**：Go 版本没有该能力，CLI/TUI/WebUI 均无入口，相关端点返回 501 |
-| 💡 **内置预设** | OpenRouter、Anthropic、DeepSeek、SiliconFlow、OpenAI — 一键创建配置 |
+| 💡 **内置预设** | OpenAI、Anthropic、DeepSeek — 一键创建配置。列表只有一份来源（`ProviderPresets`），并按写入口使用的同一条 api 能力规则过滤，因此不会提供写入口会拒绝的 api（`google-generative-ai` 属于「已知但当前不可代理」，故没有 Google 预设） |
 | 🌉 **模型名网关** | **独立**进程/插件 — Profiles 只写本地配置，Gateway 通过 `Current vs Proposed` 预览与 `Apply to Pi` 显式把最多两个固定 provider（`pi-switch-res` / `pi-switch-chat`）发布到 `~/.pi/agent/models.json`；无状态裸模型名路由、SSE 流式、User-Agent 伪装、OpenAI ↔ Anthropic 与 Responses ↔ Chat Completions 转换、断路器 |
 | 🗂️ **模型目录** | 用 https://models.dev 快照补齐缺失模型元数据（cost/limit/reasoning/input/name），缓存在 `~/.pi-switch/cache/models-dev.json`（24h TTL，过期降级告警）：拉取时按 profile 的 `modelsDevProvider` 映射 enrich，网关预览/发布时只补缺失（已有值优先，不写回池，重名跳过） |
 | 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |

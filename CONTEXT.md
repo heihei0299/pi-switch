@@ -60,6 +60,14 @@ _Avoid_: 通道、节点、endpoint、渠道配置
 见渠道（Channel）；持久化上每条渠道含 `api/baseUrl/apiKey/headers/weight/name` 与分区字段 `models[]/exposedModels[]`。
 _Avoid_: endpoint、upstream 配置、节点
 
+**API 能力（API Capability）**：
+`internal/protocol` 对每个 api 标识的三项判定：`IsKnown`（是否为受支持标识）、`CanProxy`（translator 能否路由它）、`CanGateway`（能否发布到网关）。同一份来源同时决定预设列表的过滤、写入口的能力判定与 WebUI 可选项；"已知但当前不可代理"（如 `google-generative-ai`）是合法且必须被保留的状态，不是配置错误。
+_Avoid_: 支持列表、白名单、能力表副本
+
+**写入门（Write Door）**：
+配置进入磁盘的入口及其校验强度：整文件门（`PUT /api/config`）、Profile CRUD（`POST`/`PUT /api/profiles`、CLI `provider add`）、duplicate（`…/:name/duplicate`、CLI `provider duplicate`）、advisory（`GET /api/config/validate`，只报不写）。能力判定由各自入口共用 `config.ValidateResolvedCapability`；各门之间**有意保留**的强度差异与其理由见 `docs/system-contract.md` §2.2，不得为了"统一"而顺手放宽或收紧。
+_Avoid_: 校验器、validator、统一校验层
+
 **网关（Gateway）**：
 写入 `models.json: providers` 的面向客户端 provider 视图，由当前 Supplier/Channel 的 exposed model 按 API contract 聚合为 `pi-switch-res`（Responses）与 `pi-switch-chat`（Chat）；provider 内的模型 id 为裸 `modelId`，设置只保留本地 proxy host/port 等运行参数。
 _Avoid_: gateway provider、pi gateway、网关配置

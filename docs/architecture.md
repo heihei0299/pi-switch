@@ -154,7 +154,7 @@ internal/server/error_envelope.go     kernel：管理面/推理面错误信封
 
 `retry.go` 的重试**调度**引擎当前休眠（代理路径只取单候选直通，`PUT /api/proxy/failover`
 返回 410），保留原因见 `.scratch/remove-failover-chain/spec.md` D1；但该文件并非死代码——
-`narrowToChannel` 在活的代理路径上被调用，两个校验函数也仍在 profile/settings handler 中生效。
+`narrowToChannel` 在活的代理路径上被调用（`handleChatCompletions` 与 `handleStream` 各两处），它按命中的 channel 折叠出单 channel 的 profile；重试调度本身仍不参与请求路径。
 
 ```text
 internal/server/proxy_handlers.go
