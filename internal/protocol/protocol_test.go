@@ -1,6 +1,11 @@
 package protocol
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"reflect"
+	"testing"
+)
 
 // The capability split is the contract the three surfaces depend on:
 // google-generative-ai is a known api the config may store, but neither the
@@ -76,5 +81,24 @@ func TestCapabilitiesCoverKnownApis(t *testing.T) {
 	}
 	if !byID[AnthropicMessages].CanProxy || byID[AnthropicMessages].CanGateway {
 		t.Errorf("anthropic must be proxiable but not gateway: %+v", byID[AnthropicMessages])
+	}
+}
+
+// The WebUI fallback import (webui/src/lib/protocol-capabilities.json) must stay
+// identical to the Go capability set. This test is the parity guard: change
+// Capabilities() and it fails with the JSON to write back.
+func TestCapabilitiesMatchWebUIFallbackFixture(t *testing.T) {
+	b, err := os.ReadFile("../../webui/src/lib/protocol-capabilities.json")
+	if err != nil {
+		t.Fatalf("read webui fallback fixture: %v", err)
+	}
+	var fixture []APICapability
+	if err := json.Unmarshal(b, &fixture); err != nil {
+		t.Fatalf("decode webui fallback fixture: %v", err)
+	}
+	want := Capabilities()
+	if !reflect.DeepEqual(fixture, want) {
+		expected, _ := json.MarshalIndent(want, "", "  ")
+		t.Fatalf("webui fallback fixture is stale; write this into webui/src/lib/protocol-capabilities.json:\n%s", expected)
 	}
 }

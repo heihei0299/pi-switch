@@ -1,5 +1,5 @@
 import type { ModelCost, ModelEntry } from "../types";
-import { defaultProtocolApiId, protocolApiIds } from "./protocolCapabilities";
+import { FALLBACK_PROTOCOL_APIS, defaultProtocolApiId, protocolApiIds } from "./protocolCapabilities";
 
 // ─── Pi thinking levels ──────────────────────────────────────────────
 export const PI_THINKING_LEVELS = [
@@ -202,7 +202,10 @@ export function validateModelsJson(text: string): ValidateModelsResult {
   return { ok: true, value: out };
 }
 
-export function validateProfileJson(text: string): ValidateProfileResult {
+export function validateProfileJson(
+  text: string,
+  apiIds: readonly string[] = protocolApiIds(FALLBACK_PROTOCOL_APIS),
+): ValidateProfileResult {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -218,7 +221,7 @@ export function validateProfileJson(text: string): ValidateProfileResult {
   if (typeof api !== "string" || !api) {
     return { ok: false, error: "profile.api is required" };
   }
-  if (!protocolApiIds().includes(api)) {
+  if (!apiIds.includes(api)) {
     return { ok: false, error: `profile.api is not supported: ${api}` };
   }
   const baseUrl = obj.baseUrl;
@@ -406,7 +409,7 @@ export function buildGatewayPreview(
   return {
     ...(opts.providerPassthrough ?? {}),
     ...(profile.name ? { name: profile.name } : {}),
-    api: profile.api ?? defaultProtocolApiId(),
+    api: profile.api ?? defaultProtocolApiId(FALLBACK_PROTOCOL_APIS),
     baseUrl: profile.baseUrl ?? "http://127.0.0.1:43112/v1",
     ...(profile.apiKey ? { apiKey: profile.apiKey } : {}),
     ...(opts.headers && Object.keys(opts.headers).length > 0 ? { headers: opts.headers } : {}),

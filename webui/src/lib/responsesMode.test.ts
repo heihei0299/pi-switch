@@ -1,24 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { ProtocolApiCapability } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "./responsesMode";
-import { setProtocolCapabilities } from "./protocolCapabilities";
-
-afterEach(() => setProtocolCapabilities(undefined));
+import { FALLBACK_PROTOCOL_APIS } from "./protocolCapabilities";
 
 describe("responsesMode follows the backend capability", () => {
-  it("uses the fallback rule before the backend answers", () => {
-    expect(effectiveResponsesMode({ api: "openai-responses", responsesMode: "auto" })).toBe("passthrough");
-    expect(effectiveResponsesMode({ api: "openai-completions", responsesMode: "auto" })).toBe("convert");
-    expect(responsesModeError("openai-completions", "convert")).toBeNull();
-    expect(responsesModeError("anthropic-messages", "convert")).toBe("convert requires openai-completions");
+  it("uses the fixture fallback", () => {
+    expect(effectiveResponsesMode({ api: "openai-responses", responsesMode: "auto" }, FALLBACK_PROTOCOL_APIS)).toBe("passthrough");
+    expect(effectiveResponsesMode({ api: "openai-completions", responsesMode: "auto" }, FALLBACK_PROTOCOL_APIS)).toBe("convert");
+    expect(responsesModeError("openai-completions", "convert", FALLBACK_PROTOCOL_APIS)).toBeNull();
+    expect(responsesModeError("anthropic-messages", "convert", FALLBACK_PROTOCOL_APIS)).toBe("convert requires openai-completions");
   });
 
-  it("replaces the rule when the backend reports a different capability", () => {
-    setProtocolCapabilities([
+  it("follows a capability set that differs from the fallback", () => {
+    const caps: ProtocolApiCapability[] = [
       { id: "openai-completions", label: "Chat", defaultMode: "auto", responsesModes: ["auto"], canProxy: true, canGateway: true },
-    ]);
-    // The backend says this api no longer derives convert and does not allow it.
-    expect(effectiveResponsesMode({ api: "openai-completions", responsesMode: "auto" })).toBe("auto");
-    expect(responsesModeError("openai-completions", "convert")).toBe("convert requires openai-completions");
-    expect(responsesModeError("openai-completions", "auto")).toBeNull();
+    ];
+    expect(effectiveResponsesMode({ api: "openai-completions", responsesMode: "auto" }, caps)).toBe("auto");
+    expect(responsesModeError("openai-completions", "convert", caps)).toBe("convert requires openai-completions");
+    expect(responsesModeError("openai-completions", "auto", caps)).toBeNull();
   });
 });

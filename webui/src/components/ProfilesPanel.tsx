@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AppState, ModelEntry, PresetInfo, ProviderProfile, ResponsesMode, Upstream } from "../types";
+import type { AppState, ModelEntry, PresetInfo, ProtocolApiCapability, ProviderProfile, ResponsesMode, Upstream } from "../types";
 import { hasUpstreams, resolvedUpstreams } from "../types";
 import { effectiveResponsesMode, responsesModeError } from "../lib/responsesMode";
-import { defaultProtocolApiId, protocolApiIds, protocolCapabilities } from "../lib/protocolCapabilities";
+import { allowedResponsesModes, defaultProtocolApiId, protocolApiIds, protocolCapabilities } from "../lib/protocolCapabilities";
+import { useProtocolCapabilities } from "../lib/protocolContext";
 import { draftFromEntry, entryFromDraft, modelPreview, newModelDraft, validateModelsJson, validateProfileJson, type ModelDraft } from "../lib/piModel";
 import { channelNames, exposedForChannel, materializeMainChannel, modelsForChannel, parseModelsDraft, useProfileDraft } from "../hooks/useProfileDraft";
 import { JsonEditor } from "./JsonEditor";
@@ -31,8 +32,14 @@ import { mergePreviewHeaders } from "../lib/previewHeaders";
 import { mutateAfterProfilePut } from "../store/swr";
 // Api list and labels come from the backend capability set (GET /api/state),
 // never from a local copy; the fallback keeps rendering before the first fetch.
-function apiTypeOptions(): ReadonlyArray<{ value: string; label: string }> {
-  return protocolCapabilities().map((c) => ({ value: c.id, label: c.label }));
+function apiTypeOptions(caps: readonly ProtocolApiCapability[]): ReadonlyArray<{ value: string; label: string }> {
+  return protocolCapabilities(caps).map((c) => ({ value: c.id, label: c.label }));
+}
+
+function responsesModeLabel(mode: ResponsesMode, t: (key: string) => string): string {
+  if (mode === "passthrough") return `passthrough — ${t("native Responses only")}`;
+  if (mode === "convert") return `convert — ${t("Chat Completions only")}`;
+  return `auto — ${t("automatic by API type")}`;
 }
 const SPOOFS = [
   { value: "", label: "none" },
@@ -52,9 +59,9 @@ type UpstreamForm = Omit<Upstream, "api" | "responsesMode" | "weight" | "name" |
   exposedModels: string[];
 };
 
-function emptyProfile(): ProviderProfile {
+function emptyProfile(caps: readonly ProtocolApiCapability[]): ProviderProfile {
   return {
-    api: defaultProtocolApiId(),
+    api: defaultProtocolApiId(caps),
     responsesMode: "auto",
     baseUrl: "",
     apiKey: "",
@@ -75,6 +82,7 @@ export function ProfilesPanel({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
+  const caps = useProtocolCapabilities();
   const [editing, setEditing] = useState<{ name: string | null } | null>(null);
   const [models, setModels] = useState<string | null>(null); // profile name for models modal
 
@@ -126,7 +134,7 @@ export function ProfilesPanel({
                     )}
                     <Badge mono>{p.api || "?"}</Badge>
                     <Badge tone="amber" mono>
-                      {t("Responses")}: {effectiveResponsesMode(p)}
+                      {t("Responses")}: {effectiveResponsesMode(p, caps)}
                     </Badge>
                     {exposed > 0 && (
                       <Badge tone="green" dot mono>
@@ -226,11 +234,12 @@ function ProfileForm({
   const run = useAction();
   const toast = useToast();
   const { t, lang } = useI18n() as any;
+  const caps = useProtocolCapabilities();
   const existing = original ? state.profiles[original] : undefined;
   const presets = usePresets();
 
   const [name, setName] = useState(original ?? "");
-  const draft = useProfileDraft(existing ?? emptyProfile());
+  const draft = useProfileDraft(existing ?? emptyProfile(caps));
   const value = draft.state.value;
   const apiType = value.api;
   const responsesMode = value.responsesMode ?? "auto";
@@ -296,7 +305,7 @@ function ProfileForm({
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const text = draft.state.rawText;
   const setText = (next: string) => draft.dispatch({ type: "setRawText", text: next });
-  const jsonValidation = useMemo(() => validateProfileJson(text), [text]);
+  const jsonValidation = useMemo(() => validateProfileJson(text, protocolApiIds(caps)), [text, caps]);
   const profileErrorLine = useMemo(() => {
     try {
       JSON.parse(text);
@@ -363,7 +372,7 @@ function ProfileForm({
     if (mode === "raw" && (!jsonValidation.ok || !jsonValidation.value)) {
       throw new Error(jsonValidation.error ?? "Invalid JSON");
     }
-    const modeError = responsesModeError(value.api, value.responsesMode ?? "auto");
+    const modeError = responsesModeError(value.api, value.responsesMode ?? "auto", caps);
     if (modeError) throw new Error(t(modeError));
     const profile = build();
     // 渠道名称前端先行校验：与后端 isValidChannelName 同口径，避免整单 400 才暴露问题。
@@ -413,12 +422,12 @@ function ProfileForm({
             </Field>
             <Field label={t("API type")}>
               <Select value={apiType} onChange={(e) => setApiType(e.target.value)}>
-                {apiTypeOptions().map((o) => (
+                {apiTypeOptions(caps).map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
-                {!protocolApiIds().includes(apiType) && apiType && (
+                {!protocolApiIds(caps).includes(apiType) && apiType && (
                   <option value={apiType}>{apiType}</option>
                 )}
               </Select>
@@ -426,9 +435,12 @@ function ProfileForm({
             </Field>
             <Field label={t("Responses mode")}>
               <Select value={responsesMode} onChange={(e) => setResponsesMode(e.target.value as ResponsesMode)}>
-                <option value="auto">auto — {t("automatic by API type")}</option>
-                <option value="passthrough">passthrough — {t("native Responses only")}</option>
-                <option value="convert">convert — {t("Chat Completions only")}</option>
+                {allowedResponsesModes(caps, apiType).map((mode) => (
+                  <option key={mode} value={mode}>{responsesModeLabel(mode, t)}</option>
+                ))}
+                {!allowedResponsesModes(caps, apiType).includes(responsesMode) && (
+                  <option value={responsesMode}>{responsesModeLabel(responsesMode, t)}</option>
+                )}
               </Select>
             </Field>
             <Field label={t("Disguise (User-Agent)")}>
@@ -531,7 +543,7 @@ function ProfileForm({
                         </Field>
                         <Field label={t("API type")}>
                           <Select value={u.api} onChange={(e) => setUpstreams((prev) => prev.map((x) => x.key === u.key ? { ...x, api: e.target.value } : x))}>
-                            {apiTypeOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {apiTypeOptions(caps).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </Select>
                         </Field>
                       </div>

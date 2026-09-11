@@ -1,0 +1,44 @@
+[
+  {
+    "id": "openai-completions",
+    "label": "OpenAI Chat Completions",
+    "defaultMode": "convert",
+    "responsesModes": [
+      "auto",
+      "convert"
+    ],
+    "canProxy": true,
+    "canGateway": true
+  },
+  {
+    "id": "openai-responses",
+    "label": "OpenAI Responses",
+    "defaultMode": "passthrough",
+    "responsesModes": [
+      "auto",
+      "passthrough"
+    ],
+    "canProxy": true,
+    "canGateway": true
+  },
+  {
+    "id": "anthropic-messages",
+    "label": "Anthropic Messages",
+    "defaultMode": "auto",
+    "responsesModes": [
+      "auto"
+    ],
+    "canProxy": true,
+    "canGateway": false
+  },
+  {
+    "id": "google-generative-ai",
+    "label": "Google Gemini",
+    "defaultMode": "auto",
+    "responsesModes": [
+      "auto"
+    ],
+    "canProxy": false,
+    "canGateway": false
+  }
+]

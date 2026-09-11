@@ -1,42 +1,44 @@
 import type { ProtocolApiCapability, ResponsesMode } from "../types";
+import fallback from "./protocol-capabilities.json";
 
-// Mirrors internal/protocol.Capabilities(). It is only a fallback for the window
-// before GET /api/state answers (and for tests); App seeds the real value from
-// the backend so the api list and responsesMode rule have one source.
-const FALLBACK: readonly ProtocolApiCapability[] = [
-  { id: "openai-completions", label: "OpenAI Chat Completions", defaultMode: "convert", responsesModes: ["auto", "convert"], canProxy: true, canGateway: true },
-  { id: "openai-responses", label: "OpenAI Responses", defaultMode: "passthrough", responsesModes: ["auto", "passthrough"], canProxy: true, canGateway: true },
-  { id: "anthropic-messages", label: "Anthropic Messages", defaultMode: "auto", responsesModes: ["auto"], canProxy: true, canGateway: false },
-  { id: "google-generative-ai", label: "Google Gemini", defaultMode: "auto", responsesModes: ["auto"], canProxy: false, canGateway: false },
-];
+// The fallback is this JSON fixture, which a Go test keeps byte-identical to
+// internal/protocol.Capabilities(). There is no second hand-written list, so the
+// client cannot drift from the backend capability set.
+export const FALLBACK_PROTOCOL_APIS = fallback as readonly ProtocolApiCapability[];
 
-let capabilities: readonly ProtocolApiCapability[] = FALLBACK;
-
-/** Replace the capability set with the backend's; empty input keeps the fallback. */
-export function setProtocolCapabilities(next: readonly ProtocolApiCapability[] | undefined): void {
-  capabilities = next && next.length > 0 ? next : FALLBACK;
+function resolved(caps: readonly ProtocolApiCapability[]): readonly ProtocolApiCapability[] {
+  return caps.length > 0 ? caps : FALLBACK_PROTOCOL_APIS;
 }
 
-export function protocolCapabilities(): readonly ProtocolApiCapability[] {
-  return capabilities;
+export function protocolCapabilities(caps: readonly ProtocolApiCapability[]): readonly ProtocolApiCapability[] {
+  return resolved(caps);
 }
 
-export function protocolApiIds(): readonly string[] {
-  return capabilities.map((c) => c.id);
+export function protocolApiIds(caps: readonly ProtocolApiCapability[]): readonly string[] {
+  return resolved(caps).map((c) => c.id);
 }
 
-export function protocolApi(id: string): ProtocolApiCapability | undefined {
-  return capabilities.find((c) => c.id === id);
+export function protocolApi(
+  caps: readonly ProtocolApiCapability[],
+  id: string,
+): ProtocolApiCapability | undefined {
+  return resolved(caps).find((c) => c.id === id);
 }
 
-export function defaultProtocolApiId(): string {
-  return capabilities[0]?.id ?? "openai-completions";
+export function defaultProtocolApiId(caps: readonly ProtocolApiCapability[] = FALLBACK_PROTOCOL_APIS): string {
+  return resolved(caps)[0]?.id ?? "openai-completions";
 }
 
-export function defaultResponsesModeFor(api: string): ResponsesMode {
-  return protocolApi(api)?.defaultMode ?? "auto";
+export function defaultResponsesModeFor(
+  caps: readonly ProtocolApiCapability[],
+  api: string,
+): ResponsesMode {
+  return protocolApi(caps, api)?.defaultMode ?? "auto";
 }
 
-export function allowedResponsesModes(api: string): readonly ResponsesMode[] {
-  return protocolApi(api)?.responsesModes ?? ["auto"];
+export function allowedResponsesModes(
+  caps: readonly ProtocolApiCapability[],
+  api: string,
+): readonly ResponsesMode[] {
+  return protocolApi(caps, api)?.responsesModes ?? ["auto"];
 }

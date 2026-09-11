@@ -1,6 +1,8 @@
-import { useCallback, useReducer } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import type { ModelEntry, ProviderProfile, Upstream } from "../types";
 import { validateModelsJson, validateProfileJson } from "../lib/piModel";
+import { FALLBACK_PROTOCOL_APIS, protocolApiIds } from "../lib/protocolCapabilities";
+import { useProtocolCapabilities } from "../lib/protocolContext";
 
 export interface DraftModelRow {
   key: string;
@@ -155,12 +157,16 @@ function setChannelModels(state: ProfileDraftState, channel: string, models: Mod
   );
 }
 
-export function profileDraftReducer(state: ProfileDraftState, action: ProfileDraftAction): ProfileDraftState {
+export function profileDraftReducer(
+  state: ProfileDraftState,
+  action: ProfileDraftAction,
+  apiIds: readonly string[] = protocolApiIds(FALLBACK_PROTOCOL_APIS),
+): ProfileDraftState {
   switch (action.type) {
     case "setProfileField":
       return updateValue(state, { ...state.value, [action.field]: action.value });
     case "setRawText": {
-      const result = validateProfileJson(action.text);
+      const result = validateProfileJson(action.text, apiIds);
       if (!result.ok || !result.value) {
         return { ...state, rawText: action.text, rawError: result.error ?? "Invalid profile JSON", dirty: true };
       }
@@ -244,7 +250,13 @@ export function profileDraftReducer(state: ProfileDraftState, action: ProfileDra
 }
 
 export function useProfileDraft(profile: ProviderProfile) {
-  const [state, dispatch] = useReducer(profileDraftReducer, profile, createProfileDraft);
+  const caps = useProtocolCapabilities();
+  const apiIds = useMemo(() => protocolApiIds(caps), [caps]);
+  const [state, dispatch] = useReducer(
+    (current: ProfileDraftState, action: ProfileDraftAction) => profileDraftReducer(current, action, apiIds),
+    profile,
+    createProfileDraft,
+  );
   const resetFromServer = useCallback((next: ProviderProfile) => {
     dispatch({ type: "resetFromServer", profile: next });
   }, []);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { ProtocolProvider } from "./lib/protocolContext";
 import type { AppState } from "./types";
-import { setProtocolCapabilities } from "./lib/protocolCapabilities";
 import { Button, ToastProvider, cx } from "./components/ui";
 import { LanguageProvider, useI18n } from "./i18n";
 import { HomePanel } from "./components/HomePanel";
@@ -90,8 +90,6 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
   const refresh = useCallback(async () => {
     try {
       const next = await api.getState();
-      // The backend is the single source for the api list and responsesMode rule.
-      setProtocolCapabilities(next.protocol?.apis);
       setState(next);
       onConfigLang(next.settings.language ?? null);
       setError(null);
@@ -119,7 +117,8 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
   }, [drawerOpen]);
 
   return (
-    <div className="flex h-full flex-col md:flex-row">
+    <ProtocolProvider apis={state?.protocol?.apis}>
+      <div className="flex h-full flex-col md:flex-row">
       {/* Mobile top bar */}
       <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-zinc-950 px-4 py-3 md:hidden">
         <div className="flex items-center gap-3">
@@ -305,6 +304,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
           )}
         </div>
       </main>
-    </div>
+      </div>
+    </ProtocolProvider>
   );
 }
