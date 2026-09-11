@@ -37,15 +37,17 @@
 | `exposedModels: null` | 非法配置；在 boundary 报出字段路径错误，不转换为 `[]` 或全部暴露 |
 | model `id` 缺失、`null` 或空字符串 | 非法模型项；不生成空 ID 行、不发布、不路由 |
 | model metadata 缺失或 `contextWindow`/`maxTokens` 为 0 | 保留可用的本地模型项；不伪造 context/maxTokens/cost；clamp 不重写请求中的三个 max key，cost 记为 unknown |
-| `PUT /api/config`（整文件写入） | 只拦 `responsesMode`（唯一会让每个请求都失败的东西）；不跑完整 profile validation |
+| `PUT /api/config`（整文件写入） | 只拦会在请求期全面失败的组合：profile 级 responsesMode，以及每个 channel 的 effective responsesMode（channel 未声明 api 时回退 profile api）；不跑完整 profile validation |
 | Profile CRUD（`POST /api/profiles`、`PUT /api/profiles/:name`、CLI `provider add`） | 跑完整 `profile.ValidateProfile`：responsesMode → profile shape → retry |
+| `GET /api/config/validate`（advisory） | 报告完整诊断、不阻断也不写入：profile/channel/model shape 逐条来自 `profile.ProfileIssues`（带字段路径），外加 api/baseUrl/no-models/modelsDevProvider/retry/settings 检查 |
 
 写入门的校验强度差异是**有意的**，不是遗漏：
 
-1. loader（`ParseConfig`/`LoadConfigAtPath`）只保证结构合法（JSON + version/current），不校验 profile——它决定「这份配置能不能跑」，必须容忍半成品与遗留 shape。
-2. 因此整文件门不得比 loader 更严：`PUT /api/config` 只额外拦会在请求期全面失败的 `responsesMode`（`internal/translator/registry.go` 的请求期兜底规则），其余交给 `GET /api/config/validate`（只报告、不阻断）。
+1. loader（`ParseConfig`/`LoadConfigAtPath`）只决定配置能不能被解析和加载（JSON + version/current），不校验 profile——它能加载的配置未必都能跑，所以它不作为拒绝保存的依据。
+2. 因此整文件门只拦「运行期必然失败」的东西（`translator.PlanRequest` 请求期会拒绝的 effective api/mode 组合），其余交给 advisory 的 `GET /api/config/validate`。
 3. Profile CRUD 是「手写一个 profile」，可以也应该严格拒收。
-4. 若要收紧整文件门，必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
+4. 整文件门不得比 loader/runtime 更严：例如 channel 未声明 api 时按 profile api 判定，而不是要求每个 channel 自带 api——后者属于 CRUD 门（`ValidateUpstreamAPI`）的规则。
+5. 若要进一步收紧整文件门，必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 ### 2.3 Gateway
 

@@ -46,6 +46,16 @@ func handlePutConfig(c *gin.Context) {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
 			return
 		}
+		// 每个 channel 按「effective api + effective responsesMode」判定：显式声明 api 的
+		// channel 配了不兼容的 mode，就是 translator.PlanRequest 在请求期必然拒绝的组合。
+		// 未声明 api 的 channel 回退 profile api —— 与运行期一致，不算错误（整文件门不得
+		// 比 loader/runtime 更严，见 system-contract §2.2）。
+		for idx, u := range prof.Upstreams {
+			if err := config.ValidateEffectiveChannelAPI(u, prof); err != nil {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: upstreams[%d]: %s", name, idx, err.Error())})
+				return
+			}
+		}
 	}
 	if err := config.SaveAtPath(cfg, configPath()); err != nil {
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
@@ -568,10 +578,14 @@ func handleValidate(c *gin.Context) {
 		if err := config.ValidateProviderRetry(prof); err != nil {
 			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.retry", name), "message": err.Error()})
 		}
-		for idx, u := range prof.Upstreams {
-			if err := config.ValidateUpstreamAPI(u, prof); err != nil {
-				issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.upstreams[%d].api", name, idx), "message": err.Error()})
-			}
+		// shape / channel / model 诊断整份来自 profile.ProfileIssues（CRUD 门拒绝什么，
+		// 这里就报什么、且逐条带字段路径）——宽松保存 + 完整 advisory validation 才闭环。
+		for _, issue := range profile.ProfileIssues(prof) {
+			issues = append(issues, map[string]interface{}{
+				"level":   "error",
+				"path":    fmt.Sprintf("profiles.%s.%s", name, issue.Field),
+				"message": issue.Message,
+			})
 		}
 	}
 	// failover check removed (transitional)

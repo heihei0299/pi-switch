@@ -79,15 +79,41 @@ func (u Upstream) EffectiveResponsesMode(fallback string) string {
 	return fallback
 }
 
+// EffectiveAPI resolves the api a channel really speaks: its own when it declares
+// one, otherwise the profile's. The runtime resolves the same way, so anything that
+// judges a channel must judge it by this value rather than by u.API alone.
+func (u Upstream) EffectiveAPI(fallback string) string {
+	if u.API != "" {
+		return u.API
+	}
+	return fallback
+}
+
+// ValidateEffectiveChannelAPI checks the api/mode pair a channel will actually be
+// called with — effective api, effective mode — without demanding that the channel
+// declare its own api. This is the rule for the tolerant whole-file door, which must
+// not reject a config the loader and the runtime both accept; an empty effective api
+// means "nothing to judge" (incomplete profile), not an error.
+func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
+	api := u.EffectiveAPI(profile.API)
+	if api == "" {
+		return nil
+	}
+	if !protocol.IsKnown(api) {
+		return fmt.Errorf("unsupported api %s", api)
+	}
+	return protocol.ValidateResponsesMode(api, u.EffectiveResponsesMode(profile.ResponsesMode))
+}
+
+// ValidateUpstreamAPI checks one channel of a profile that is being authored, so it
+// additionally requires the channel to name its own api. It reports exactly what the
+// effective rule reports: an explicit per-channel api with an incompatible mode is
+// the combination translator.PlanRequest rejects at request time.
 func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	if u.API == "" {
 		return fmt.Errorf("api is required for each upstream")
 	}
-	effectiveMode := u.EffectiveResponsesMode(profile.ResponsesMode)
-	if !protocol.IsKnown(u.API) {
-		return fmt.Errorf("unsupported api %s", u.API)
-	}
-	return protocol.ValidateResponsesMode(u.API, effectiveMode)
+	return ValidateEffectiveChannelAPI(u, profile)
 }
 
 func validateUpstreamAPI(u Upstream, profile ProviderProfile) error {

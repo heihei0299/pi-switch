@@ -99,13 +99,6 @@ func ValidateGatewayProvider(gw map[string]interface{}) string {
 	return ""
 }
 
-func effectiveChannelAPI(profile config.ProviderProfile, channel config.Upstream) string {
-	if channel.API != "" {
-		return channel.API
-	}
-	return profile.API
-}
-
 // BuildGatewayDiagnostics reports configured channels that cannot belong to one of
 // the two fixed gateway providers.
 func BuildGatewayDiagnostics(cfg config.PiSwitchConfig) []GatewayDiagnostic {
@@ -118,7 +111,7 @@ func BuildGatewayDiagnostics(cfg config.PiSwitchConfig) []GatewayDiagnostic {
 	for _, supplier := range names {
 		prof := cfg.Profiles[supplier]
 		for i, channel := range prof.Upstreams {
-			api := effectiveChannelAPI(prof, channel)
+			api := channel.EffectiveAPI(prof.API)
 			if gatewayProviderForAPI(api) != "" {
 				continue
 			}
@@ -218,7 +211,7 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 		prof := cfg.Profiles[name]
 		for i := range prof.Upstreams {
 			channel := prof.Upstreams[i]
-			api := effectiveChannelAPI(prof, channel)
+			api := channel.EffectiveAPI(prof.API)
 			providerKey := gatewayProviderForAPI(api)
 			if providerKey == "" {
 				continue
@@ -285,7 +278,7 @@ func selectedGatewayModels(cfg config.PiSwitchConfig, selections []GatewaySelect
 			if profile.ChannelName(i) != selection.Channel {
 				continue
 			}
-			providerKey := gatewayProviderForAPI(effectiveChannelAPI(profile, channel))
+			providerKey := gatewayProviderForAPI(channel.EffectiveAPI(profile.API))
 			if providerKey == "" {
 				return nil, fmt.Errorf("gateway selection %s/%s uses unsupported api", selection.Supplier, selection.Channel)
 			}
@@ -1145,7 +1138,7 @@ func BuildPreviewGroups(cfg config.PiSwitchConfig, current, proposed map[string]
 		for i := range prof.Upstreams {
 			channel := prof.Upstreams[i]
 			ch := prof.ChannelName(i)
-			api := effectiveChannelAPI(prof, channel)
+			api := channel.EffectiveAPI(prof.API)
 			gatewayProvider := gatewayProviderForAPI(api)
 			if ch == "" || gatewayProvider == "" {
 				continue
