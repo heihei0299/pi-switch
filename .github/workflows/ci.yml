@@ -248,14 +248,16 @@ jobs:
         run: |
           ver=$(node -p "require('./package.json').version")
           pkg=$(node -p "require('./package.json').name")
-          for i in 1 2 3 4 5 6; do
-            if npm view "$pkg@$ver" version 2>/dev/null | grep -q "$ver"; then
+          registry=https://registry.npmjs.org
+          max_attempts=60
+          for ((i=1; i<=max_attempts; i++)); do
+            if npm view "$pkg@$ver" version --registry="$registry" 2>/dev/null | grep -Fxq "$ver"; then
               echo "verified $pkg@$ver on registry"
-              curl -fsSL "https://registry.npmjs.org/$pkg/$ver" | head -c 500
+              curl -fsSL "$registry/$pkg/$ver" | head -c 500
               exit 0
             fi
-            echo "retry $i/6 for $pkg@$ver"
-            sleep 5
+            echo "retry $i/$max_attempts for $pkg@$ver"
+            if ((i < max_attempts)); then sleep 10; fi
           done
           echo "publish verification failed for $pkg@$ver"
           exit 1
