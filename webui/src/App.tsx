@@ -282,7 +282,7 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
               )}
               {nav === "stats" && (
                 <PanelErrorBoundary>
-                  <StatsPanel state={state} refresh={refresh} />
+                  <StatsPanel state={state} />
                 </PanelErrorBoundary>
               )}
               {nav === "backups" && (

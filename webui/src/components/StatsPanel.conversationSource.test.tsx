@@ -58,20 +58,20 @@ describe("StatsPanel conversationSource off hides conversation UI", () => {
   afterEach(() => cleanup());
 
   it("hides By conversation when conversationSource is off", async () => {
-    render(<StatsPanel state={makeState("off")} refresh={async () => {}} />);
+    render(<StatsPanel state={makeState("off")} />);
     await screen.findByText("90.0%");
     expect(screen.queryByText(/By conversation/)).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "By conversation" })).not.toBeInTheDocument();
   });
 
   it("shows By conversation when conversationSource is sessionScan", async () => {
-    render(<StatsPanel state={makeState("sessionScan")} refresh={async () => {}} />);
+    render(<StatsPanel state={makeState("sessionScan")} />);
     await screen.findByText("90.0%");
     expect(screen.getByText(/By conversation/)).toBeInTheDocument();
   });
 
   it("shows By conversation when conversationSource is proxy", async () => {
-    render(<StatsPanel state={makeState("proxy")} refresh={async () => {}} />);
+    render(<StatsPanel state={makeState("proxy")} />);
     await screen.findByText("90.0%");
     expect(screen.getByText(/By conversation/)).toBeInTheDocument();
   });

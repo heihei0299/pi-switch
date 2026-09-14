@@ -52,7 +52,7 @@ describe("S4 Stats polling Off/5s/30s/5min", () => {
   });
 
   it("default Off does not start interval", async () => {
-    render(<StatsPanel state={appState()} refresh={async () => {}} />);
+    render(<StatsPanel state={appState()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(statsMock).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
@@ -60,7 +60,7 @@ describe("S4 Stats polling Off/5s/30s/5min", () => {
   });
 
   it("5s tier polls with window params透传 and 5s interval", async () => {
-    render(<StatsPanel state={appState()} refresh={async () => {}} />);
+    render(<StatsPanel state={appState()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(statsMock).toHaveBeenCalledTimes(1);
     const firstCall = statsMock.mock.calls[0] as any[];
@@ -86,7 +86,7 @@ describe("S4 Stats polling Off/5s/30s/5min", () => {
     statsMock.mockRejectedValueOnce(new Error("network fail") as never);
     statsMock.mockResolvedValue(usageStats({ totalRequests: 5, totalCost: 0.01 }));
 
-    render(<StatsPanel state={appState()} refresh={async () => {}} />);
+    render(<StatsPanel state={appState()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     // flush microtasks for render
     await act(async () => { await Promise.resolve(); });
@@ -107,7 +107,7 @@ describe("S4 Stats polling Off/5s/30s/5min", () => {
   });
 
   it("switching back to Off stops polling", async () => {
-    render(<StatsPanel state={appState()} refresh={async () => {}} />);
+    render(<StatsPanel state={appState()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const select = screen.getByLabelText(/Auto-refresh/i) as HTMLSelectElement;
     await act(async () => { fireEvent.change(select, { target: { value: "5000" } }); });
