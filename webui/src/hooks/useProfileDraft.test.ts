@@ -4,6 +4,7 @@ import { entryFromDraft, newModelDraft } from "../lib/piModel";
 import {
   createProfileDraft,
   materializeMainChannel,
+  materializeProfileForSave,
   profileDraftReducer,
 } from "./useProfileDraft";
 
@@ -101,5 +102,30 @@ describe("profile draft reducer", () => {
     expect(state.rows.main[state.rows.main.length - 1]?.key).toBe(draft.key);
     const models = state.value.upstreams?.[0].models ?? [];
     expect(models[models.length - 1]?.id).toBe("added");
+  });
+
+  it("materializes legacy fields for the Supplier save payload", () => {
+    const legacy = { ...profile(), upstreams: undefined } as ProviderProfile & {
+      models?: unknown[];
+      exposedModels?: string[];
+    };
+    legacy.models = [{ id: "legacy" }];
+    legacy.exposedModels = ["legacy"];
+
+    const saved = materializeProfileForSave(legacy);
+
+    expect(saved.upstreams).toEqual([
+      expect.objectContaining({
+        name: "main",
+        api: "openai-completions",
+        responsesMode: "auto",
+        baseUrl: "https://example.test/v1",
+        apiKey: "key",
+        models: [{ id: "legacy" }],
+        exposedModels: ["legacy"],
+      }),
+    ]);
+    expect(saved).not.toHaveProperty("models");
+    expect(saved).not.toHaveProperty("exposedModels");
   });
 });

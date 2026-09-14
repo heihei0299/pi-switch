@@ -73,6 +73,28 @@ export function materializeMainChannel(profile: ProviderProfile): ProviderProfil
   return { ...cloned, responsesMode: cloned.responsesMode ?? "auto", upstreams: [main] };
 }
 
+export function materializeProfileForSave(profile: ProviderProfile): ProviderProfile {
+  const next = clone(profile) as ProviderProfile & {
+    models?: ModelEntry[];
+    exposedModels?: string[];
+  };
+  if (!next.upstreams || next.upstreams.length === 0) {
+    next.upstreams = [{
+      name: "main",
+      api: next.api,
+      responsesMode: next.responsesMode ?? "auto",
+      baseUrl: next.baseUrl.trim(),
+      apiKey: next.apiKey.trim(),
+      headers: next.headers,
+      models: next.models ?? [],
+      exposedModels: next.exposedModels ?? [],
+    }];
+    delete next.models;
+    delete next.exposedModels;
+  }
+  return next;
+}
+
 function reconcileRows(previous: DraftModelRow[] | undefined, models: ModelEntry[]): DraftModelRow[] {
   return models.map((model, index) => ({
     key: previous?.[index]?.key ?? previous?.find((row) => row.model.id === model.id)?.key ?? rowKey(),
