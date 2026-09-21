@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -51,7 +52,10 @@ func Open(path string) (*sql.DB, error) {
 	// Serialize short SQLite writer contention (startup migration, request
 	// logging, and concurrent explicit import triggers) instead of surfacing
 	// SQLITE_BUSY to an otherwise idempotent caller.
-	_, _ = db.Exec(`PRAGMA busy_timeout = 5000`)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureTable(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -60,7 +64,7 @@ func Open(path string) (*sql.DB, error) {
 }
 
 func ensureTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS requests (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS requests (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		ts TEXT,
 		provider TEXT,
@@ -74,45 +78,52 @@ func ensureTable(db *sql.DB) error {
 		conversation_id TEXT,
 		conversation_name TEXT,
 		latency_ms INTEGER
-	)`)
+	)`); err != nil {
+		return err
+	}
+
+	rows, err := db.Query(`PRAGMA table_info(requests)`)
 	if err != nil {
 		return err
 	}
-	// Migration for old DBs missing any of the newer columns
-	cols := []string{"reasoning_tokens", "cost", "conversation_name", "latency_ms", "legacy_source", "legacy_identity", "legacy_offset"}
-	for _, col := range cols {
-		has := false
-		rows, err := db.Query(`PRAGMA table_info(requests)`)
-		if err != nil {
-			continue
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			_ = rows.Close()
+			return err
 		}
-		for rows.Next() {
-			var cid int
-			var name, ctype string
-			var notnull, pk int
-			var dflt sql.NullString
-			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil && name == col {
-				has = true
-				break
-			}
-		}
-		rows.Close()
-		if !has {
-			var typ string
-			if col == "cost" {
-				typ = "REAL"
-			} else if col == "conversation_name" || col == "conversation_id" || col == "ts" || col == "provider" || col == "model" || col == "legacy_source" || col == "legacy_identity" {
-				typ = "TEXT"
-			} else {
-				typ = "INTEGER"
-			}
-			_, _ = db.Exec(`ALTER TABLE requests ADD COLUMN ` + col + ` ` + typ)
-		}
+		columns[name] = true
 	}
-	if err := ensureLegacyMigrationSchema(db); err != nil {
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return err
 	}
-	return nil
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	columnTypes := []struct{ name, typ string }{
+		{"reasoning_tokens", "INTEGER"},
+		{"cost", "REAL"},
+		{"conversation_name", "TEXT"},
+		{"latency_ms", "INTEGER"},
+		{"legacy_source", "TEXT"},
+		{"legacy_identity", "TEXT"},
+		{"legacy_offset", "INTEGER"},
+	}
+	for _, column := range columnTypes {
+		if columns[column.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE requests ADD COLUMN ` + column.name + ` ` + column.typ); err != nil {
+			return fmt.Errorf("migrate requests.%s: %w", column.name, err)
+		}
+	}
+	return ensureLegacyMigrationSchema(db)
 }
 
 // InsertRequest inserts one request row. cost may be nil (unknown).
@@ -139,11 +150,7 @@ func QueryRecent(db *sql.DB, limit int) ([]RequestRow, error) {
 	}
 	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,cost,conversation_id,latency_ms FROM requests ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
-		_ = ensureTable(db)
-		rows, err = db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,cost,conversation_id,latency_ms FROM requests ORDER BY id DESC LIMIT ?`, limit)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	defer rows.Close()
 	var out []RequestRow
