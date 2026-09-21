@@ -306,22 +306,24 @@ func legacyFloatPointer(value map[string]interface{}, keys ...string) *float64 {
 }
 
 // appendLegacyLog appends one old-shape JSON line to requests.log.
-// Best-effort: failures are swallowed so logging never breaks proxying.
-func appendLegacyLog(entry map[string]interface{}) {
+func appendLegacyLog(entry map[string]interface{}) error {
 	path := legacyLogPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
+		return err
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // legacyLogEntry builds the old-shape log line from a completed request.

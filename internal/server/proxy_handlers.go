@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -941,10 +942,6 @@ func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reas
 }
 
 func logRequest(provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
-	db, err := store.GetDB()
-	if err != nil {
-		return
-	}
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	succ := 0
 	if success {
@@ -953,12 +950,17 @@ func logRequest(provider, model string, success bool, prompt, completion, cached
 	var costVal interface{}
 	if cost != nil {
 		costVal = *cost
-	} else {
-		costVal = nil
 	}
-	_, _ = db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency)
-	appendLegacyLog(legacyLogEntry(ts, provider, model, success, prompt, completion, cached, reasoning, cost, convID, convName, status, errMsg, upstreamURL))
+	entry := legacyLogEntry(ts, provider, model, success, prompt, completion, cached, reasoning, cost, convID, convName, status, errMsg, upstreamURL)
+	if db, err := store.GetDB(); err != nil {
+		log.Printf("request log database: %v", err)
+	} else if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency); err != nil {
+		log.Printf("request log insert: %v", err)
+	}
+	if err := appendLegacyLog(entry); err != nil {
+		log.Printf("request log legacy: %v", err)
+	}
 }
 
 func dump400(model, errMsg string, body []byte) {
