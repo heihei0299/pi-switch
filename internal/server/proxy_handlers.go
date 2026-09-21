@@ -248,6 +248,56 @@ func extractData(frame []byte) string {
 	return ""
 }
 
+func consumeSSEFrames(buf *bytes.Buffer, chunk []byte, onData func(string)) {
+	buf.Write(chunk)
+	for {
+		raw := buf.Bytes()
+		end, sep := findFrameEnd(raw)
+		if end < 0 {
+			return
+		}
+		frame := append([]byte(nil), raw[:end]...)
+		buf.Next(end + sep)
+		onData(extractData(frame))
+	}
+}
+
+func isSSEFailure(data string, format translator.Format) bool {
+	var event map[string]interface{}
+	if json.Unmarshal([]byte(data), &event) != nil {
+		return false
+	}
+	typ, _ := event["type"].(string)
+	switch format {
+	case translator.FormatOpenAIResponses:
+		return typ == "response.failed"
+	case translator.FormatAnthropic:
+		return typ == "error"
+	default:
+		_, ok := event["error"]
+		return ok
+	}
+}
+
+func isSSETerminal(data string, format translator.Format) bool {
+	if format == translator.FormatOpenAIChat {
+		return data == "[DONE]"
+	}
+	var event map[string]interface{}
+	if json.Unmarshal([]byte(data), &event) != nil {
+		return false
+	}
+	typ, _ := event["type"].(string)
+	switch format {
+	case translator.FormatOpenAIResponses:
+		return typ == "response.completed" || typ == "response.incomplete" || typ == "response.failed"
+	case translator.FormatAnthropic:
+		return typ == "message_stop"
+	default:
+		return false
+	}
+}
+
 // maxProxyBodyEnv names the environment variable that overrides the proxy body
 // cap. It lives here, next to its only consumer, so the cap cannot drift away
 // from the code that enforces it.
@@ -660,10 +710,10 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		streamConvert(c, resp, conv, plan.From == translator.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
 		return
 	}
-	streamPassthrough(c, resp, name, realModel, modelEntry, convID, convName, start)
+	streamPassthrough(c, resp, plan.To, name, realModel, modelEntry, convID, convName, start)
 }
 
-func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat translator.Format, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
 	defer resp.Body.Close()
 	parser := usage.NewSseUsageParser()
 	for k, vv := range resp.Header {
@@ -681,18 +731,31 @@ func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel 
 	flusher, _ := c.Writer.(http.Flusher)
 	buf := make([]byte, 4096)
 	var totalBytes bytes.Buffer
+	var frames bytes.Buffer
+	terminalSeen := false
+	logicalFailure := false
+	var readErr error
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
 			parser.Push(chunk)
 			totalBytes.Write(chunk)
+			consumeSSEFrames(&frames, chunk, func(data string) {
+				if isSSETerminal(data, upstreamFormat) {
+					terminalSeen = true
+				}
+				if isSSEFailure(data, upstreamFormat) {
+					logicalFailure = true
+				}
+			})
 			_, _ = c.Writer.Write(chunk)
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
+			readErr = err
 			break
 		}
 	}
@@ -711,8 +774,22 @@ func streamPassthrough(c *gin.Context, resp *http.Response, provider, realModel 
 		prompt, completion, cached, reasoning = extractUsage(respObj)
 		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	}
+	streamFailed := logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
+	errorMessage := ""
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		errorMessage = readErr.Error()
+	} else if logicalFailure {
+		errorMessage = "upstream stream failed"
+	} else if !terminalSeen {
+		streamFailed = true
+		errorMessage = "upstream stream ended without terminal event"
+	}
+	statusCode := resp.StatusCode
+	if streamFailed {
+		statusCode = http.StatusBadGateway
+	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, true, prompt, completion, cached, reasoning, cost, convID, convName, latMs, resp.StatusCode, "", requestURLOf(resp))
+	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
 }
 
 // streamConvert relays an upstream SSE stream through a registry converter.
@@ -735,6 +812,12 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 	c.Status(resp.StatusCode)
 	flusher, _ := c.Writer.(http.Flusher)
 	streamFailed := false
+	var streamErr error
+	terminalSeen := false
+	upstreamFormat := translator.FormatOpenAIResponses
+	if responsesStyle {
+		upstreamFormat = translator.FormatOpenAIChat
+	}
 	emit := func(ev map[string]interface{}) {
 		if _, ok := ev["error"]; ok {
 			streamFailed = true
@@ -762,44 +845,52 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		if n > 0 {
 			chunk := tmp[:n]
 			parser.Push(chunk)
-			buf.Write(chunk)
-			for {
-				raw := buf.Bytes()
-				end, sep := findFrameEnd(raw)
-				if end < 0 {
-					break
+			consumeSSEFrames(&buf, chunk, func(data string) {
+				if data == "" {
+					return
 				}
-				frame := make([]byte, end)
-				copy(frame, raw[:end])
-				newBuf := make([]byte, len(raw)-end-sep)
-				copy(newBuf, raw[end+sep:])
-				buf.Reset()
-				buf.Write(newBuf)
-				data := extractData(frame)
-				if data == "" || data == "[DONE]" {
-					continue
+				if isSSETerminal(data, upstreamFormat) {
+					terminalSeen = true
+				}
+				if data == "[DONE]" {
+					return
 				}
 				var v map[string]interface{}
 				if err := json.Unmarshal([]byte(data), &v); err != nil {
-					continue
+					return
 				}
-				events, _ := conv.PushEvent(v)
+				events, err := conv.PushEvent(v)
+				if err != nil {
+					streamFailed = true
+					streamErr = err
+					return
+				}
 				for _, ev := range events {
 					emit(ev)
 				}
-			}
+			})
 		}
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				streamFailed = true
+				streamErr = err
+			}
 			break
 		}
 	}
-	for _, ev := range conv.Finish() {
-		emit(ev)
+	if !streamFailed && !terminalSeen {
+		streamFailed = true
+		streamErr = errors.New("upstream stream ended without terminal event")
 	}
-	if !responsesStyle {
-		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
-		if flusher != nil {
-			flusher.Flush()
+	if !streamFailed {
+		for _, ev := range conv.Finish() {
+			emit(ev)
+		}
+		if !responsesStyle {
+			_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 	usageSum := parser.Finish()
@@ -824,7 +915,11 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 	errorMessage := ""
 	if streamFailed {
 		statusCode = http.StatusBadGateway
-		errorMessage = "upstream stream failed"
+		if streamErr != nil {
+			errorMessage = streamErr.Error()
+		} else {
+			errorMessage = "upstream stream failed"
+		}
 	}
 	latMs := time.Since(start).Milliseconds()
 	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
