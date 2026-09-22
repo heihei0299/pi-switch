@@ -206,6 +206,92 @@ func AnthropicToOpenAIResponse(anthro map[string]interface{}) map[string]interfa
 	return resp
 }
 
+// OpenAIToAnthropicResponse converts an OpenAI Chat response into the
+// Anthropic Messages response shape. It is the response-side inverse of
+// AnthropicToChat and is required whenever an Anthropic client is routed to a
+// Chat upstream.
+func OpenAIToAnthropicResponse(chat map[string]interface{}) (map[string]interface{}, error) {
+	choices, ok := chat["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil, &ResponsesConversionError{Kind: "invalid", Message: "chat response has no choices array"}
+	}
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, &ResponsesConversionError{Kind: "invalid", Message: "chat response choice is invalid"}
+	}
+	message, _ := choice["message"].(map[string]interface{})
+	if message == nil {
+		return nil, &ResponsesConversionError{Kind: "invalid", Message: "chat response has no message"}
+	}
+	var content []interface{}
+	if text, ok := message["content"].(string); ok && text != "" {
+		content = append(content, map[string]interface{}{"type": "text", "text": text})
+	}
+	if calls, ok := message["tool_calls"].([]interface{}); ok {
+		for _, raw := range calls {
+			call, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			fn, _ := call["function"].(map[string]interface{})
+			if fn == nil {
+				fn = map[string]interface{}{}
+			}
+			content = append(content, map[string]interface{}{
+				"type":  "tool_use",
+				"id":    call["id"],
+				"name":  fn["name"],
+				"input": decodeJSONOrString(fn["arguments"]),
+			})
+		}
+	}
+	if content == nil {
+		content = []interface{}{}
+	}
+	stopReason := "end_turn"
+	if reason, _ := choice["finish_reason"].(string); reason != "" {
+		switch reason {
+		case "length":
+			stopReason = "max_tokens"
+		case "tool_calls", "function_call":
+			stopReason = "tool_use"
+		default:
+			stopReason = reason
+		}
+	}
+	model, _ := chat["model"].(string)
+	resp := map[string]interface{}{
+		"id":         chat["id"],
+		"type":       "message",
+		"role":       "assistant",
+		"model":      model,
+		"content":    content,
+		"stop_reason": stopReason,
+	}
+	if resp["id"] == nil {
+		resp["id"] = fmt.Sprintf("msg_%d", time.Now().UnixNano())
+	}
+	if usage, ok := chat["usage"].(map[string]interface{}); ok {
+		resp["usage"] = map[string]interface{}{
+			"input_tokens":  usage["prompt_tokens"],
+			"output_tokens": usage["completion_tokens"],
+		}
+	}
+	return resp, nil
+}
+
+func decodeJSONOrString(value interface{}) interface{} {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	var decoded interface{}
+	if json.Unmarshal([]byte(text), &decoded) == nil {
+		return decoded
+	}
+	return text
+}
+
 func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error) {
 	var messages []interface{}
 	if input, ok := body["input"]; ok {

@@ -95,3 +95,41 @@ func TestRegistry_RequestTransformRoundTrip(t *testing.T) {
 		t.Fatalf("system should become instructions, got %v", out2)
 	}
 }
+
+func TestRegistry_ResponseTransformsReturnClientProtocol(t *testing.T) {
+	chat := map[string]interface{}{
+		"id": "chatcmpl-1", "model": "m", "choices": []interface{}{map[string]interface{}{
+			"message": map[string]interface{}{"role": "assistant", "content": "hello"},
+			"finish_reason": "stop",
+		}},
+	}
+
+	chatToResponses, err := PlanRequest("chat", "openai-responses", "auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	responsesUpstream := map[string]interface{}{
+		"id": "resp-1", "model": "m", "output": []interface{}{map[string]interface{}{
+			"type": "message", "role": "assistant", "content": []interface{}{map[string]interface{}{"type": "output_text", "text": "hello"}},
+		}},
+	}
+	chatResponse, err := chatToResponses.TransformResponse(responsesUpstream, "m")
+	if err != nil {
+		t.Fatalf("responses to chat: %v", err)
+	}
+	if chatResponse["object"] != "chat.completion" {
+		t.Fatalf("response object = %v, want chat.completion", chatResponse["object"])
+	}
+
+	anthropicToChat, err := PlanRequest("messages", "openai-completions", "auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anthropicResponse, err := anthropicToChat.TransformResponse(chat, "m")
+	if err != nil {
+		t.Fatalf("chat to anthropic: %v", err)
+	}
+	if anthropicResponse["type"] != "message" || anthropicResponse["role"] != "assistant" {
+		t.Fatalf("response = %v, want Anthropic message", anthropicResponse)
+	}
+}
