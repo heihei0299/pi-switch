@@ -53,7 +53,7 @@ func init() {
 	// Chat -> Responses (chat clients against openai-responses upstreams).
 	Register(FormatOpenAIChat, FormatOpenAIResponses,
 		func(model string, body map[string]interface{}) (map[string]interface{}, error) {
-			return ChatToResponses(body), nil
+			return ChatToResponsesWithError(body)
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
 			return ResponsesToChat(upstream)

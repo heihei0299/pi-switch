@@ -1,6 +1,7 @@
 package translator
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -9,20 +10,72 @@ import (
 // Responses body. Moved from internal/server (chatToResponses) so every
 // conversion lives behind the translator registry.
 func ChatToResponses(body map[string]interface{}) map[string]interface{} {
+	out, _ := ChatToResponsesWithError(body)
+	return out
+}
+
+// ChatToResponsesWithError converts Chat history including the function-call
+// turns that are represented as separate items by the Responses API. The
+// compatibility wrapper above is retained for callers that only need the
+// historical best-effort conversion; request routing uses this error-returning
+// form so malformed tool state is never silently discarded.
+func ChatToResponsesWithError(body map[string]interface{}) (map[string]interface{}, error) {
 	var input []interface{}
 	var instructions []string
 	if msgs, ok := body["messages"].([]interface{}); ok {
 		for _, m := range msgs {
 			if pm, ok := m.(map[string]interface{}); ok {
 				role, _ := pm["role"].(string)
-				content := normalizeChatContent(pm["content"])
 				if role == "system" || role == "developer" {
 					if text := chatInstructionText(pm["content"]); text != "" {
 						instructions = append(instructions, text)
 					}
 					continue
 				}
+				if role == "tool" {
+					callID, _ := pm["tool_call_id"].(string)
+					if strings.TrimSpace(callID) == "" {
+						return nil, fmt.Errorf("tool message is missing tool_call_id")
+					}
+					input = append(input, map[string]interface{}{
+						"type": "function_call_output", "call_id": callID, "output": pm["content"],
+					})
+					continue
+				}
+				content := normalizeChatContent(pm["content"])
 				input = append(input, map[string]interface{}{"role": role, "content": content})
+				if role == "assistant" {
+					calls, ok := pm["tool_calls"].([]interface{})
+					if !ok {
+						continue
+					}
+					for _, rawCall := range calls {
+						call, ok := rawCall.(map[string]interface{})
+						if !ok {
+							return nil, fmt.Errorf("assistant tool call is invalid")
+						}
+						callID, _ := call["id"].(string)
+						fn, _ := call["function"].(map[string]interface{})
+						if strings.TrimSpace(callID) == "" || fn == nil {
+							return nil, fmt.Errorf("assistant tool call is missing id or function")
+						}
+						name, _ := fn["name"].(string)
+						if strings.TrimSpace(name) == "" {
+							return nil, fmt.Errorf("assistant tool call is missing function name")
+						}
+						arguments := fn["arguments"]
+						if _, ok := arguments.(string); !ok {
+							encoded, err := json.Marshal(arguments)
+							if err != nil {
+								return nil, fmt.Errorf("tool call %s arguments: %w", callID, err)
+							}
+							arguments = string(encoded)
+						}
+						input = append(input, map[string]interface{}{
+							"type": "function_call", "call_id": callID, "name": name, "arguments": arguments,
+						})
+					}
+				}
 			}
 		}
 	}
@@ -44,7 +97,7 @@ func ChatToResponses(body map[string]interface{}) map[string]interface{} {
 	if tools, ok := body["tools"]; ok {
 		out["tools"] = tools
 	}
-	return out
+	return out, nil
 }
 func chatInstructionText(content interface{}) string {
 	switch v := content.(type) {

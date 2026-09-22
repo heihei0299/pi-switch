@@ -115,3 +115,41 @@ func TestChatToResponsesCombinesSystemAndDeveloperInstructions(t *testing.T) {
 		t.Fatalf("input role = %v, want user", message["role"])
 	}
 }
+
+func TestChatToResponsesPreservesToolCallTurns(t *testing.T) {
+	out, err := ChatToResponsesWithError(map[string]interface{}{
+		"model": "m",
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "What time is it?"},
+			map[string]interface{}{
+				"role": "assistant", "content": "", "tool_calls": []interface{}{
+					map[string]interface{}{"id": "call-1", "type": "function", "function": map[string]interface{}{"name": "get_time", "arguments": `{"tz":"UTC"}`}},
+				},
+			},
+			map[string]interface{}{"role": "tool", "tool_call_id": "call-1", "content": `{"time":"12:00"}`},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, _ := out["input"].([]interface{})
+	if len(items) != 4 {
+		t.Fatalf("input items = %d, want 4: %v", len(items), items)
+	}
+	call, _ := items[2].(map[string]interface{})
+	if call["type"] != "function_call" || call["call_id"] != "call-1" || call["name"] != "get_time" || call["arguments"] != `{"tz":"UTC"}` {
+		t.Fatalf("function call item = %v", call)
+	}
+	result, _ := items[3].(map[string]interface{})
+	if result["type"] != "function_call_output" || result["call_id"] != "call-1" {
+		t.Fatalf("function output item = %v", result)
+	}
+}
+
+func TestChatToResponsesRejectsToolMessageWithoutID(t *testing.T) {
+	if _, err := ChatToResponsesWithError(map[string]interface{}{
+		"messages": []interface{}{map[string]interface{}{"role": "tool", "content": "result"}},
+	}); err == nil {
+		t.Fatal("missing tool_call_id must be rejected")
+	}
+}
