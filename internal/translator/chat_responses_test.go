@@ -153,3 +153,47 @@ func TestChatToResponsesRejectsToolMessageWithoutID(t *testing.T) {
 		t.Fatal("missing tool_call_id must be rejected")
 	}
 }
+
+func TestChatToResponsesConvertsToolDefinitionsAndChoice(t *testing.T) {
+	out, err := ChatToResponsesWithError(map[string]interface{}{
+		"model": "m",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "call a tool"}},
+		"tools": []interface{}{map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name": "get_time", "description": "read the clock",
+				"parameters": map[string]interface{}{"type": "object"},
+			},
+		}},
+		"tool_choice": map[string]interface{}{
+			"type": "function", "function": map[string]interface{}{"name": "get_time"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := out["tools"].([]interface{})
+	if len(tools) != 1 {
+		t.Fatalf("tools = %v", out["tools"])
+	}
+	tool, _ := tools[0].(map[string]interface{})
+	if tool["name"] != "get_time" || tool["function"] != nil {
+		t.Fatalf("Responses tool shape = %v", tool)
+	}
+	choice, _ := out["tool_choice"].(map[string]interface{})
+	if choice["type"] != "function" || choice["name"] != "get_time" {
+		t.Fatalf("Responses tool_choice = %v", out["tool_choice"])
+	}
+}
+
+func TestChatToResponsesRejectsInvalidToolArguments(t *testing.T) {
+	if _, err := ChatToResponsesWithError(map[string]interface{}{
+		"messages": []interface{}{map[string]interface{}{
+			"role": "assistant", "tool_calls": []interface{}{map[string]interface{}{
+				"id": "call-1", "function": map[string]interface{}{"name": "get_time", "arguments": "not-json"},
+			}},
+		}},
+	}); err == nil {
+		t.Fatal("invalid tool arguments must be rejected")
+	}
+}

@@ -436,13 +436,6 @@ func handleChatCompletions(c *gin.Context) {
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
-	// A converted stream must have a converter for the reverse direction.
-	// Passing an incompatible SSE protocol through is worse than rejecting the
-	// request because clients can otherwise consume malformed partial output.
-	if !plan.Passthrough && plan.StreamConverter(realModel) == nil {
-		c.JSON(502, inferenceError(fmt.Sprintf("streaming conversion from %s to %s is not supported", plan.To, plan.From), "not_supported"))
-		return
-	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
 		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
@@ -483,8 +476,20 @@ func handleChatCompletions(c *gin.Context) {
 		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
 		return
 	}
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if readErr != nil {
+		status := http.StatusBadGateway
+		if errors.Is(c.Request.Context().Err(), context.Canceled) {
+			status = 499
+		}
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
+		if status == 499 {
+			return
+		}
+		c.JSON(502, inferenceError(readErr.Error(), "upstream_error"))
+		return
+	}
 	if resp.StatusCode >= 400 {
 		bodyStr := string(respBody)
 		shouldRetry := resp.StatusCode == 400 && strings.Contains(bodyStr, "invalid_request_error")
@@ -509,26 +514,39 @@ func handleChatCompletions(c *gin.Context) {
 				bbytes2, _ := json.Marshal(convBody2)
 				retryPlan := outboundPlan
 				retryPlan.Body = bbytes2
-				outbound2, err2 := BuildOutboundRequest(retryPlan)
-				if err2 == nil {
-					resp2, err2 := outbound2.Client.Do(outbound2.Request)
+					outbound2, err2 := BuildOutboundRequest(retryPlan)
 					if err2 == nil {
-						respBody2, _ := io.ReadAll(resp2.Body)
-						resp2.Body.Close()
-						if resp2.StatusCode < 400 {
-							// Success on retry: handle as normal success
+						resp2, err2 := outbound2.Client.Do(outbound2.Request)
+						if err2 == nil {
+							respBody2, readErr2 := io.ReadAll(resp2.Body)
+							resp2.Body.Close()
+							if resp2.StatusCode < 400 {
+								if readErr2 != nil {
+									status := http.StatusBadGateway
+
+									if errors.Is(c.Request.Context().Err(), context.Canceled) {
+										status = 499
+									}
+									logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)
+									if status == 499 {
+										return
+									}
+									c.JSON(502, inferenceError(readErr2.Error(), "upstream_error"))
+									return
+								}
+								// Success on retry: handle as normal success
 							finalBody2 := respBody2
 							finalHeaders2 := resp2.Header
 							if needRespConvert {
-								var upstreamObj map[string]interface{}
-								if err := json.Unmarshal(respBody2, &upstreamObj); err == nil {
-									if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
-										b, _ := json.Marshal(conv)
-										finalBody2 = b
-										finalHeaders2 = http.Header{}
-										finalHeaders2.Set("Content-Type", "application/json")
-									}
+								converted, convertErr := transformResponseBody(plan, respBody2, realModel)
+								if convertErr != nil {
+									logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound2.Metadata.URL)
+									c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
+									return
 								}
+								finalBody2 = converted
+								finalHeaders2 = http.Header{}
+								finalHeaders2.Set("Content-Type", "application/json")
 							}
 							var respObj map[string]interface{}
 							_ = json.Unmarshal(finalBody2, &respObj)
@@ -558,9 +576,12 @@ func handleChatCompletions(c *gin.Context) {
 							}
 							c.Data(resp2.StatusCode, ct, finalBody2)
 							return
-						}
-						// Retry also failed: fall through to original 400 handling but log retry body
-						_ = respBody2
+							}
+							// Retry also failed: fall through to original 400 handling but log retry body
+							_ = respBody2
+					} else if errors.Is(c.Request.Context().Err(), context.Canceled) {
+						logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 499, err2.Error(), outbound2.Metadata.URL)
+						return
 					}
 				}
 			}
@@ -572,15 +593,15 @@ func handleChatCompletions(c *gin.Context) {
 	finalBody := respBody
 	finalHeaders := resp.Header
 	if needRespConvert {
-		var upstreamObj map[string]interface{}
-		if err := json.Unmarshal(respBody, &upstreamObj); err == nil {
-			if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
-				b, _ := json.Marshal(conv)
-				finalBody = b
-				finalHeaders = http.Header{}
-				finalHeaders.Set("Content-Type", "application/json")
-			}
+		converted, convertErr := transformResponseBody(plan, respBody, realModel)
+		if convertErr != nil {
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound.Metadata.URL)
+			c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
+			return
 		}
+		finalBody = converted
+		finalHeaders = http.Header{}
+		finalHeaders.Set("Content-Type", "application/json")
 	}
 	var respObj map[string]interface{}
 	_ = json.Unmarshal(finalBody, &respObj)
@@ -679,6 +700,13 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
+	// A converted stream must have a converter for the reverse direction.
+	// Passing an incompatible SSE protocol through is worse than rejecting the
+	// request because clients can otherwise consume malformed partial output.
+	if !plan.Passthrough && plan.StreamConverter(realModel) == nil {
+		c.JSON(502, inferenceError(fmt.Sprintf("streaming conversion from %s to %s is not supported", plan.To, plan.From), "not_supported"))
+		return
+	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
 		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
@@ -761,6 +789,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	logicalFailure := false
 	var readErr error
 	clientCanceled := false
+	streamFailed := false
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
@@ -793,9 +822,6 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	if errors.Is(c.Request.Context().Err(), context.Canceled) {
 		clientCanceled = true
 	}
-	if clientCanceled {
-		streamFailed = true
-	}
 	usageSum := parser.Finish()
 	var prompt, completion, cached, reasoning int
 	var cost *float64
@@ -811,7 +837,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 		prompt, completion, cached, reasoning = extractUsage(respObj)
 		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	}
-	streamFailed := logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
+	streamFailed = logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
 	errorMessage := ""
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		errorMessage = readErr.Error()
@@ -820,6 +846,9 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	} else if !terminalSeen {
 		streamFailed = true
 		errorMessage = "upstream stream ended without terminal event"
+	}
+	if clientCanceled {
+		streamFailed = true
 	}
 	statusCode := resp.StatusCode
 	if streamFailed {
@@ -932,6 +961,10 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 			break
 		}
 	}
+	if errors.Is(c.Request.Context().Err(), context.Canceled) {
+		clientCanceled = true
+		streamFailed = true
+	}
 	if !streamFailed && !terminalSeen {
 		streamFailed = true
 		streamErr = errors.New("upstream stream ended without terminal event")
@@ -988,6 +1021,22 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 	var out map[string]interface{}
 	_ = json.Unmarshal(b, &out)
 	return out
+}
+
+func transformResponseBody(plan translator.Plan, raw []byte, model string) ([]byte, error) {
+	var upstream map[string]interface{}
+	if err := json.Unmarshal(raw, &upstream); err != nil {
+		return nil, fmt.Errorf("upstream response is not valid JSON: %w", err)
+	}
+	converted, err := plan.TransformResponse(upstream, model)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(converted)
+	if err != nil {
+		return nil, fmt.Errorf("converted response is not serializable: %w", err)
+	}
+	return b, nil
 }
 
 func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reasoning int) {

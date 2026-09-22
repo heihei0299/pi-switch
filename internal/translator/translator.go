@@ -3,6 +3,7 @@ package translator
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/protocol"
@@ -253,6 +254,8 @@ func OpenAIToAnthropicResponse(chat map[string]interface{}) (map[string]interfac
 		switch reason {
 		case "length":
 			stopReason = "max_tokens"
+		case "stop":
+			stopReason = "end_turn"
 		case "tool_calls", "function_call":
 			stopReason = "tool_use"
 		default:
@@ -363,6 +366,119 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 		chat["messages"] = []interface{}{}
 	}
 	return chat, nil
+}
+
+// ResponsesToChatResponse converts a Responses API completion into the Chat
+// Completions response shape. It is deliberately separate from ResponsesToChat:
+// the latter converts request input and cannot be used on an upstream response.
+func ResponsesToChatResponse(body map[string]interface{}, fallbackModel string) (map[string]interface{}, error) {
+	items, ok := body["output"].([]interface{})
+	if !ok {
+		return nil, &ResponsesConversionError{Kind: "invalid", Message: "responses response has no output array"}
+	}
+	var textParts []string
+	var toolCalls []interface{}
+	for _, raw := range items {
+		item, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		switch typ {
+		case "message":
+			content, _ := item["content"].([]interface{})
+			for _, rawPart := range content {
+				part, ok := rawPart.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				partType, _ := part["type"].(string)
+				if partType == "output_text" || partType == "text" {
+					if text, ok := part["text"].(string); ok {
+						textParts = append(textParts, text)
+					}
+				}
+			}
+		case "function_call":
+			callID, _ := item["call_id"].(string)
+			name, _ := item["name"].(string)
+			if strings.TrimSpace(callID) == "" || strings.TrimSpace(name) == "" {
+				return nil, &ResponsesConversionError{Kind: "invalid", Message: "responses function call is missing call_id or name"}
+			}
+			arguments := item["arguments"]
+			if argumentText, ok := arguments.(string); ok {
+				arguments = argumentText
+			} else {
+				encoded, err := json.Marshal(arguments)
+				if err != nil {
+					return nil, &ResponsesConversionError{Kind: "invalid", Message: fmt.Sprintf("responses function call %s has invalid arguments: %v", callID, err)}
+				}
+				arguments = string(encoded)
+			}
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id": callID, "type": "function",
+				"function": map[string]interface{}{"name": name, "arguments": arguments},
+			})
+		}
+	}
+	message := map[string]interface{}{"role": "assistant", "content": strings.Join(textParts, "")}
+	if len(textParts) == 0 {
+		message["content"] = nil
+	}
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		message["tool_calls"] = toolCalls
+		finishReason = "tool_calls"
+	} else if status, _ := body["status"].(string); status == "incomplete" {
+		finishReason = "length"
+	}
+	model, _ := body["model"].(string)
+	if model == "" {
+		model = fallbackModel
+	}
+	created := float64(time.Now().Unix())
+	if value, ok := body["created_at"].(float64); ok {
+		created = value
+	}
+	response := map[string]interface{}{
+		"id":      body["id"],
+		"object":  "chat.completion",
+		"created": created,
+		"model":   model,
+		"choices": []interface{}{map[string]interface{}{
+			"index": 0, "message": message, "finish_reason": finishReason,
+		}},
+	}
+	if response["id"] == nil {
+		response["id"] = fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+	}
+	if usage, ok := body["usage"].(map[string]interface{}); ok {
+		mapped := map[string]interface{}{
+			"prompt_tokens":     usage["input_tokens"],
+			"completion_tokens": usage["output_tokens"],
+			"total_tokens":      usage["total_tokens"],
+		}
+		if mapped["total_tokens"] == nil {
+			mapped["total_tokens"] = sumNumeric(mapped["prompt_tokens"], mapped["completion_tokens"])
+		}
+		response["usage"] = mapped
+	}
+	return response, nil
+}
+
+func sumNumeric(values ...interface{}) float64 {
+	var total float64
+	for _, value := range values {
+		switch n := value.(type) {
+		case float64:
+			total += n
+		case int:
+			total += float64(n)
+		case int64:
+			total += float64(n)
+		}
+	}
+	return total
 }
 
 func convertResponsesInput(items []interface{}) ([]interface{}, error) {

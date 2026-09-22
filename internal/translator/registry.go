@@ -56,7 +56,7 @@ func init() {
 			return ChatToResponsesWithError(body)
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
-			return ResponsesToChat(upstream)
+			return ResponsesToChatResponse(upstream, model)
 		},
 	)
 	// Chat -> Anthropic.

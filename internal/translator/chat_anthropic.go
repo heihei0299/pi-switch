@@ -64,7 +64,12 @@ func ChatToResponsesWithError(body map[string]interface{}) (map[string]interface
 							return nil, fmt.Errorf("assistant tool call is missing function name")
 						}
 						arguments := fn["arguments"]
-						if _, ok := arguments.(string); !ok {
+						if argumentText, ok := arguments.(string); ok {
+							var decoded interface{}
+							if err := json.Unmarshal([]byte(argumentText), &decoded); err != nil {
+								return nil, fmt.Errorf("tool call %s arguments are not valid JSON: %w", callID, err)
+							}
+						} else {
 							encoded, err := json.Marshal(arguments)
 							if err != nil {
 								return nil, fmt.Errorf("tool call %s arguments: %w", callID, err)
@@ -94,11 +99,82 @@ func ChatToResponsesWithError(body map[string]interface{}) (map[string]interface
 	if len(instructions) > 0 {
 		out["instructions"] = strings.Join(instructions, "\n")
 	}
-	if tools, ok := body["tools"]; ok {
-		out["tools"] = tools
+	if tools, ok := body["tools"].([]interface{}); ok {
+		converted, err := chatToolsToResponses(tools)
+		if err != nil {
+			return nil, err
+		}
+		out["tools"] = converted
+	}
+	if choice, ok := body["tool_choice"]; ok {
+		converted, err := chatToolChoiceToResponses(choice)
+		if err != nil {
+			return nil, err
+		}
+		out["tool_choice"] = converted
 	}
 	return out, nil
 }
+
+func chatToolsToResponses(tools []interface{}) ([]interface{}, error) {
+	converted := make([]interface{}, 0, len(tools))
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("tool definition is invalid")
+		}
+		typ, _ := tool["type"].(string)
+		if typ == "" {
+			typ = "function"
+		}
+		if typ != "function" {
+			return nil, fmt.Errorf("tool type %q is not supported by Responses", typ)
+		}
+		flat := map[string]interface{}{"type": "function"}
+		if fn, ok := tool["function"].(map[string]interface{}); ok {
+			for _, key := range []string{"name", "description", "parameters", "strict"} {
+				if value, exists := fn[key]; exists {
+					flat[key] = value
+				}
+			}
+		} else {
+			for _, key := range []string{"name", "description", "parameters", "strict"} {
+				if value, exists := tool[key]; exists {
+					flat[key] = value
+				}
+			}
+		}
+		if name, _ := flat["name"].(string); strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("function tool is missing name")
+		}
+		converted = append(converted, flat)
+	}
+	return converted, nil
+}
+
+func chatToolChoiceToResponses(choice interface{}) (interface{}, error) {
+	if value, ok := choice.(string); ok {
+		return value, nil
+	}
+	tool, ok := choice.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("tool_choice is invalid")
+	}
+	if typ, _ := tool["type"].(string); typ != "function" {
+		return nil, fmt.Errorf("tool_choice type %q is not supported by Responses", typ)
+	}
+	name := ""
+	if fn, ok := tool["function"].(map[string]interface{}); ok {
+		name, _ = fn["name"].(string)
+	} else {
+		name, _ = tool["name"].(string)
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("tool_choice function is missing name")
+	}
+	return map[string]interface{}{"type": "function", "name": name}, nil
+}
+
 func chatInstructionText(content interface{}) string {
 	switch v := content.(type) {
 	case string:

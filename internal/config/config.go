@@ -500,6 +500,7 @@ func writeFileAtomic(path string, data []byte) error {
 var ErrConfigWriteLockBusy = errors.New("config write lock busy")
 
 const configWriteLockWait = 5 * time.Second
+const configWriteLockStaleAfter = time.Minute
 
 // withConfigWriteLock serializes read-modify-write operations across
 // processes. O_EXCL is portable across the supported platforms and the lock
@@ -527,6 +528,16 @@ func withConfigWriteLock(path string, fn func() error) error {
 			return err
 		}
 		if time.Now().After(deadline) {
+			if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) >= configWriteLockStaleAfter {
+				// Config mutations hold this lock only around local parsing and an
+				// atomic write. A lock older than the stale threshold therefore
+				// indicates a crashed writer; reclaim it and retry once. Never
+				// remove a lock that is still fresh.
+				if removeErr := os.Remove(lockPath); removeErr == nil {
+					deadline = time.Now().Add(configWriteLockWait)
+					continue
+				}
+			}
 			return fmt.Errorf("%w: %s", ErrConfigWriteLockBusy, lockPath)
 		}
 		time.Sleep(10 * time.Millisecond)
