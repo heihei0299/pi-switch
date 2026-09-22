@@ -133,3 +133,27 @@ func TestRegistry_ResponseTransformsReturnClientProtocol(t *testing.T) {
 		t.Fatalf("response = %v, want Anthropic message", anthropicResponse)
 	}
 }
+
+func TestRegistry_MissingStreamConverterIsNotPassthrough(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proto string
+		api   string
+	}{
+		{name: "anthropic to chat", proto: "messages", api: "openai-completions"},
+		{name: "chat to anthropic", proto: "chat", api: "anthropic-messages"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := PlanRequest(tc.proto, tc.api, "auto")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Passthrough {
+				t.Fatal("converted pair must not be marked passthrough")
+			}
+			if got := plan.StreamConverter("m"); got != nil {
+				t.Fatal("unsupported streaming pair unexpectedly has a converter")
+			}
+		})
+	}
+}

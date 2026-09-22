@@ -435,6 +435,13 @@ func handleChatCompletions(c *gin.Context) {
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
+	// A converted stream must have a converter for the reverse direction.
+	// Passing an incompatible SSE protocol through is worse than rejecting the
+	// request because clients can otherwise consume malformed partial output.
+	if !plan.Passthrough && plan.StreamConverter(realModel) == nil {
+		c.JSON(502, inferenceError(fmt.Sprintf("streaming conversion from %s to %s is not supported", plan.To, plan.From), "not_supported"))
+		return
+	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
 		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
