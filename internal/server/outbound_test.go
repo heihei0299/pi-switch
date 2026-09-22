@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,22 @@ import (
 
 	"github.com/heihei0299/pi-switch/internal/config"
 )
+
+func TestBuildOutboundRequestUsesCallerContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
+		Context:  ctx,
+		Upstream: config.Upstream{BaseURL: "https://api.example.com"},
+		Path:     "/v1/chat/completions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if outbound.Request.Context().Err() != context.Canceled {
+		t.Fatalf("request context error = %v, want context.Canceled", outbound.Request.Context().Err())
+	}
+}
 
 // Contract: docs/system-contract.md §2.4 requires one outbound path for URL, headers, UA, affinity, and timeout policy.
 func TestBuildOutboundRequestMergesPolicyAndMetadata(t *testing.T) {

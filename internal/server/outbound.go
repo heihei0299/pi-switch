@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 )
 
 type OutboundRequestPlan struct {
+	Context          context.Context
 	Upstream         config.Upstream
 	Path             string
 	ProfileHeaders   map[string]string
@@ -39,7 +41,11 @@ type BuiltOutboundRequest struct {
 func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error) {
 	method := http.MethodPost
 	url := buildUpstreamURL(plan.Upstream.BaseURL, plan.Path)
-	req, err := http.NewRequest(method, url, bytes.NewReader(plan.Body))
+	ctx := plan.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(plan.Body))
 	if err != nil {
 		return BuiltOutboundRequest{}, err
 	}
