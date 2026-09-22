@@ -190,9 +190,24 @@ func handlePutProfile(c *gin.Context) {
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]config.ProviderProfile{}
 	}
-	// handle rename
+	// Validate the rename before changing the map. A rename must never silently
+	// replace another supplier, because the map assignment would otherwise lose
+	// the target's credentials and channels.
 	if body.RenameFrom != nil && *body.RenameFrom != "" && *body.RenameFrom != name {
-		delete(cfg.Profiles, *body.RenameFrom)
+		oldName := *body.RenameFrom
+		if _, exists := cfg.Profiles[oldName]; !exists {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
+		if _, exists := cfg.Profiles[name]; exists {
+			c.JSON(400, gin.H{"error": "target exists"})
+			return
+		}
+		delete(cfg.Profiles, oldName)
+		if cfg.Current != nil && *cfg.Current == oldName {
+			current := name
+			cfg.Current = &current
+		}
 	}
 	cfg.Profiles[name] = prof
 	// if current points to renamed old, update?
