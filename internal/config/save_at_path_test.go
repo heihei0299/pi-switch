@@ -2,9 +2,11 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -177,5 +179,48 @@ func TestSaveAtPath_FileModeIs0600(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); mode != 0600 {
 		t.Fatalf("config mode = %o, want 600", mode)
+	}
+}
+
+func TestUpdateAtPath_SerializesConcurrentMutations(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := SaveAtPath(DefaultConfig(), path); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("concurrent-%d", i)
+			errs <- UpdateAtPath(path, func(cfg *PiSwitchConfig) error {
+				if cfg.Profiles == nil {
+					cfg.Profiles = map[string]ProviderProfile{}
+				}
+				cfg.Profiles[name] = ProviderProfile{API: "openai-chat"}
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent update: %v", err)
+		}
+	}
+
+	cfg, _, err := LoadConfigAtPath(path)
+	if err != nil {
+		t.Fatalf("load updated config: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, ok := cfg.Profiles[fmt.Sprintf("concurrent-%d", i)]; !ok {
+			t.Fatalf("concurrent mutation %d was lost", i)
+		}
 	}
 }

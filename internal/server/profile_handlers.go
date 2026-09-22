@@ -183,36 +183,38 @@ func handlePutProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
-		return
-	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]config.ProviderProfile{}
-	}
-	// Validate the rename before changing the map. A rename must never silently
-	// replace another supplier, because the map assignment would otherwise lose
-	// the target's credentials and channels.
-	if body.RenameFrom != nil && *body.RenameFrom != "" && *body.RenameFrom != name {
-		oldName := *body.RenameFrom
-		if _, exists := cfg.Profiles[oldName]; !exists {
+	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
+		if cfg.Profiles == nil {
+			cfg.Profiles = map[string]config.ProviderProfile{}
+		}
+		// Validate the rename while holding the lock. A rename must never
+		// silently replace another supplier or race with a concurrent create.
+		if body.RenameFrom != nil && *body.RenameFrom != "" && *body.RenameFrom != name {
+			oldName := *body.RenameFrom
+			if _, exists := cfg.Profiles[oldName]; !exists {
+				return profile.ErrProfileNotFound
+			}
+			if _, exists := cfg.Profiles[name]; exists {
+				return profile.ErrProfileExists
+			}
+			delete(cfg.Profiles, oldName)
+			if cfg.Current != nil && *cfg.Current == oldName {
+				current := name
+				cfg.Current = &current
+			}
+		}
+		cfg.Profiles[name] = prof
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, profile.ErrProfileNotFound):
 			c.JSON(404, gin.H{"error": "not found"})
-			return
-		}
-		if _, exists := cfg.Profiles[name]; exists {
+		case errors.Is(err, profile.ErrProfileExists):
 			c.JSON(400, gin.H{"error": "target exists"})
-			return
+		default:
+			c.JSON(500, gin.H{"error": err.Error()})
 		}
-		delete(cfg.Profiles, oldName)
-		if cfg.Current != nil && *cfg.Current == oldName {
-			current := name
-			cfg.Current = &current
-		}
-	}
-	cfg.Profiles[name] = prof
-	// if current points to renamed old, update?
-	if err := saveConfig(cfg); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
@@ -220,20 +222,21 @@ func handlePutProfile(c *gin.Context) {
 
 func handleDeleteProfile(c *gin.Context) {
 	name := c.Param("name")
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
-		return
-	}
-	if _, ok := cfg.Profiles[name]; !ok {
+	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
+		if _, ok := cfg.Profiles[name]; !ok {
+			return profile.ErrProfileNotFound
+		}
+		delete(cfg.Profiles, name)
+		if cfg.Current != nil && *cfg.Current == name {
+			cfg.Current = nil
+		}
+		return nil
+	})
+	if errors.Is(err, profile.ErrProfileNotFound) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	delete(cfg.Profiles, name)
-	// if current == name, clear
-	if cfg.Current != nil && *cfg.Current == name {
-		cfg.Current = nil
-	}
-	if err := saveConfig(cfg); err != nil {
+	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
@@ -378,22 +381,8 @@ func handlePutModels(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
-		return
-	}
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
 	if body.Channel == "" {
 		c.JSON(400, gin.H{"error": "channel is required"})
-		return
-	}
-	idx := profile.EnsureMutationChannel(&prof, body.Channel)
-	if idx < 0 {
-		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", body.Channel)})
 		return
 	}
 	seen := map[string]bool{}
@@ -408,9 +397,28 @@ func handlePutModels(c *gin.Context) {
 		}
 		seen[m.ID] = true
 	}
-	prof.Upstreams[idx].Models = body.Models
-	cfg.Profiles[name] = prof
-	if err := saveConfig(cfg); err != nil {
+	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
+		prof, ok := cfg.Profiles[name]
+		if !ok {
+			return profile.ErrProfileNotFound
+		}
+		idx := profile.EnsureMutationChannel(&prof, body.Channel)
+		if idx < 0 {
+			return fmt.Errorf("%w: %q", profile.ErrUnknownChannel, body.Channel)
+		}
+		prof.Upstreams[idx].Models = body.Models
+		cfg.Profiles[name] = prof
+		return nil
+	})
+	if errors.Is(err, profile.ErrProfileNotFound) {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	if errors.Is(err, profile.ErrUnknownChannel) {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", body.Channel)})
+		return
+	}
+	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
@@ -440,15 +448,6 @@ func handlePutSpoof(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
-		return
-	}
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
 	// validate
 	if body.Spoof != nil {
 		v := *body.Spoof
@@ -456,17 +455,30 @@ func handlePutSpoof(c *gin.Context) {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("invalid spoof %q, must be one of '', 'claude-code', 'codex', 'gemini'", v)})
 			return
 		}
-		if v == "" {
-			prof.UserAgent = nil
-		} else {
-			s := v
-			prof.UserAgent = &s
-		}
-	} else {
-		prof.UserAgent = nil
 	}
-	cfg.Profiles[name] = prof
-	if err := saveConfig(cfg); err != nil {
+	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
+		prof, ok := cfg.Profiles[name]
+		if !ok {
+			return profile.ErrProfileNotFound
+		}
+		if body.Spoof != nil {
+			v := *body.Spoof
+			if v == "" {
+				prof.UserAgent = nil
+			} else {
+				prof.UserAgent = &v
+			}
+		} else {
+			prof.UserAgent = nil
+		}
+		cfg.Profiles[name] = prof
+		return nil
+	})
+	if errors.Is(err, profile.ErrProfileNotFound) {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

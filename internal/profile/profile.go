@@ -21,20 +21,18 @@ func CreateProfile(name string, prof config.ProviderProfile) error {
 	if err := ValidateProfile(prof); err != nil {
 		return err
 	}
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]config.ProviderProfile{}
-	}
-	if _, exists := cfg.Profiles[name]; exists {
-		return profileErr(ErrProfileExists, "profile already exists")
-	}
-	// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
-	// 与"空 exposed = 不暴露"一致。
-	cfg.Profiles[name] = prof
-	return persist(cfg, "")
+	return updateConfig("", func(cfg *config.PiSwitchConfig) error {
+		if cfg.Profiles == nil {
+			cfg.Profiles = map[string]config.ProviderProfile{}
+		}
+		if _, exists := cfg.Profiles[name]; exists {
+			return keepMutation(profileErr(ErrProfileExists, "profile already exists"))
+		}
+		// 不在这里默认暴露全部：新建供应商的模型默认不暴露，需显式 expose，
+		// 与"空 exposed = 不暴露"一致。
+		cfg.Profiles[name] = prof
+		return nil
+	})
 }
 
 // DuplicateProfile copies a profile under a new name. It is the single
@@ -47,32 +45,30 @@ func DuplicateProfile(src, as string) error {
 		// 核心函数不知道调用方是 HTTP 还是命令行。
 		return ErrTargetNameRequired
 	}
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	prof, ok := cfg.Profiles[src]
-	if !ok {
-		return profileErr(ErrProfileNotFound, "profile %q not found", src)
-	}
-	if _, exists := cfg.Profiles[as]; exists {
-		return profileErr(ErrProfileExists, "target %q already exists", as)
-	}
-	// 复制只判整文件门会判的两件事，顺序与它一致：profile 顶层 api/responsesMode 自洽（api 为
-	// 空时门也跳过这一层），随后 resolved capability。副本因此不可能是那道门会拒绝的配置——channel
-	// 覆盖顶层组合不豁免，因为"配置自身必须自洽"正是门比 runtime 严的那一格（system-contract
-	// §2.2 第 4 条）。shape/模型/channel 名/retry 一律不判：磁盘上带这些问题的源仍要能
-	// 「复制一份再改」。
-	if prof.API != "" {
-		if err := ValidateResponsesMode(prof); err != nil {
-			return err
+	return updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
+		prof, ok := cfg.Profiles[src]
+		if !ok {
+			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", src))
 		}
-	}
-	if err := config.ValidateResolvedCapability(prof); err != nil {
-		return err
-	}
-	cfg.Profiles[as] = prof
-	return persist(cfg, "failed to save config: ")
+		if _, exists := cfg.Profiles[as]; exists {
+			return keepMutation(profileErr(ErrProfileExists, "target %q already exists", as))
+		}
+		// 复制只判整文件门会判的两件事，顺序与它一致：profile 顶层 api/responsesMode 自洽（api 为
+		// 空时门也跳过这一层），随后 resolved capability。副本因此不可能是那道门会拒绝的配置——channel
+		// 覆盖顶层组合不豁免，因为"配置自身必须自洽"正是门比 runtime 严的那一格（system-contract
+		// §2.2 第 4 条）。shape/模型/channel 名/retry 一律不判：磁盘上带这些问题的源仍要能
+		// 「复制一份再改」。
+		if prof.API != "" {
+			if err := ValidateResponsesMode(prof); err != nil {
+				return keepMutation(err)
+			}
+		}
+		if err := config.ValidateResolvedCapability(prof); err != nil {
+			return keepMutation(err)
+		}
+		cfg.Profiles[as] = prof
+		return nil
+	})
 }
 
 // SetExposedModels replaces the exposed model list of one channel. It is the
@@ -81,31 +77,29 @@ func DuplicateProfile(src, as string) error {
 // does not actually carry (which would make routing claim a model it cannot
 // serve).
 func SetExposedModels(name, channel string, modelIDs []string) error {
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		return profileErr(ErrProfileNotFound, "profile %q not found", name)
-	}
 	if channel == "" {
 		return errors.New("channel is required")
 	}
-	idx := EnsureMutationChannel(&prof, channel)
-	if idx < 0 {
-		return profileErr(ErrUnknownChannel, "unknown channel %q", channel)
-	}
-	seen := map[string]bool{}
-	for _, m := range prof.Upstreams[idx].Models {
-		seen[m.ID] = true
-	}
-	for _, eid := range modelIDs {
-		if !seen[eid] {
-			return fmt.Errorf("exposedModels references unknown model %q in channel %q", eid, channel)
+	return updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
+		prof, ok := cfg.Profiles[name]
+		if !ok {
+			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", name))
 		}
-	}
-	prof.Upstreams[idx].ExposedModels = modelIDs
-	cfg.Profiles[name] = prof
-	return persist(cfg, "failed to save config: ")
+		idx := EnsureMutationChannel(&prof, channel)
+		if idx < 0 {
+			return keepMutation(profileErr(ErrUnknownChannel, "unknown channel %q", channel))
+		}
+		seen := map[string]bool{}
+		for _, m := range prof.Upstreams[idx].Models {
+			seen[m.ID] = true
+		}
+		for _, eid := range modelIDs {
+			if !seen[eid] {
+				return keepMutation(fmt.Errorf("exposedModels references unknown model %q in channel %q", eid, channel))
+			}
+		}
+		prof.Upstreams[idx].ExposedModels = modelIDs
+		cfg.Profiles[name] = prof
+		return nil
+	})
 }

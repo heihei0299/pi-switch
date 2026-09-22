@@ -625,12 +625,18 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		name := args[1]
-		if _, ok := cfg.Profiles[name]; !ok {
+		missing := errors.New("profile not found")
+		if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
+			if _, ok := cfg.Profiles[name]; !ok {
+				return missing
+			}
+			current := name
+			cfg.Current = &current
+			return nil
+		}); errors.Is(err, missing) {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", name)
 			return 1
-		}
-		cfg.Current = &name
-		if err := saveConfigFile(cfg, cfgPath); err != nil {
+		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "provider use failed to save config: %v\n", err)
 			return 1
 		}
@@ -640,15 +646,18 @@ func handleProvider(args []string) int {
 			fmt.Fprintln(os.Stderr, "provider delete <name> required")
 			return 1
 		}
-		delete(cfg.Profiles, args[1])
-		if cfg.Current != nil && *cfg.Current == args[1] {
-			cfg.Current = nil
-		}
-		if err := saveConfigFile(cfg, cfgPath); err != nil {
+		name := args[1]
+		if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
+			delete(cfg.Profiles, name)
+			if cfg.Current != nil && *cfg.Current == name {
+				cfg.Current = nil
+			}
+			return nil
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "provider delete failed to save config: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Deleted %s\n", args[1])
+		fmt.Printf("Deleted %s\n", name)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown provider subcommand %q\n", args[0])
 		return 1
@@ -978,8 +987,4 @@ func handleConfigCLI(args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func saveConfigFile(cfg config.PiSwitchConfig, path string) error {
-	return config.SaveAtPath(cfg, path)
 }

@@ -1,6 +1,10 @@
 package profile
 
-import "github.com/heihei0299/pi-switch/internal/config"
+import (
+	"errors"
+
+	"github.com/heihei0299/pi-switch/internal/config"
+)
 
 // loadConfig reads the shared config through the config boundary. The profile
 // domain never resolves a path of its own, so HTTP and CLI read the same file.
@@ -9,13 +13,28 @@ func loadConfig() (config.PiSwitchConfig, error) {
 	return cfg, err
 }
 
-// persist writes the config and tags a failure with ErrPersistFailed. prefix is
-// what the caller used to print in front of the raw error ("failed to save
-// config: " for most endpoints, "" for the one that answered raw), so the kind is
-// added without rewriting any 500 body.
-func persist(cfg config.PiSwitchConfig, prefix string) error {
-	if err := config.SaveAtPath(cfg, config.ResolvePath()); err != nil {
-		return profileErr(ErrPersistFailed, "%s%s", prefix, err.Error())
+type mutationError struct{ err error }
+
+func (e mutationError) Error() string { return e.err.Error() }
+func (e mutationError) Unwrap() error { return e.err }
+
+func keepMutation(err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	return mutationError{err: err}
+}
+
+// updateConfig keeps domain validation errors intact while classifying all
+// lock, load, and atomic-write failures as persistence failures.
+func updateConfig(prefix string, mutate func(*config.PiSwitchConfig) error) error {
+	err := config.UpdateAtPath(config.ResolvePath(), mutate)
+	if err == nil {
+		return nil
+	}
+	var domainErr mutationError
+	if errors.As(err, &domainErr) {
+		return domainErr.err
+	}
+	return profileErr(ErrPersistFailed, "%s%s", prefix, err.Error())
 }

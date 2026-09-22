@@ -148,9 +148,9 @@ func indexOf(s, substr string) int {
 	return -1
 }
 
-// configPath and saveConfig are kernel helpers: every domain file reaches the
-// config file through them. Both delegate to internal/config so that path
-// resolution and the save-time migration have exactly one implementation.
+// configPath is the server's single config path helper. All read-modify-write
+// management mutations use config.UpdateAtPath directly so the latest file is
+// loaded while holding the cross-process write lock.
 func configPath() string {
 	return config.ResolvePath()
 }
@@ -676,10 +676,6 @@ func handleAssets(c *gin.Context) {
 }
 
 // --- basic config handlers ---
-
-func saveConfig(cfg config.PiSwitchConfig) error {
-	return config.SaveAtPath(cfg, configPath())
-}
 
 func sessionScanCandidates(source string) map[string]scan.PiSession {
 	if source != "sessionScan" {
