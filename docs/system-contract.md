@@ -82,6 +82,8 @@
 
 8. 跨协议函数工具转换保留定义、选择策略、调用 ID、参数和结果顺序；Chat 工具定义映射到 Responses 的扁平结构或 Anthropic 的 input_schema，工具历史映射到对应 call/result 项。无效或不可表示的工具状态必须明确拒绝，不丢弃后继续请求。
 
+9. 流式跨协议请求必须具备 upstream→client 的 SSE 转换器；不存在转换器时在访问 upstream 前返回 `502 not_supported`。同协议 SSE 仍可透传；Anthropic↔Chat SSE 当前明确不支持，不影响这两条非流式路径。
+
 ### 2.5 Stats 与对话
 
 1. SQLite request row 的 provider、model、status、latency、usage、cost 是 immutable request facts。
@@ -151,6 +153,7 @@
 | responsesMode 规则与 API 能力只有一份 `internal/protocol`，WebUI 从 `/api/state` 读取 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol 规则用例 + WebUI fixture parity 用例 | `/api/state.protocol.apis` 实际驱动下拉与校验 |
 | 工具定义、选择策略与调用/结果历史在跨协议转换后保持关联 | §2.4.8 | bug audit 02 | multi-turn tool exchange + invalid history tests | 工具调用后携带结果可继续下一轮 |
 | 非流式响应匹配客户端协议，转换失败明确报错 | §2.4.7 | bug audit 03 | client protocol + malformed/retry HTTP tests | Chat→Responses、Messages→Chat 返回客户端所需结构 |
+| 缺少 SSE 转换器的跨协议请求在访问 upstream 前拒绝 | §2.4.9 | bug audit 04 | unsupported streaming HTTP tests | 不向 Chat 客户端发送 Anthropic SSE，反向同样 |
 | 不兼容组合发送 upstream 前失败，不探测/降级/failover | §2.4.3 | IMP-04 | preflight rejection tests | upstream 捕获不到不兼容请求，客户端得到明确错误 |
 | 三个 max key、/3、encrypted compensation、safety、16 floor、maxTokens 只有一套 | §2.4.4/5；§2.4.6 | IMP-02 | limit/server retry/stream tests | 长会话真实 upstream 不触发已知 context 400 |
 | 首次、stream、retry 共享 URL/header/affinity/UA builder | §2.4.4；追踪矩阵 outbound | IMP-03 | httptest 完整 header 比较 | opencode.ai 实际收到 affinity、UA、channel headers |

@@ -260,7 +260,8 @@ func init() {
 
 // StreamConverter returns the streaming converter for this plan's
 // upstream-to-downstream direction, or nil when the stream passes through
-// unconverted (same-format pairs and directions without a translator).
+// unconverted (same-format pairs) or the conversion is unsupported. Callers
+// must reject a non-passthrough plan with no converter before sending upstream.
 // model is the downstream (client-facing) model id.
 func (p Plan) StreamConverter(model string) StreamEventConverter {
 	if p.Passthrough {

@@ -663,6 +663,10 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
 	}
+	if !plan.Passthrough && plan.StreamConverter(realModel) == nil {
+		c.JSON(502, inferenceError(fmt.Sprintf("streaming conversion from %s to %s is not supported", plan.To, plan.From), "not_supported"))
+		return
+	}
 	convBody, convErr := plan.TransformRequest(realModel, bcopy)
 	if convErr != nil {
 		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
