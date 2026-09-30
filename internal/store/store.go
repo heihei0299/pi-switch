@@ -77,7 +77,10 @@ func ensureTable(db *sql.DB) error {
 		cost REAL,
 		conversation_id TEXT,
 		conversation_name TEXT,
-		latency_ms INTEGER
+		latency_ms INTEGER,
+		status INTEGER,
+		error TEXT,
+		upstream_url TEXT
 	)`); err != nil {
 		return err
 	}
@@ -111,6 +114,9 @@ func ensureTable(db *sql.DB) error {
 		{"cost", "REAL"},
 		{"conversation_name", "TEXT"},
 		{"latency_ms", "INTEGER"},
+		{"status", "INTEGER"},
+		{"error", "TEXT"},
+		{"upstream_url", "TEXT"},
 		{"legacy_source", "TEXT"},
 		{"legacy_identity", "TEXT"},
 		{"legacy_offset", "INTEGER"},

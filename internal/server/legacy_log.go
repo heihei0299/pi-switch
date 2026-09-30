@@ -255,6 +255,9 @@ func parseLegacyRequest(value map[string]interface{}, offset int64) (store.Legac
 		ConversationID:   legacyOptionalString(value, "conversationId", "conversation_id"),
 		ConversationName: legacyOptionalString(value, "conversationName", "conversation_name"),
 		LatencyMs:        legacyIntPointer(value, "latencyMs", "latency_ms"),
+		Status:           legacyIntPointer(value, "status"),
+		Error:            legacyOptionalString(value, "error"),
+		UpstreamURL:      legacyOptionalString(value, "upstreamUrl", "upstream_url"),
 	}, true
 }
 

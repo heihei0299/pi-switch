@@ -87,6 +87,9 @@ type RequestFact struct {
 	Provider         *string
 	Model            *string
 	Success          *bool
+	Status           *int64
+	Error            *string
+	UpstreamURL      *string
 	PromptTokens     *int64
 	CompletionTokens *int64
 	CachedTokens     *int64
@@ -140,8 +143,9 @@ type RequestDTO struct {
 	Provider         *string  `json:"provider"`
 	Model            *string  `json:"model"`
 	OK               *bool    `json:"ok"`
-	Status           *int     `json:"status"`
-	Error            any      `json:"error"`
+	Status           *int64   `json:"status"`
+	Error            *string  `json:"error"`
+	UpstreamURL      *string  `json:"upstream_url"`
 	PromptTokens     *int64   `json:"promptTokens"`
 	CompletionTokens *int64   `json:"completionTokens"`
 	CachedTokens     *int64   `json:"cachedTokens"`
@@ -167,8 +171,9 @@ type ConversationRequestDTO struct {
 	Provider         *string  `json:"provider"`
 	Model            *string  `json:"model"`
 	OK               *bool    `json:"ok"`
-	Status           *int     `json:"status"`
-	Error            any      `json:"error"`
+	Status           *int64   `json:"status"`
+	Error            *string  `json:"error"`
+	UpstreamURL      *string  `json:"upstream_url"`
 	PromptTokens     *int64   `json:"promptTokens"`
 	CompletionTokens *int64   `json:"completionTokens"`
 	CachedTokens     *int64   `json:"cachedTokens"`
@@ -394,15 +399,15 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 
 func scanFact(rows *sql.Rows) (RequestFact, error) {
 	var id int64
-	var ts, provider, model, convID, convName sql.NullString
-	var success, prompt, completion, cached, reasoning, latency sql.NullInt64
+	var ts, provider, model, convID, convName, errMsg, upstreamURL sql.NullString
+	var success, prompt, completion, cached, reasoning, latency, status sql.NullInt64
 	var cost sql.NullFloat64
-	if err := rows.Scan(&id, &ts, &provider, &model, &success, &prompt, &completion, &cached, &reasoning, &cost, &convID, &convName, &latency); err != nil {
+	if err := rows.Scan(&id, &ts, &provider, &model, &success, &prompt, &completion, &cached, &reasoning, &cost, &convID, &convName, &latency, &status, &errMsg, &upstreamURL); err != nil {
 		return RequestFact{}, err
 	}
 	return RequestFact{
 		ID: id, TS: nullableString(ts), Provider: nullableString(provider), Model: nullableString(model),
-		Success: nullableBool(success), PromptTokens: nullableInt(prompt), CompletionTokens: nullableInt(completion),
+		Success: nullableBool(success), Status: nullableInt(status), Error: nullableString(errMsg), UpstreamURL: nullableString(upstreamURL), PromptTokens: nullableInt(prompt), CompletionTokens: nullableInt(completion),
 		CachedTokens: nullableInt(cached), ReasoningTokens: nullableInt(reasoning), Cost: nullableFloat(cost),
 		ConversationID: nullableString(convID), ConversationName: nullableString(convName), LatencyMs: nullableInt(latency),
 	}, nil
@@ -415,7 +420,7 @@ func (s Service) pageFacts(window *Window, page, limit int) ([]RequestFact, erro
 	if limit <= 0 {
 		limit = 50
 	}
-	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests`
+	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests`
 	args := []any{}
 	if window != nil {
 		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
@@ -446,7 +451,7 @@ func (s Service) forEachFact(window *Window, order string, visit func(RequestFac
 	if s.DB == nil {
 		return fmt.Errorf("stats database is nil")
 	}
-	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests`
+	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests`
 	args := []any{}
 	if window != nil {
 		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
@@ -576,18 +581,13 @@ func conversationSummaries(groups map[string]*conversationAggregate) []Conversat
 
 func requestDTO(fact RequestFact, result conversation.MatchResult, source conversation.Source) RequestDTO {
 	dto := RequestDTO{
-		TS: fact.TS, Provider: fact.Provider, Model: fact.Model, Error: nil, CacheRate: "-",
+		TS: fact.TS, Provider: fact.Provider, Model: fact.Model, Status: fact.Status, Error: fact.Error, UpstreamURL: fact.UpstreamURL, CacheRate: "-",
 		Cost: fact.Cost, CostTotal: fact.Cost,
 	}
 	if fact.Success != nil {
 		ok := *fact.Success
 		dto.OK = &ok
 		dto.Success = &ok
-		status := 500
-		if ok {
-			status = 200
-		}
-		dto.Status = &status
 	}
 	dto.PromptTokens, dto.PromptTokensSnake = fact.PromptTokens, fact.PromptTokens
 	dto.CompletionTokens, dto.CompletionTokensSnake = fact.CompletionTokens, fact.CompletionTokens
@@ -622,17 +622,12 @@ func requestDTO(fact RequestFact, result conversation.MatchResult, source conver
 
 func detailRequestDTO(fact RequestFact, id string) ConversationRequestDTO {
 	dto := ConversationRequestDTO{
-		TS: fact.TS, Provider: fact.Provider, Model: fact.Model, Error: nil, CacheRate: "-",
+		TS: fact.TS, Provider: fact.Provider, Model: fact.Model, Status: fact.Status, Error: fact.Error, UpstreamURL: fact.UpstreamURL, CacheRate: "-",
 		ConversationID: stringPtr(id), ConversationName: fact.ConversationName, Cost: fact.Cost,
 	}
 	if fact.Success != nil {
 		ok := *fact.Success
 		dto.OK = &ok
-		status := 500
-		if ok {
-			status = 200
-		}
-		dto.Status = &status
 	}
 	dto.PromptTokens, dto.CompletionTokens = fact.PromptTokens, fact.CompletionTokens
 	dto.CachedTokens, dto.ReasoningTokens = fact.CachedTokens, fact.ReasoningTokens

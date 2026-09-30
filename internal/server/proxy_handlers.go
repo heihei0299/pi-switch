@@ -1017,8 +1017,8 @@ func logRequest(provider, model string, success bool, summary *usage.UsageSummar
 	entry := legacyLogEntry(ts, provider, model, success, summary, cost, convID, convName, status, errMsg, upstreamURL)
 	if db, err := store.GetDB(); err != nil {
 		log.Printf("request log database: %v", err)
-	} else if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency); err != nil {
+	} else if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''))`,
+		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency, status, errMsg, upstreamURL); err != nil {
 		log.Printf("request log insert: %v", err)
 	}
 	if err := appendLegacyLog(entry); err != nil {

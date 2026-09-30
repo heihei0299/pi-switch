@@ -219,31 +219,41 @@ func handleLogsExport(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms FROM requests ORDER BY id ASC`)
+	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests ORDER BY id ASC`)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
 	type rec struct {
-		TS        sql.NullString
-		Provider  sql.NullString
-		Model     sql.NullString
-		Success   sql.NullInt64
-		PT        sql.NullInt64
-		CT        sql.NullInt64
-		Cached    sql.NullInt64
-		Reasoning sql.NullInt64
-		Cost      sql.NullFloat64
-		ConvID    sql.NullString
-		ConvName  sql.NullString
-		Latency   sql.NullInt64
+		TS          sql.NullString
+		Provider    sql.NullString
+		Model       sql.NullString
+		Success     sql.NullInt64
+		PT          sql.NullInt64
+		CT          sql.NullInt64
+		Cached      sql.NullInt64
+		Reasoning   sql.NullInt64
+		Cost        sql.NullFloat64
+		ConvID      sql.NullString
+		ConvName    sql.NullString
+		Latency     sql.NullInt64
+		Status      sql.NullInt64
+		Error       sql.NullString
+		UpstreamURL sql.NullString
 	}
 	var recs []rec
 	for rows.Next() {
 		var r rec
-		_ = rows.Scan(&r.TS, &r.Provider, &r.Model, &r.Success, &r.PT, &r.CT, &r.Cached, &r.Reasoning, &r.Cost, &r.ConvID, &r.ConvName, &r.Latency)
+		if err := rows.Scan(&r.TS, &r.Provider, &r.Model, &r.Success, &r.PT, &r.CT, &r.Cached, &r.Reasoning, &r.Cost, &r.ConvID, &r.ConvName, &r.Latency, &r.Status, &r.Error, &r.UpstreamURL); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 		recs = append(recs, r)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
 	if format == "csv" {
 		var buf bytes.Buffer
@@ -260,12 +270,8 @@ func handleLogsExport(c *gin.Context) {
 				}
 			}
 			status := ""
-			if r.Success.Valid {
-				if r.Success.Int64 == 1 {
-					status = "200"
-				} else {
-					status = "500"
-				}
+			if r.Status.Valid {
+				status = strconv.FormatInt(r.Status.Int64, 10)
 			}
 			lat := ""
 			if r.Latency.Valid {
@@ -311,7 +317,7 @@ func handleLogsExport(c *gin.Context) {
 			if r.ConvName.Valid {
 				convName = r.ConvName.String
 			}
-			row := []string{ts, okStr, prov, mod, status, lat, "", "", "", "", "", pt, ct, cached, reason, conv, convName, cost, cost, cached, reason}
+			row := []string{ts, okStr, prov, mod, status, lat, r.Error.String, "", "", "", r.UpstreamURL.String, pt, ct, cached, reason, conv, convName, cost, cost, cached, reason}
 			_ = w.Write(row)
 		}
 		w.Flush()
@@ -328,7 +334,7 @@ func handleLogsExport(c *gin.Context) {
 			"prompt_tokens": nil, "completion_tokens": nil, "cached_tokens": nil, "reasoning_tokens": nil,
 			"cachedTokens": nil, "reasoningTokens": nil, "promptTokens": nil, "completionTokens": nil,
 			"cost": nil, "costTotal": nil, "conversation_id": nil, "conversationId": nil, "conversation_name": nil, "conversationName": nil,
-			"latency_ms": nil, "status": nil,
+			"latency_ms": nil, "status": nil, "error": nil, "upstream_url": nil, "upstreamUrl": nil,
 		}
 		if r.TS.Valid {
 			m["ts"] = r.TS.String
@@ -343,11 +349,17 @@ func handleLogsExport(c *gin.Context) {
 		if r.Success.Valid {
 			m["success"] = r.Success.Int64 == 1
 			m["ok"] = r.Success.Int64 == 1
-			if r.Success.Int64 == 1 {
-				m["status"] = 200
-			} else {
-				m["status"] = 500
-			}
+
+		}
+		if r.Status.Valid {
+			m["status"] = r.Status.Int64
+		}
+		if r.Error.Valid {
+			m["error"] = r.Error.String
+		}
+		if r.UpstreamURL.Valid {
+			m["upstream_url"] = r.UpstreamURL.String
+			m["upstreamUrl"] = r.UpstreamURL.String
 		}
 		if r.PT.Valid {
 			m["prompt_tokens"] = r.PT.Int64

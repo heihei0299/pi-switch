@@ -44,6 +44,9 @@ type LegacyRequest struct {
 	ConversationID   *string
 	ConversationName *string
 	LatencyMs        *int64
+	Status           *int64
+	Error            *string
+	UpstreamURL      *string
 }
 
 func ensureLegacyMigrationSchema(db *sql.DB) error {
@@ -174,8 +177,8 @@ func CommitLegacyBatch(db *sql.DB, key LegacyMigrationKey, size, mtime, expected
 		}
 		if _, err := tx.Exec(`INSERT INTO requests(
 			ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,
-			conversation_id,conversation_name,latency_ms,legacy_source,legacy_identity,legacy_offset)
-			SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+			conversation_id,conversation_name,latency_ms,status,error,upstream_url,legacy_source,legacy_identity,legacy_offset)
+			SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
 			WHERE NOT EXISTS (
 				SELECT 1 FROM requests existing
 				WHERE existing.legacy_source IS NULL
@@ -185,7 +188,7 @@ func CommitLegacyBatch(db *sql.DB, key LegacyMigrationKey, size, mtime, expected
 			row.TS, row.Provider, row.Model, success, nullableInt(row.PromptTokens),
 			nullableInt(row.CompletionTokens), nullableInt(row.CachedTokens), nullableInt(row.ReasoningTokens),
 			nullableFloat(row.Cost), nullableString(row.ConversationID), nullableString(row.ConversationName),
-			nullableInt(row.LatencyMs), key.Path, key.Identity, row.Offset,
+			nullableInt(row.LatencyMs), nullableInt(row.Status), nullableString(row.Error), nullableString(row.UpstreamURL), key.Path, key.Identity, row.Offset,
 			row.TS, row.Provider, row.Model, success, nullableInt(row.PromptTokens), nullableInt(row.CompletionTokens)); err != nil {
 			return rollback(err)
 		}
