@@ -98,6 +98,7 @@ type RequestFact struct {
 }
 
 type ProviderStat struct {
+	cacheInput   int64
 	Total        int      `json:"total"`
 	OK           int      `json:"ok"`
 	Failed       int      `json:"failed"`
@@ -110,6 +111,7 @@ type ProviderStat struct {
 }
 
 type ModelStat struct {
+	cacheInput   int64
 	Total        int      `json:"total"`
 	OK           int      `json:"ok"`
 	PromptTokens int64    `json:"promptTokens"`
@@ -211,7 +213,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	response.RecentRequests = []RequestDTO{}
 	response.Rows = []RequestDTO{}
 	var totalLatency, latencyCount int64
-	var totalInput, totalOutput, totalCached, totalReasoning int64
+	var totalInput, totalOutput, totalCached, totalReasoning, cacheInput int64
 	var totalCost *float64
 	var conversations map[string]*conversationAggregate
 	if s.Source != conversation.SourceOff {
@@ -228,20 +230,22 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 			totalLatency += *fact.LatencyMs
 			latencyCount++
 		}
+		if fact.Success != nil && *fact.Success && fact.Cost == nil {
+			response.CostUnknown++
+		}
 		countable := fact.countable()
 		if countable {
 			totalInput += *fact.PromptTokens
 			totalOutput += *fact.CompletionTokens
 			if fact.CachedTokens != nil {
 				totalCached += *fact.CachedTokens
+				cacheInput += *fact.PromptTokens
 			}
 			if fact.ReasoningTokens != nil {
 				totalReasoning += *fact.ReasoningTokens
 			}
 			if fact.Cost != nil {
 				totalCost = addCost(totalCost, *fact.Cost)
-			} else {
-				response.CostUnknown++
 			}
 		}
 
@@ -258,6 +262,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 			providerStat.OutputTokens += *fact.CompletionTokens
 			if fact.CachedTokens != nil {
 				providerStat.CachedTokens += *fact.CachedTokens
+				providerStat.cacheInput += *fact.PromptTokens
 			}
 			if fact.ReasoningTokens != nil {
 				providerStat.Reasoning += *fact.ReasoningTokens
@@ -279,6 +284,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 			modelStat.OutputTokens += *fact.CompletionTokens
 			if fact.CachedTokens != nil {
 				modelStat.CachedTokens += *fact.CachedTokens
+				modelStat.cacheInput += *fact.PromptTokens
 			}
 			if fact.ReasoningTokens != nil {
 				modelStat.Reasoning += *fact.ReasoningTokens
@@ -313,11 +319,11 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	}
 
 	for provider, value := range response.ByProvider {
-		value.CacheRate = cacheRate(value.PromptTokens, value.CachedTokens)
+		value.CacheRate = cacheRate(value.cacheInput, value.CachedTokens)
 		response.ByProvider[provider] = value
 	}
 	for model, value := range response.ByModel {
-		value.CacheRate = cacheRate(value.PromptTokens, value.CachedTokens)
+		value.CacheRate = cacheRate(value.cacheInput, value.CachedTokens)
 		response.ByModel[model] = value
 	}
 	if conversations != nil {
@@ -338,7 +344,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 		"input": totalInput, "output": totalOutput, "total": totalInput + totalOutput,
 		"cached": totalCached, "reasoning": totalReasoning,
 	}
-	response.CacheHitRate = cacheRate(totalInput, totalCached)
+	response.CacheHitRate = cacheRate(cacheInput, totalCached)
 	response.TotalCost = totalCost
 	return response, nil
 }
@@ -499,15 +505,16 @@ func (s Service) match(fact RequestFact) conversation.MatchResult {
 }
 
 type conversationAggregate struct {
-	ID        string
-	Name      *string
-	Requests  int
-	Input     int64
-	Output    int64
-	Cached    int64
-	Reasoning int64
-	Cost      *float64
-	Last      *string
+	CacheInput int64
+	ID         string
+	Name       *string
+	Requests   int
+	Input      int64
+	Output     int64
+	Cached     int64
+	Reasoning  int64
+	Cost       *float64
+	Last       *string
 }
 
 func aggregateConversation(groups map[string]*conversationAggregate, fact RequestFact, result conversation.MatchResult, countable bool) {
@@ -538,6 +545,7 @@ func aggregateConversation(groups map[string]*conversationAggregate, fact Reques
 	group.Output += *fact.CompletionTokens
 	if fact.CachedTokens != nil {
 		group.Cached += *fact.CachedTokens
+		group.CacheInput += *fact.PromptTokens
 	}
 	if fact.ReasoningTokens != nil {
 		group.Reasoning += *fact.ReasoningTokens
@@ -553,7 +561,7 @@ func conversationSummaries(groups map[string]*conversationAggregate) []Conversat
 		list = append(list, ConversationSummary{
 			ConversationID: group.ID, Name: group.Name, Requests: group.Requests,
 			InputTokens: group.Input, OutputTokens: group.Output, CachedTokens: group.Cached,
-			Reasoning: group.Reasoning, CacheRate: cacheRate(group.Input, group.Cached), LastActive: group.Last, Cost: group.Cost,
+			Reasoning: group.Reasoning, CacheRate: cacheRate(group.CacheInput, group.Cached), LastActive: group.Last, Cost: group.Cost,
 		})
 	}
 	sort.SliceStable(list, func(i, j int) bool {
@@ -581,26 +589,16 @@ func requestDTO(fact RequestFact, result conversation.MatchResult, source conver
 		}
 		dto.Status = &status
 	}
-	if fact.countable() {
-		dto.PromptTokens = fact.PromptTokens
-		dto.PromptTokensSnake = fact.PromptTokens
-		dto.CompletionTokens = fact.CompletionTokens
-		dto.CompletionTokensSnake = fact.CompletionTokens
-		cached := int64(0)
-		if fact.CachedTokens != nil {
-			cached = *fact.CachedTokens
-		}
-		dto.CachedTokens = &cached
-		dto.CachedTokensSnake = &cached
-		reasoning := int64(0)
-		if fact.ReasoningTokens != nil {
-			reasoning = *fact.ReasoningTokens
-		}
-		dto.ReasoningTokens = &reasoning
-		dto.ReasoningTokensSnake = &reasoning
+	dto.PromptTokens, dto.PromptTokensSnake = fact.PromptTokens, fact.PromptTokens
+	dto.CompletionTokens, dto.CompletionTokensSnake = fact.CompletionTokens, fact.CompletionTokens
+	dto.CachedTokens, dto.CachedTokensSnake = fact.CachedTokens, fact.CachedTokens
+	dto.ReasoningTokens, dto.ReasoningTokensSnake = fact.ReasoningTokens, fact.ReasoningTokens
+	if fact.PromptTokens != nil && fact.CompletionTokens != nil {
 		total := *fact.PromptTokens + *fact.CompletionTokens
 		dto.TotalTokens = &total
-		dto.CacheRate = cacheRate(*fact.PromptTokens, cached)
+	}
+	if fact.countable() && fact.CachedTokens != nil {
+		dto.CacheRate = cacheRate(*fact.PromptTokens, *fact.CachedTokens)
 	}
 	if source != conversation.SourceOff {
 		id := result.ID
@@ -636,22 +634,14 @@ func detailRequestDTO(fact RequestFact, id string) ConversationRequestDTO {
 		}
 		dto.Status = &status
 	}
-	if fact.countable() {
-		dto.PromptTokens = fact.PromptTokens
-		dto.CompletionTokens = fact.CompletionTokens
-		cached := int64(0)
-		if fact.CachedTokens != nil {
-			cached = *fact.CachedTokens
-		}
-		dto.CachedTokens = &cached
-		reasoning := int64(0)
-		if fact.ReasoningTokens != nil {
-			reasoning = *fact.ReasoningTokens
-		}
-		dto.ReasoningTokens = &reasoning
+	dto.PromptTokens, dto.CompletionTokens = fact.PromptTokens, fact.CompletionTokens
+	dto.CachedTokens, dto.ReasoningTokens = fact.CachedTokens, fact.ReasoningTokens
+	if fact.PromptTokens != nil && fact.CompletionTokens != nil {
 		total := *fact.PromptTokens + *fact.CompletionTokens
 		dto.TotalTokens = &total
-		dto.CacheRate = cacheRate(*fact.PromptTokens, cached)
+	}
+	if fact.countable() && fact.CachedTokens != nil {
+		dto.CacheRate = cacheRate(*fact.PromptTokens, *fact.CachedTokens)
 	}
 	return dto
 }

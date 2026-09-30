@@ -1,6 +1,9 @@
 package proxy
 
-import "github.com/heihei0299/pi-switch/internal/config"
+import (
+	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/usage"
+)
 
 // CalcCost is the single implementation of request cost:
 // (prompt-cached)*input + cached*cacheRead + completion*output, divided by 1M.
@@ -20,4 +23,15 @@ func CalcCost(entry *config.ModelEntry, prompt, completion, cached int) *float64
 	}
 	cost := float64(nonCached)*input/1_000_000 + float64(cached)*cacheRead/1_000_000 + float64(completion)*output/1_000_000
 	return &cost
+}
+
+// CalcUsageCost only prices requests whose required usage facts are known.
+func CalcUsageCost(entry *config.ModelEntry, summary *usage.UsageSummary) *float64 {
+	if entry == nil || entry.Cost == nil || summary == nil || !summary.PromptTokensKnown || !summary.CompletionTokensKnown {
+		return nil
+	}
+	if summary.PromptTokens > 0 && !summary.CachedTokensKnown && entry.Cost.Input != entry.Cost.CacheRead {
+		return nil
+	}
+	return CalcCost(entry, int(summary.PromptTokens), int(summary.CompletionTokens), int(summary.CachedTokens))
 }

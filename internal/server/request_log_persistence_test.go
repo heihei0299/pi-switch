@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 func TestLogRequestInsertFailureIsObservable(t *testing.T) {
@@ -27,7 +28,7 @@ func TestLogRequestInsertFailureIsObservable(t *testing.T) {
 	log.SetOutput(&output)
 	defer log.SetOutput(oldWriter)
 
-	logRequest("provider", "model", true, 1, 1, 0, 0, nil, "", "", 1, http.StatusOK, "", "")
+	logRequest("provider", "model", true, &usage.UsageSummary{PromptTokens: 1, CompletionTokens: 1, PromptTokensKnown: true, CompletionTokensKnown: true, CachedTokensKnown: true, ReasoningTokensKnown: true}, nil, "", "", 1, http.StatusOK, "", "")
 	if !strings.Contains(output.String(), "request log insert") {
 		t.Fatalf("insert failure was not logged: %q", output.String())
 	}

@@ -10,13 +10,14 @@ import (
 
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 func TestLogRequestPreservesSubsecondTimestampForCurrentStatsWindow(t *testing.T) {
 	writeLegacyTestEnv(t, "")
 	t.Cleanup(store.Close)
 
-	logRequest("provider", "model", true, 10, 5, 0, 0, nil, "", "", 12, 200, "", "")
+	logRequest("provider", "model", true, &usage.UsageSummary{PromptTokens: 10, CompletionTokens: 5, PromptTokensKnown: true, CompletionTokensKnown: true, CachedTokensKnown: true, ReasoningTokensKnown: true}, nil, "", "", 12, 200, "", "")
 
 	db, err := store.GetDB()
 	if err != nil {

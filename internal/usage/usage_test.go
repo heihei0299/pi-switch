@@ -62,3 +62,34 @@ func TestSseUsageParserHandlesSplitFramesAndDone(t *testing.T) {
 		t.Fatalf("summary = %+v", summary)
 	}
 }
+
+func TestUsageKnownFlagsPreservePartialAndRejectInvalidCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value interface{}
+		known bool
+	}{
+		{"missing", nil, false}, {"zero", 0.0, true}, {"negative", -1.0, false}, {"fraction", 0.5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{"prompt_tokens": tc.value, "completion_tokens": 0.0, "cached_tokens": tc.value}})
+			prompt, completion, cached, reasoning := s.NullableTokens()
+			if s.PromptTokensKnown != tc.known || s.CachedTokensKnown != tc.known || completion == nil || *completion != 0 || reasoning != nil {
+				t.Fatalf("knowledge changed: %+v", s)
+			}
+			if tc.known {
+				if prompt == nil || cached == nil || *prompt != 0 || *cached != 0 {
+					t.Fatal("explicit zero lost")
+				}
+			} else if prompt != nil || cached != nil {
+				t.Fatal("invalid/unknown counts fabricated")
+			}
+		})
+	}
+	p := NewSseUsageParser()
+	p.Push([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n"))
+	s := p.Finish()
+	if s == nil || !s.PromptTokensKnown || !s.CompletionTokensKnown || s.CachedTokensKnown || s.ReasoningTokensKnown {
+		t.Fatalf("partial SSE usage=%+v", s)
+	}
+}

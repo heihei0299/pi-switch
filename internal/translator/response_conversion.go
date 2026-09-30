@@ -199,6 +199,12 @@ func ResponsesToChatResponse(body map[string]interface{}, fallbackModel string) 
 			"completion_tokens": usage["output_tokens"],
 			"total_tokens":      usage["total_tokens"],
 		}
+		if details, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+			mapped["prompt_tokens_details"] = details
+		}
+		if details, ok := usage["output_tokens_details"].(map[string]interface{}); ok {
+			mapped["completion_tokens_details"] = details
+		}
 		if mapped["total_tokens"] == nil {
 			mapped["total_tokens"] = sumNumeric(mapped["prompt_tokens"], mapped["completion_tokens"])
 		}

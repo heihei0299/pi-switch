@@ -466,7 +466,7 @@ func handleChatCompletions(c *gin.Context) {
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
 		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
 		if status != 499 {
 			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
 		}
@@ -476,7 +476,7 @@ func handleChatCompletions(c *gin.Context) {
 	resp.Body.Close()
 	if readErr != nil {
 		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
 		if status != 499 {
 			c.JSON(status, inferenceError(readErr.Error(), "upstream_error"))
 		}
@@ -514,7 +514,7 @@ func handleChatCompletions(c *gin.Context) {
 						resp2.Body.Close()
 						if readErr2 != nil {
 							status := upstreamErrorStatus(c.Request.Context())
-							logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)
+							logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)
 							if status != 499 {
 								c.JSON(status, inferenceError(readErr2.Error(), "upstream_error"))
 							}
@@ -527,7 +527,7 @@ func handleChatCompletions(c *gin.Context) {
 							if needRespConvert {
 								converted, convertErr := transformResponseBody(plan, respBody2, realModel)
 								if convertErr != nil {
-									logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound2.Metadata.URL)
+									logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound2.Metadata.URL)
 									c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
 									return
 								}
@@ -536,19 +536,11 @@ func handleChatCompletions(c *gin.Context) {
 								finalHeaders2.Set("Content-Type", "application/json")
 							}
 							var respObj map[string]interface{}
-							_ = json.Unmarshal(finalBody2, &respObj)
-							usagePrompt, usageCompletion, usageCached, usageReasoning := extractUsage(respObj)
-							if usagePrompt == 0 && usageCompletion == 0 {
-								if s := usage.ExtractUsage(respObj); s != nil {
-									usagePrompt = int(s.PromptTokens)
-									usageCompletion = int(s.CompletionTokens)
-									usageCached = int(s.CachedTokens)
-									usageReasoning = int(s.ReasoningTokens)
-								}
-							}
-							cost := proxy.CalcCost(modelEntry, usagePrompt, usageCompletion, usageCached)
+							_ = json.Unmarshal(respBody2, &respObj)
+							usageSum := usage.ExtractUsage(respObj)
+							cost := proxy.CalcUsageCost(modelEntry, usageSum)
 							latMs := time.Since(start).Milliseconds()
-							logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
+							logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
 							for k, vv := range finalHeaders2 {
 								for _, v := range vv {
 									if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
@@ -567,14 +559,14 @@ func handleChatCompletions(c *gin.Context) {
 						// Retry also failed: fall through to original 400 handling but log retry body
 						_ = respBody2
 					} else if c.Request.Context().Err() != nil {
-						logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 499, err2.Error(), outbound2.Metadata.URL)
+						logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), 499, err2.Error(), outbound2.Metadata.URL)
 						return
 					}
 				}
 			}
 		}
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), outbound.Metadata.URL)
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), outbound.Metadata.URL)
 		return
 	}
 	finalBody := respBody
@@ -582,7 +574,7 @@ func handleChatCompletions(c *gin.Context) {
 	if needRespConvert {
 		converted, convertErr := transformResponseBody(plan, respBody, realModel)
 		if convertErr != nil {
-			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound.Metadata.URL)
+			logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound.Metadata.URL)
 			c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
 			return
 		}
@@ -591,19 +583,11 @@ func handleChatCompletions(c *gin.Context) {
 		finalHeaders.Set("Content-Type", "application/json")
 	}
 	var respObj map[string]interface{}
-	_ = json.Unmarshal(finalBody, &respObj)
-	usagePrompt, usageCompletion, usageCached, usageReasoning := extractUsage(respObj)
-	if usagePrompt == 0 && usageCompletion == 0 {
-		if s := usage.ExtractUsage(respObj); s != nil {
-			usagePrompt = int(s.PromptTokens)
-			usageCompletion = int(s.CompletionTokens)
-			usageCached = int(s.CachedTokens)
-			usageReasoning = int(s.ReasoningTokens)
-		}
-	}
-	cost := proxy.CalcCost(modelEntry, usagePrompt, usageCompletion, usageCached)
+	_ = json.Unmarshal(respBody, &respObj)
+	usageSum := usage.ExtractUsage(respObj)
+	cost := proxy.CalcUsageCost(modelEntry, usageSum)
 	latMs := time.Since(start).Milliseconds()
-	logRequest(name, realModel, true, usagePrompt, usageCompletion, usageCached, usageReasoning, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
+	logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
 	for k, vv := range finalHeaders {
 		for _, v := range vv {
 			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
@@ -721,7 +705,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
 		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
 		if status != 499 {
 			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
 		}
@@ -736,7 +720,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 			}
 		}
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), outbound.Metadata.URL)
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), outbound.Metadata.URL)
 		return
 	}
 	if conv := plan.StreamConverter(realModel); conv != nil {
@@ -806,20 +790,12 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	}
 	clientCanceled = clientCanceled || c.Request.Context().Err() != nil
 	usageSum := parser.Finish()
-	var prompt, completion, cached, reasoning int
-	var cost *float64
-	if usageSum != nil {
-		prompt = int(usageSum.PromptTokens)
-		completion = int(usageSum.CompletionTokens)
-		cached = int(usageSum.CachedTokens)
-		reasoning = int(usageSum.ReasoningTokens)
-		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
-	} else {
+	if usageSum == nil {
 		var respObj map[string]interface{}
 		_ = json.Unmarshal(totalBytes.Bytes(), &respObj)
-		prompt, completion, cached, reasoning = extractUsage(respObj)
-		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
+		usageSum = usage.ExtractUsage(respObj)
 	}
+	cost := proxy.CalcUsageCost(modelEntry, usageSum)
 	streamFailed := clientCanceled || logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
 	errorMessage := ""
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
@@ -841,7 +817,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 		}
 	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
+	logRequest(provider, realModel, !streamFailed, usageSum, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
 }
 
 // streamConvert relays an upstream SSE stream through a registry converter.
@@ -973,23 +949,12 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		}
 	}
 	usageSum := parser.Finish()
-	var prompt, completion, cached, reasoning int
-	var cost *float64
-	if usageSum != nil {
-		prompt = int(usageSum.PromptTokens)
-		completion = int(usageSum.CompletionTokens)
-		cached = int(usageSum.CachedTokens)
-		reasoning = int(usageSum.ReasoningTokens)
-		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
-	} else if m, ok := conv.UsagePayload().(map[string]interface{}); ok {
-		if s := usage.ExtractUsage(map[string]interface{}{"usage": m}); s != nil {
-			prompt = int(s.PromptTokens)
-			completion = int(s.CompletionTokens)
-			cached = int(s.CachedTokens)
-			reasoning = int(s.ReasoningTokens)
-			cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
+	if usageSum == nil {
+		if m, ok := conv.UsagePayload().(map[string]interface{}); ok {
+			usageSum = usage.ExtractUsage(map[string]interface{}{"usage": m})
 		}
 	}
+	cost := proxy.CalcUsageCost(modelEntry, usageSum)
 	statusCode := resp.StatusCode
 	errorMessage := ""
 	if streamFailed {
@@ -1004,7 +969,7 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		statusCode = 499
 	}
 	latMs := time.Since(start).Milliseconds()
-	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
+	logRequest(provider, realModel, !streamFailed, usageSum, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
 }
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {
@@ -1038,15 +1003,7 @@ func transformResponseBody(plan translator.Plan, raw []byte, model string) ([]by
 	return b, nil
 }
 
-func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reasoning int) {
-	summary := usage.ExtractUsage(resp)
-	if summary == nil {
-		return 0, 0, 0, 0
-	}
-	return int(summary.PromptTokens), int(summary.CompletionTokens), int(summary.CachedTokens), int(summary.ReasoningTokens)
-}
-
-func logRequest(provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
+func logRequest(provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	succ := 0
 	if success {
@@ -1056,7 +1013,8 @@ func logRequest(provider, model string, success bool, prompt, completion, cached
 	if cost != nil {
 		costVal = *cost
 	}
-	entry := legacyLogEntry(ts, provider, model, success, prompt, completion, cached, reasoning, cost, convID, convName, status, errMsg, upstreamURL)
+	prompt, completion, cached, reasoning := summary.NullableTokens()
+	entry := legacyLogEntry(ts, provider, model, success, summary, cost, convID, convName, status, errMsg, upstreamURL)
 	if db, err := store.GetDB(); err != nil {
 		log.Printf("request log database: %v", err)
 	} else if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,

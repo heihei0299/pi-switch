@@ -2,102 +2,102 @@ package usage
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 )
 
 type UsageSummary struct {
-	PromptTokens         uint64 `json:"prompt_tokens"`
-	CompletionTokens     uint64 `json:"completion_tokens"`
-	CachedTokens         uint64 `json:"cached_tokens"`
-	ReasoningTokens      uint64 `json:"reasoning_tokens"`
-	CachedTokensKnown    bool   `json:"-"`
-	ReasoningTokensKnown bool   `json:"-"`
+	PromptTokens          uint64 `json:"prompt_tokens"`
+	CompletionTokens      uint64 `json:"completion_tokens"`
+	CachedTokens          uint64 `json:"cached_tokens"`
+	ReasoningTokens       uint64 `json:"reasoning_tokens"`
+	PromptTokensKnown     bool   `json:"-"`
+	CompletionTokensKnown bool   `json:"-"`
+	CachedTokensKnown     bool   `json:"-"`
+	ReasoningTokensKnown  bool   `json:"-"`
 }
 
 func ExtractUsage(v map[string]interface{}) *UsageSummary {
-	raw, ok := v["usage"]
+	raw, ok := v["usage"].(map[string]interface{})
 	if !ok {
 		return nil
 	}
-	usage, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil
-	}
-	firstU64 := func(keys ...string) uint64 {
-		for _, k := range keys {
-			if val, ok := usage[k]; ok {
-				if f, ok := val.(float64); ok {
-					return uint64(f)
-				}
-			}
-		}
-		return 0
-	}
-	cached := uint64(0)
-	cachedKnown := false
-	if v, ok := usage["cache_read_input_tokens"]; ok {
-		if f, ok := v.(float64); ok {
-			cached = uint64(f)
-			cachedKnown = true
-		}
-	}
+	prompt, promptKnown := firstToken(raw, "input_tokens", "prompt_tokens")
+	completion, completionKnown := firstToken(raw, "output_tokens", "completion_tokens")
+	cached, cachedKnown := firstToken(raw, "cache_read_input_tokens")
 	if !cachedKnown {
 		for _, key := range []string{"prompt_tokens_details", "input_tokens_details"} {
-			if details, ok := usage[key].(map[string]interface{}); ok {
-				if v, ok := details["cached_tokens"]; ok {
-					if f, ok := v.(float64); ok {
-						cached = uint64(f)
-						cachedKnown = true
-						break
-					}
+			if details, ok := raw[key].(map[string]interface{}); ok {
+				cached, cachedKnown = firstToken(details, "cached_tokens")
+				if cachedKnown {
+					break
 				}
 			}
 		}
 	}
 	if !cachedKnown {
-		if v, ok := usage["cached_tokens"]; ok {
-			if f, ok := v.(float64); ok {
-				cached = uint64(f)
-				cachedKnown = true
-			}
-		}
+		cached, cachedKnown = firstToken(raw, "cached_tokens", "prompt_cache_hit_tokens")
 	}
-	if !cachedKnown {
-		if v, ok := usage["prompt_cache_hit_tokens"]; ok {
-			if f, ok := v.(float64); ok {
-				cached = uint64(f)
-				cachedKnown = true
-			}
-		}
-	}
-	reasoning := uint64(0)
+	var reasoning uint64
 	reasoningKnown := false
-	if details, ok := usage["completion_tokens_details"].(map[string]interface{}); ok {
-		if v, ok := details["reasoning_tokens"]; ok {
-			if f, ok := v.(float64); ok {
-				reasoning = uint64(f)
-				reasoningKnown = true
-			}
-		}
-	}
-	if !reasoningKnown {
-		if details, ok := usage["output_tokens_details"].(map[string]interface{}); ok {
-			if v, ok := details["reasoning_tokens"]; ok {
-				if f, ok := v.(float64); ok {
-					reasoning = uint64(f)
-					reasoningKnown = true
-				}
+	for _, key := range []string{"completion_tokens_details", "output_tokens_details"} {
+		if details, ok := raw[key].(map[string]interface{}); ok {
+			reasoning, reasoningKnown = firstToken(details, "reasoning_tokens")
+			if reasoningKnown {
+				break
 			}
 		}
 	}
 	return &UsageSummary{
-		PromptTokens:         firstU64("input_tokens", "prompt_tokens"),
-		CompletionTokens:     firstU64("output_tokens", "completion_tokens"),
-		CachedTokens:         cached,
-		ReasoningTokens:      reasoning,
-		CachedTokensKnown:    cachedKnown,
-		ReasoningTokensKnown: reasoningKnown,
+		PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, ReasoningTokens: reasoning,
+		PromptTokensKnown: promptKnown, CompletionTokensKnown: completionKnown,
+		CachedTokensKnown: cachedKnown, ReasoningTokensKnown: reasoningKnown,
 	}
+}
+
+func firstToken(source map[string]interface{}, keys ...string) (uint64, bool) {
+	for _, key := range keys {
+		switch n := source[key].(type) {
+		case float64:
+			if n >= 0 && n < float64(uint64(1)<<63) && math.Trunc(n) == n {
+				return uint64(n), true
+			}
+		case int:
+			if n >= 0 {
+				return uint64(n), true
+			}
+		case int64:
+			if n >= 0 {
+				return uint64(n), true
+			}
+		case uint64:
+			if n <= math.MaxInt64 {
+				return n, true
+			}
+		case json.Number:
+			if n, err := n.Int64(); err == nil && n >= 0 {
+				return uint64(n), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// NullableTokens keeps missing usage distinct from an explicitly reported zero
+// at storage and JSON boundaries. A nil summary contains no token facts.
+func (s *UsageSummary) NullableTokens() (prompt, completion, cached, reasoning *int64) {
+	if s == nil {
+		return
+	}
+	knownValue := func(value uint64, known bool) *int64 {
+		if !known {
+			return nil
+		}
+		n := int64(value)
+		return &n
+	}
+	return knownValue(s.PromptTokens, s.PromptTokensKnown), knownValue(s.CompletionTokens, s.CompletionTokensKnown),
+		knownValue(s.CachedTokens, s.CachedTokensKnown), knownValue(s.ReasoningTokens, s.ReasoningTokensKnown)
 }
 
 func frameEnd(buf []byte) (int, int) {
@@ -159,31 +159,13 @@ func (p *SseUsageParser) handleFrame(frame []byte) {
 			switch typ {
 			case "message_start":
 				if msg, ok := v["message"].(map[string]interface{}); ok {
-					if usage, ok := msg["usage"].(map[string]interface{}); ok {
-						if val, ok := usage["input_tokens"].(float64); ok {
-							u := uint64(val)
-							p.anthropicInput = &u
-						}
-						if val, ok := usage["cache_read_input_tokens"]; ok {
-							if f, ok := val.(float64); ok {
-								u := uint64(f)
-								p.anthropicCached = &u
-							}
-						}
+					if raw, ok := msg["usage"].(map[string]interface{}); ok {
+						p.captureAnthropicUsage(raw)
 					}
 				}
 			case "message_delta":
-				if usage, ok := v["usage"].(map[string]interface{}); ok {
-					if val, ok := usage["output_tokens"].(float64); ok {
-						u := uint64(val)
-						p.anthropicCompletion = &u
-					}
-					if val, ok := usage["cache_read_input_tokens"]; ok {
-						if f, ok := val.(float64); ok {
-							u := uint64(f)
-							p.anthropicCached = &u
-						}
-					}
+				if raw, ok := v["usage"].(map[string]interface{}); ok {
+					p.captureAnthropicUsage(raw)
 				}
 			default:
 				usageSource := v
@@ -210,22 +192,37 @@ func (p *SseUsageParser) handleFrame(frame []byte) {
 	}
 }
 
+func (p *SseUsageParser) captureAnthropicUsage(raw map[string]interface{}) {
+	if u, ok := firstToken(raw, "input_tokens"); ok {
+		p.anthropicInput = &u
+	}
+	if u, ok := firstToken(raw, "output_tokens"); ok {
+		p.anthropicCompletion = &u
+	}
+	if u, ok := firstToken(raw, "cache_read_input_tokens"); ok {
+		p.anthropicCached = &u
+	}
+}
+
 func (p *SseUsageParser) Finish() *UsageSummary {
 	if p.summary != nil {
 		return p.summary
 	}
-	if p.anthropicInput != nil && p.anthropicCompletion != nil {
-		cached := uint64(0)
-		if p.anthropicCached != nil {
-			cached = *p.anthropicCached
-		}
-		return &UsageSummary{
-			PromptTokens:      *p.anthropicInput,
-			CompletionTokens:  *p.anthropicCompletion,
-			CachedTokens:      cached,
-			CachedTokensKnown: p.anthropicCached != nil,
-			ReasoningTokens:   0,
-		}
+	if p.anthropicInput == nil && p.anthropicCompletion == nil && p.anthropicCached == nil {
+		return nil
 	}
-	return nil
+	result := &UsageSummary{}
+	if p.anthropicInput != nil {
+		result.PromptTokens = *p.anthropicInput
+		result.PromptTokensKnown = true
+	}
+	if p.anthropicCompletion != nil {
+		result.CompletionTokens = *p.anthropicCompletion
+		result.CompletionTokensKnown = true
+	}
+	if p.anthropicCached != nil {
+		result.CachedTokens = *p.anthropicCached
+		result.CachedTokensKnown = true
+	}
+	return result
 }

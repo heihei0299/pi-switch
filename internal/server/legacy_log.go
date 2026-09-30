@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 // Legacy request-log compatibility (旧版本请求日志兼容):
@@ -327,7 +328,8 @@ func appendLegacyLog(entry map[string]interface{}) error {
 }
 
 // legacyLogEntry builds the old-shape log line from a completed request.
-func legacyLogEntry(ts, provider, model string, success bool, prompt, completion, cached, reasoning int, cost *float64, convID, convName string, status int, errMsg, upstreamURL string) map[string]interface{} {
+func legacyLogEntry(ts, provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, status int, errMsg, upstreamURL string) map[string]interface{} {
+	prompt, completion, cached, reasoning := summary.NullableTokens()
 	entry := map[string]interface{}{
 		"ts": ts, "provider": provider, "model": model, "ok": success, "status": status,
 		"upstreamUrl":  upstreamURL,

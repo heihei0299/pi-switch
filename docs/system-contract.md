@@ -96,6 +96,8 @@
 6. session title 只使用 matcher 采用的 snapshot：`session_info.name`，其次第一条真实 user message，再其次 cwd basename；不存在则使用 session ID。
 7. display percent-decode 只在展示 boundary 兼容存量编码，不改变落库 request facts。
 
+8. usage 的已知标记跨 raw upstream、SQLite、legacy log、请求明细和导出保持；缺失 token 记 `NULL`，明确零值记 0。缓存率仅使用 cached 已知且 input 已知的成功完整 usage 样本；无已知样本显示 unknown。无 usage 或缺少计算费用所需的事实时 cost 为 unknown。
+
 ### 2.6 WebUI 编辑器与布局
 
 1. Config JSON 始终是可直接编辑的受控文本；Format 按钮固定在编辑器左下；structured view 不能替代它。
@@ -160,6 +162,7 @@
 | 三个 max key、/3、encrypted compensation、safety、16 floor、maxTokens 只有一套 | §2.4.4/5；§2.4.6 | IMP-02 | limit/server retry/stream tests | 长会话真实 upstream 不触发已知 context 400 |
 | 客户端取消/写入失败停止 upstream，不生成成功终止事件 | §2.4.10 | bug audit 05 | cancellation/write-failure HTTP tests | 取消流式与非流式后供应商请求及时释放 |
 | 首次、stream、retry 共享 URL/header/affinity/UA builder | §2.4.4；追踪矩阵 outbound | IMP-03 | httptest 完整 header 比较 | opencode.ai 实际收到 affinity、UA、channel headers |
+| usage 缺失与明确零值在日志/明细/导出中可区分，缓存率不猜测未知样本 | §2.5.8 | bug audit 07 | nullable usage HTTP/detail/export tests | SQLite 与响应 cached/reasoning NULL 不显示为零命中率 |
 | reasoning 是 completion 子集，cached/reasoning 缺失/零/已知可区分 | §2.4.6；§2.5.2 | IMP-04；后续 IMP-11 | usage table/stream tests | Stats token/cost 与 upstream usage 对照 |
 | conversation source、显式 ID 优先、歧义不猜测 | §2.5.3/4 | 后续 IMP-09 | matcher table/concurrent fixture tests | 真实 session 目录中同模型并发归入 unlabeled |
 | Stats GET 只读 SQLite，不触发 legacy migration 写入 | §2.5.5 | 后续 IMP-10/11 | handler read-only/concurrency tests | daemon 启动健康且首次 Stats 不同步导入 |
