@@ -56,8 +56,7 @@ func init() {
 			return ChatToResponses(body), nil
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
-			// Upstream already speaks Responses; nothing to convert back.
-			return upstream, nil
+			return ResponsesToChatResponse(upstream, model)
 		},
 	)
 	// Chat -> Anthropic.
@@ -66,6 +65,9 @@ func init() {
 			return OpenAIToAnthropic(body), nil
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
+			if _, ok := upstream["content"].([]interface{}); !ok {
+				return nil, &ResponsesConversionError{Kind: "invalid", Message: "anthropic response has no content array"}
+			}
 			return AnthropicToOpenAIResponse(upstream), nil
 		},
 	)
@@ -75,8 +77,7 @@ func init() {
 			return AnthropicToChat(body), nil
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
-			// Upstream already speaks Chat; nothing to convert back.
-			return upstream, nil
+			return OpenAIToAnthropicResponse(upstream)
 		},
 	)
 }
@@ -104,8 +105,11 @@ func (p Plan) TransformRequest(model string, body map[string]interface{}) (map[s
 // TransformResponse runs the registered non-streaming response conversion,
 // or returns upstream unchanged for passthrough plans.
 func (p Plan) TransformResponse(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
-	if p.Passthrough || p.entry == nil || p.entry.response == nil {
+	if p.Passthrough {
 		return upstream, nil
+	}
+	if p.entry == nil || p.entry.response == nil {
+		return nil, &ResponsesConversionError{Kind: "not_supported", Message: fmt.Sprintf("no response converter from %s to %s", p.To, p.From)}
 	}
 	return p.entry.response(upstream, model)
 }

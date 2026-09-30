@@ -78,6 +78,8 @@
 5. 原始 body 与转换后 body 各自只执行一次同一 `ClampMaxTokens` 算法；不得新增第二套 clamp。
 6. usage 中 cached/reasoning 的缺失、零值和已知值保持可区分；reasoning 是 completion 的子集，不重复累加。
 
+7. 非流式跨协议响应必须转换回客户端格式（含文本、结束原因和 usage）；解析或转换失败返回明确 `502 conversion_error`，首次请求与 max-token retry 都不能透传错误协议的成功响应。
+
 ### 2.5 Stats 与对话
 
 1. SQLite request row 的 provider、model、status、latency、usage、cost 是 immutable request facts。
@@ -145,6 +147,7 @@
 | 同一 canonical plan 连续 publish 幂等 | §2.3 idempotency | IMP-05 | golden/idempotency tests | 第二次 publish 后 `pending_count=0` |
 | responsesMode 只按声明 api 决定 passthrough/convert | §2.4.1/2 | IMP-04 | table-driven PlanRequest tests | Responses/Chat provider 实际 endpoint 与事件语义一致 |
 | responsesMode 规则与 API 能力只有一份 `internal/protocol`，WebUI 从 `/api/state` 读取 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol 规则用例 + WebUI fixture parity 用例 | `/api/state.protocol.apis` 实际驱动下拉与校验 |
+| 非流式响应匹配客户端协议，转换失败明确报错 | §2.4.7 | bug audit 03 | client protocol + malformed/retry HTTP tests | Chat→Responses、Messages→Chat 返回客户端所需结构 |
 | 不兼容组合发送 upstream 前失败，不探测/降级/failover | §2.4.3 | IMP-04 | preflight rejection tests | upstream 捕获不到不兼容请求，客户端得到明确错误 |
 | 三个 max key、/3、encrypted compensation、safety、16 floor、maxTokens 只有一套 | §2.4.4/5；§2.4.6 | IMP-02 | limit/server retry/stream tests | 长会话真实 upstream 不触发已知 context 400 |
 | 首次、stream、retry 共享 URL/header/affinity/UA builder | §2.4.4；追踪矩阵 outbound | IMP-03 | httptest 完整 header 比较 | opencode.ai 实际收到 affinity、UA、channel headers |

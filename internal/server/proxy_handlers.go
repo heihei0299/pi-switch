@@ -504,15 +504,15 @@ func handleChatCompletions(c *gin.Context) {
 							finalBody2 := respBody2
 							finalHeaders2 := resp2.Header
 							if needRespConvert {
-								var upstreamObj map[string]interface{}
-								if err := json.Unmarshal(respBody2, &upstreamObj); err == nil {
-									if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
-										b, _ := json.Marshal(conv)
-										finalBody2 = b
-										finalHeaders2 = http.Header{}
-										finalHeaders2.Set("Content-Type", "application/json")
-									}
+								converted, convertErr := transformResponseBody(plan, respBody2, realModel)
+								if convertErr != nil {
+									logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound2.Metadata.URL)
+									c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
+									return
 								}
+								finalBody2 = converted
+								finalHeaders2 = http.Header{}
+								finalHeaders2.Set("Content-Type", "application/json")
 							}
 							var respObj map[string]interface{}
 							_ = json.Unmarshal(finalBody2, &respObj)
@@ -556,15 +556,15 @@ func handleChatCompletions(c *gin.Context) {
 	finalBody := respBody
 	finalHeaders := resp.Header
 	if needRespConvert {
-		var upstreamObj map[string]interface{}
-		if err := json.Unmarshal(respBody, &upstreamObj); err == nil {
-			if conv, err := plan.TransformResponse(upstreamObj, realModel); err == nil {
-				b, _ := json.Marshal(conv)
-				finalBody = b
-				finalHeaders = http.Header{}
-				finalHeaders.Set("Content-Type", "application/json")
-			}
+		converted, convertErr := transformResponseBody(plan, respBody, realModel)
+		if convertErr != nil {
+			logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound.Metadata.URL)
+			c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
+			return
 		}
+		finalBody = converted
+		finalHeaders = http.Header{}
+		finalHeaders.Set("Content-Type", "application/json")
 	}
 	var respObj map[string]interface{}
 	_ = json.Unmarshal(finalBody, &respObj)
@@ -931,6 +931,22 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 	var out map[string]interface{}
 	_ = json.Unmarshal(b, &out)
 	return out
+}
+
+func transformResponseBody(plan translator.Plan, raw []byte, model string) ([]byte, error) {
+	var upstream map[string]interface{}
+	if err := json.Unmarshal(raw, &upstream); err != nil {
+		return nil, fmt.Errorf("upstream response is not valid JSON: %w", err)
+	}
+	converted, err := plan.TransformResponse(upstream, model)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(converted)
+	if err != nil {
+		return nil, fmt.Errorf("converted response is not serializable: %w", err)
+	}
+	return b, nil
 }
 
 func extractUsage(resp map[string]interface{}) (prompt, completion, cached, reasoning int) {
