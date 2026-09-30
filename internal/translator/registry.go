@@ -53,7 +53,7 @@ func init() {
 	// Chat -> Responses (chat clients against openai-responses upstreams).
 	Register(FormatOpenAIChat, FormatOpenAIResponses,
 		func(model string, body map[string]interface{}) (map[string]interface{}, error) {
-			return ChatToResponses(body), nil
+			return ChatToResponsesWithError(body)
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
 			return ResponsesToChatResponse(upstream, model)
@@ -62,19 +62,16 @@ func init() {
 	// Chat -> Anthropic.
 	Register(FormatOpenAIChat, FormatAnthropic,
 		func(model string, body map[string]interface{}) (map[string]interface{}, error) {
-			return OpenAIToAnthropic(body), nil
+			return OpenAIToAnthropicWithError(body)
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
-			if _, ok := upstream["content"].([]interface{}); !ok {
-				return nil, &ResponsesConversionError{Kind: "invalid", Message: "anthropic response has no content array"}
-			}
-			return AnthropicToOpenAIResponse(upstream), nil
+			return AnthropicToOpenAIResponseWithError(upstream)
 		},
 	)
 	// Anthropic -> Chat.
 	Register(FormatAnthropic, FormatOpenAIChat,
 		func(model string, body map[string]interface{}) (map[string]interface{}, error) {
-			return AnthropicToChat(body), nil
+			return AnthropicToChatWithError(body)
 		},
 		func(upstream map[string]interface{}, model string) (map[string]interface{}, error) {
 			return OpenAIToAnthropicResponse(upstream)

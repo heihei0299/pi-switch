@@ -3,6 +3,7 @@ package translator
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/protocol"
@@ -36,6 +37,18 @@ func IsChatConvert(api, mode string) bool {
 }
 
 func OpenAIToAnthropic(body map[string]interface{}) map[string]interface{} {
+	out, _ := OpenAIToAnthropicWithError(body)
+	return out
+}
+
+// OpenAIToAnthropicWithError converts Chat Completions requests while keeping
+// the message/tool sequence meaningful to Anthropic Messages. The legacy
+// wrapper above remains for callers that intentionally use best-effort
+// conversion; routed requests use this error-returning form.
+func OpenAIToAnthropicWithError(body map[string]interface{}) (map[string]interface{}, error) {
+	if err := validateToolDefinitions(body); err != nil {
+		return nil, err
+	}
 	model, _ := body["model"].(string)
 	if model == "" {
 		model = "claude-sonnet-4-5"
@@ -56,62 +69,49 @@ func OpenAIToAnthropic(body map[string]interface{}) map[string]interface{} {
 			continue
 		}
 		role, _ := msg["role"].(string)
-		if role == "system" {
-			content := msg["content"]
-			var text string
-			switch c := content.(type) {
-			case string:
-				text = c
-			case []interface{}:
-				for _, part := range c {
-					if pm, ok := part.(map[string]interface{}); ok {
-						if t, ok := pm["text"].(string); ok {
-							if text != "" {
-								text += "\n"
-							}
-							text += t
-						}
-					}
-				}
-			default:
-				if content != nil {
-					b, _ := json.Marshal(content)
-					text = string(b)
-				}
-			}
+		if role == "system" || role == "developer" {
+			text := chatInstructionText(msg["content"])
 			if text != "" {
 				systemParts = append(systemParts, map[string]interface{}{"type": "text", "text": text})
 			}
-		} else {
-			newRole := "user"
-			if role == "assistant" {
-				newRole = "assistant"
-			}
-			content := msg["content"]
-			if content == nil {
-				content = ""
-			}
-			var parts []interface{}
-			switch c := content.(type) {
-			case string:
-				parts = []interface{}{map[string]interface{}{"type": "text", "text": c}}
-			case []interface{}:
-				for _, cc := range c {
-					if pm, ok := cc.(map[string]interface{}); ok {
-						typ, _ := pm["type"].(string)
-						if typ == "text" {
-							t, _ := pm["text"].(string)
-							parts = append(parts, map[string]interface{}{"type": "text", "text": t})
-						} else {
-							parts = append(parts, map[string]interface{}{"type": "text", "text": fmt.Sprintf("%v", cc)})
-						}
-					}
-				}
-			default:
-				parts = []interface{}{map[string]interface{}{"type": "text", "text": fmt.Sprintf("%v", c)}}
-			}
-			anthMsgs = append(anthMsgs, map[string]interface{}{"role": newRole, "content": parts})
+			continue
 		}
+		var parts []interface{}
+		switch role {
+		case "user", "assistant":
+			converted, err := chatContentToAnthropic(msg["content"], role == "assistant")
+			if err != nil {
+				return nil, fmt.Errorf("message %d: %w", len(anthMsgs), err)
+			}
+			parts = append(parts, converted...)
+			if role == "assistant" {
+				calls, err := chatToolCallsToAnthropic(msg["tool_calls"])
+				if err != nil {
+					return nil, fmt.Errorf("message %d: %w", len(anthMsgs), err)
+				}
+				parts = append(parts, calls...)
+			}
+		case "tool":
+			callID, _ := msg["tool_call_id"].(string)
+			if strings.TrimSpace(callID) == "" {
+				return nil, fmt.Errorf("message %d: tool message is missing tool_call_id", len(anthMsgs))
+			}
+			parts = append(parts, map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": callID,
+				"content":     msg["content"],
+			})
+		default:
+			return nil, fmt.Errorf("message %d: unsupported Chat role %q", len(anthMsgs), role)
+		}
+		if len(parts) == 0 {
+			parts = []interface{}{map[string]interface{}{"type": "text", "text": ""}}
+		}
+		newRole := role
+		if role == "tool" {
+			newRole = "user"
+		}
+		anthMsgs = append(anthMsgs, map[string]interface{}{"role": newRole, "content": parts})
 	}
 	if anthMsgs == nil {
 		anthMsgs = []interface{}{}
@@ -138,51 +138,105 @@ func OpenAIToAnthropic(body map[string]interface{}) map[string]interface{} {
 	if v, ok := body["stream"]; ok {
 		out["stream"] = v
 	}
-	return out
+	if tools, ok := body["tools"].([]interface{}); ok {
+		converted, err := chatToolsToAnthropic(tools)
+		if err != nil {
+			return nil, err
+		}
+		out["tools"] = converted
+	}
+	if choice, ok := body["tool_choice"]; ok {
+		converted, err := chatToolChoiceToAnthropic(choice)
+		if err != nil {
+			return nil, err
+		}
+		out["tool_choice"] = converted
+	}
+	if parallel, ok := body["parallel_tool_calls"].(bool); ok {
+		choice, _ := out["tool_choice"].(map[string]interface{})
+		if choice == nil {
+			choice = map[string]interface{}{"type": "auto"}
+			out["tool_choice"] = choice
+		}
+		choice["disable_parallel_tool_use"] = !parallel
+	}
+	return out, nil
 }
 
 func AnthropicToOpenAIResponse(anthro map[string]interface{}) map[string]interface{} {
+	out, _ := AnthropicToOpenAIResponseWithError(anthro)
+	return out
+}
+
+func AnthropicToOpenAIResponseWithError(anthro map[string]interface{}) (map[string]interface{}, error) {
 	model, _ := anthro["model"].(string)
 	if model == "" {
 		model = "claude-sonnet-4-5"
 	}
-	contentBlocks, _ := anthro["content"].([]interface{})
-	var choices []interface{}
-	for i, block := range contentBlocks {
-		text := ""
-		if m, ok := block.(map[string]interface{}); ok {
-			if t, ok := m["text"].(string); ok {
-				text = t
-			}
-		}
-		stopReason := "stop"
-		if r, ok := anthro["stop_reason"].(string); ok {
-			switch r {
-			case "end_turn":
-				stopReason = "stop"
-			case "max_tokens":
-				stopReason = "length"
-			default:
-				stopReason = r
-			}
-		}
-		choices = append(choices, map[string]interface{}{
-			"index": i,
-			"message": map[string]interface{}{
-				"role": "assistant", "content": text,
-			},
-			"finish_reason": stopReason,
-		})
+	contentBlocks, ok := anthro["content"].([]interface{})
+	if !ok {
+		return nil, &ResponsesConversionError{Kind: "invalid", Message: "anthropic response has no content array"}
 	}
-	if choices == nil {
-		choices = []interface{}{}
+	var textParts []string
+	var toolCalls []interface{}
+	for i, block := range contentBlocks {
+		m, ok := block.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("anthropic content block %d is invalid", i)
+		}
+		typ, _ := m["type"].(string)
+		switch typ {
+		case "text":
+			if t, ok := m["text"].(string); ok {
+				textParts = append(textParts, t)
+			}
+		case "tool_use":
+			id, _ := m["id"].(string)
+			name, _ := m["name"].(string)
+			if strings.TrimSpace(id) == "" || strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("anthropic tool_use block %d is missing id or name", i)
+			}
+			arguments, err := json.Marshal(m["input"])
+			if err != nil {
+				return nil, fmt.Errorf("anthropic tool_use %s input: %w", id, err)
+			}
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id": id, "type": "function",
+				"function": map[string]interface{}{"name": name, "arguments": string(arguments)},
+			})
+		default:
+			return nil, fmt.Errorf("unsupported Anthropic response block type %q", typ)
+		}
+	}
+	content := interface{}(nil)
+	if len(textParts) > 0 {
+		content = strings.Join(textParts, "")
+	}
+	message := map[string]interface{}{"role": "assistant", "content": content}
+	if len(toolCalls) > 0 {
+		message["tool_calls"] = toolCalls
+	}
+	stopReason := "stop"
+	if r, ok := anthro["stop_reason"].(string); ok {
+		switch r {
+		case "end_turn":
+			stopReason = "stop"
+		case "max_tokens":
+			stopReason = "length"
+		case "tool_use":
+			stopReason = "tool_calls"
+		default:
+			stopReason = r
+		}
 	}
 	resp := map[string]interface{}{
 		"id":      anthro["id"],
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
 		"model":   model,
-		"choices": choices,
+		"choices": []interface{}{map[string]interface{}{
+			"index": 0, "message": message, "finish_reason": stopReason,
+		}},
 	}
 	if resp["id"] == nil {
 		resp["id"] = fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
@@ -203,10 +257,13 @@ func AnthropicToOpenAIResponse(anthro map[string]interface{}) map[string]interfa
 			"total_tokens":      total,
 		}
 	}
-	return resp
+	return resp, nil
 }
 
 func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error) {
+	if err := validateToolDefinitions(body); err != nil {
+		return nil, err
+	}
 	var messages []interface{}
 	if input, ok := body["input"]; ok {
 		switch v := input.(type) {
@@ -234,7 +291,7 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 	} else if v, ok := body["max_tokens"]; ok {
 		chat["max_tokens"] = v
 	}
-	for _, k := range []string{"temperature", "top_p", "stream", "stop"} {
+	for _, k := range []string{"temperature", "top_p", "stream", "stop", "parallel_tool_calls"} {
 		if v, ok := body[k]; ok {
 			chat[k] = v
 		}
@@ -244,7 +301,7 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 		for _, t := range tools {
 			m, ok := t.(map[string]interface{})
 			if !ok {
-				continue
+				return nil, fmt.Errorf("Responses tool definition is invalid")
 			}
 			typ, _ := m["type"].(string)
 			if typ == "" {
@@ -252,6 +309,9 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 			}
 			if typ != "function" {
 				return nil, &ResponsesConversionError{Kind: "not_supported", Message: fmt.Sprintf("tool type '%s' is not supported in conversion mode", typ)}
+			}
+			if name, _ := m["name"].(string); strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("Responses function tool is missing name")
 			}
 			chatTools = append(chatTools, map[string]interface{}{
 				"type": "function",
@@ -264,7 +324,14 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 		}
 		chat["tools"] = chatTools
 		if v, ok := body["tool_choice"]; ok {
-			chat["tool_choice"] = v
+			choice, err := chatToolChoiceToResponses(v)
+			if err != nil {
+				return nil, err
+			}
+			if flat, ok := choice.(map[string]interface{}); ok {
+				choice = map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": flat["name"]}}
+			}
+			chat["tool_choice"] = choice
 		}
 	}
 	if instr, ok := body["instructions"].(string); ok && instr != "" {
@@ -290,17 +357,29 @@ func convertResponsesInput(items []interface{}) ([]interface{}, error) {
 		switch typ {
 		case "function_call_output":
 			callID, _ := m["call_id"].(string)
+			if strings.TrimSpace(callID) == "" {
+				return nil, fmt.Errorf("function_call_output is missing call_id")
+			}
 			output := m["output"]
 			messages = append(messages, map[string]interface{}{
 				"role": "tool", "tool_call_id": callID, "content": output,
 			})
 		case "function_call":
+			callID, _ := m["call_id"].(string)
+			name, _ := m["name"].(string)
+			if strings.TrimSpace(callID) == "" || strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("function_call is missing call_id or name")
+			}
+			arguments, err := encodeToolArguments(m["arguments"])
+			if err != nil {
+				return nil, fmt.Errorf("function_call %s arguments: %w", callID, err)
+			}
 			call := map[string]interface{}{
-				"id":   m["call_id"],
+				"id":   callID,
 				"type": "function",
 				"function": map[string]interface{}{
-					"name":      m["name"],
-					"arguments": m["arguments"],
+					"name":      name,
+					"arguments": arguments,
 				},
 			}
 			if len(messages) > 0 {

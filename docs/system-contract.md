@@ -80,6 +80,8 @@
 
 7. 非流式跨协议响应必须转换回客户端格式（含文本、结束原因和 usage）；解析或转换失败返回明确 `502 conversion_error`，首次请求与 max-token retry 都不能透传错误协议的成功响应。
 
+8. 跨协议函数工具转换保留定义、选择策略、调用 ID、参数和结果顺序；Chat 工具定义映射到 Responses 的扁平结构或 Anthropic 的 input_schema，工具历史映射到对应 call/result 项。无效或不可表示的工具状态必须明确拒绝，不丢弃后继续请求。
+
 ### 2.5 Stats 与对话
 
 1. SQLite request row 的 provider、model、status、latency、usage、cost 是 immutable request facts。
@@ -147,6 +149,7 @@
 | 同一 canonical plan 连续 publish 幂等 | §2.3 idempotency | IMP-05 | golden/idempotency tests | 第二次 publish 后 `pending_count=0` |
 | responsesMode 只按声明 api 决定 passthrough/convert | §2.4.1/2 | IMP-04 | table-driven PlanRequest tests | Responses/Chat provider 实际 endpoint 与事件语义一致 |
 | responsesMode 规则与 API 能力只有一份 `internal/protocol`，WebUI 从 `/api/state` 读取 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol 规则用例 + WebUI fixture parity 用例 | `/api/state.protocol.apis` 实际驱动下拉与校验 |
+| 工具定义、选择策略与调用/结果历史在跨协议转换后保持关联 | §2.4.8 | bug audit 02 | multi-turn tool exchange + invalid history tests | 工具调用后携带结果可继续下一轮 |
 | 非流式响应匹配客户端协议，转换失败明确报错 | §2.4.7 | bug audit 03 | client protocol + malformed/retry HTTP tests | Chat→Responses、Messages→Chat 返回客户端所需结构 |
 | 不兼容组合发送 upstream 前失败，不探测/降级/failover | §2.4.3 | IMP-04 | preflight rejection tests | upstream 捕获不到不兼容请求，客户端得到明确错误 |
 | 三个 max key、/3、encrypted compensation、safety、16 floor、maxTokens 只有一套 | §2.4.4/5；§2.4.6 | IMP-02 | limit/server retry/stream tests | 长会话真实 upstream 不触发已知 context 400 |
