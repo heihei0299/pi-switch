@@ -318,13 +318,17 @@ func ResponsesToChat(body map[string]interface{}) (map[string]interface{}, error
 			if name, _ := m["name"].(string); strings.TrimSpace(name) == "" {
 				return nil, fmt.Errorf("Responses function tool is missing name")
 			}
+			function := map[string]interface{}{
+				"name":        m["name"],
+				"description": m["description"],
+				"parameters":  m["parameters"],
+			}
+			if strict, exists := m["strict"]; exists {
+				function["strict"] = strict
+			}
 			chatTools = append(chatTools, map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        m["name"],
-					"description": m["description"],
-					"parameters":  m["parameters"],
-				},
+				"type":     "function",
+				"function": function,
 			})
 		}
 		chat["tools"] = chatTools
