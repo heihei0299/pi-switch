@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/protocol"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 type ResponsesConversionError struct {
@@ -241,21 +242,25 @@ func AnthropicToOpenAIResponseWithError(anthro map[string]interface{}) (map[stri
 	if resp["id"] == nil {
 		resp["id"] = fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	}
-	if usage, ok := anthro["usage"].(map[string]interface{}); ok {
-		prompt := usage["input_tokens"]
-		compl := usage["output_tokens"]
-		var total float64
-		if pf, ok := prompt.(float64); ok {
-			total += pf
+	if summary := usage.ExtractUsage(anthro); summary != nil {
+		prompt, compl, cached, _ := summary.NullableTokens()
+		mapped := map[string]interface{}{
+			"prompt_tokens":     nil,
+			"completion_tokens": nil,
 		}
-		if cf, ok := compl.(float64); ok {
-			total += cf
+		if prompt != nil {
+			mapped["prompt_tokens"] = *prompt
 		}
-		resp["usage"] = map[string]interface{}{
-			"prompt_tokens":     prompt,
-			"completion_tokens": compl,
-			"total_tokens":      total,
+		if compl != nil {
+			mapped["completion_tokens"] = *compl
 		}
+		if prompt != nil && compl != nil {
+			mapped["total_tokens"] = sumNumeric(*prompt, *compl)
+		}
+		if cached != nil {
+			mapped["prompt_tokens_details"] = map[string]interface{}{"cached_tokens": *cached}
+		}
+		resp["usage"] = mapped
 	}
 	return resp, nil
 }

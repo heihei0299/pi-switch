@@ -98,6 +98,8 @@
 
 8. usage 的已知标记跨 raw upstream、SQLite、legacy log、请求明细和导出保持；缺失 token 记 `NULL`，明确零值记 0。缓存率仅使用 cached 已知且 input 已知的成功完整 usage 样本；无已知样本显示 unknown。无 usage 或缺少计算费用所需的事实时 cost 为 unknown。
 
+9. Anthropic 总输入等于普通 input、cache creation、cache read 之和；Chat / Responses 的 cached 是 input 子集，不再累加。非流式、SSE 与协议转换复用 usage 归一化；缓存创建按已有 `cacheWrite` 单价计算，读取按 `cacheRead` 单价计算。Messages 类型或 cache creation/read 字段识别 Anthropic 用量；其输入组成项缺失时总输入与费用为 unknown。
+
 ### 2.6 WebUI 编辑器与布局
 
 1. Config JSON 始终是可直接编辑的受控文本；Format 按钮固定在编辑器左下；structured view 不能替代它。
@@ -163,6 +165,7 @@
 | 客户端取消/写入失败停止 upstream，不生成成功终止事件 | §2.4.10 | bug audit 05 | cancellation/write-failure HTTP tests | 取消流式与非流式后供应商请求及时释放 |
 | 首次、stream、retry 共享 URL/header/affinity/UA builder | §2.4.4；追踪矩阵 outbound | IMP-03 | httptest 完整 header 比较 | opencode.ai 实际收到 affinity、UA、channel headers |
 | usage 缺失与明确零值在日志/明细/导出中可区分，缓存率不猜测未知样本 | §2.5.8 | bug audit 07 | nullable usage HTTP/detail/export tests | SQLite 与响应 cached/reasoning NULL 不显示为零命中率 |
+| Anthropic 总输入包含 cache creation/read，费用区分缓存写入与读取 | §2.5.9 | bug audit 06 | raw/SSE/cross-protocol usage 与 HTTP cost tests | input 100 + write 200 + read 700 记为总输入 1000 |
 | reasoning 是 completion 子集，cached/reasoning 缺失/零/已知可区分 | §2.4.6；§2.5.2 | IMP-04；后续 IMP-11 | usage table/stream tests | Stats token/cost 与 upstream usage 对照 |
 | conversation source、显式 ID 优先、歧义不猜测 | §2.5.3/4 | 后续 IMP-09 | matcher table/concurrent fixture tests | 真实 session 目录中同模型并发归入 unlabeled |
 | Stats GET 只读 SQLite，不触发 legacy migration 写入 | §2.5.5 | 后续 IMP-10/11 | handler read-only/concurrency tests | daemon 启动健康且首次 Stats 不同步导入 |

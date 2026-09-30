@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 func TestCalcCost_WithRates(t *testing.T) {
@@ -22,6 +23,30 @@ func TestCalcCost_WithRates(t *testing.T) {
 	diff := *cost - want
 	if diff < -1e-9 || diff > 1e-9 {
 		t.Fatalf("cost = %v, want %v", *cost, want)
+	}
+}
+
+func TestCalcUsageCostPricesCacheWritesSeparately(t *testing.T) {
+	s := usage.ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
+		"input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 700, "output_tokens": 50,
+	}})
+	for _, writeRate := range []float64{3.75, 0} {
+		entry := config.ModelEntry{Cost: &config.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: writeRate}}
+		cost := CalcUsageCost(&entry, s)
+		want := (100*3 + 200*writeRate + 700*0.3 + 50*15) / 1_000_000
+		if cost == nil || *cost < want-1e-10 || *cost > want+1e-10 {
+			t.Fatalf("write rate=%v, cost=%v, want=%v", writeRate, cost, want)
+		}
+	}
+}
+
+func TestMissingAnthropicCacheWriteDoesNotInventZeroCost(t *testing.T) {
+	entry := config.ModelEntry{Cost: &config.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75}}
+	s := usage.ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
+		"input_tokens": 100, "cache_read_input_tokens": 0, "output_tokens": 50,
+	}})
+	if cost := CalcUsageCost(&entry, s); cost != nil {
+		t.Fatalf("missing cache-write usage fabricated cost=%v", *cost)
 	}
 }
 

@@ -10,10 +10,12 @@ type UsageSummary struct {
 	PromptTokens          uint64 `json:"prompt_tokens"`
 	CompletionTokens      uint64 `json:"completion_tokens"`
 	CachedTokens          uint64 `json:"cached_tokens"`
+	CacheWriteTokens      uint64 `json:"-"`
 	ReasoningTokens       uint64 `json:"reasoning_tokens"`
 	PromptTokensKnown     bool   `json:"-"`
 	CompletionTokensKnown bool   `json:"-"`
 	CachedTokensKnown     bool   `json:"-"`
+	CacheWriteTokensKnown bool   `json:"-"`
 	ReasoningTokensKnown  bool   `json:"-"`
 }
 
@@ -24,6 +26,23 @@ func ExtractUsage(v map[string]interface{}) *UsageSummary {
 	}
 	prompt, promptKnown := firstToken(raw, "input_tokens", "prompt_tokens")
 	completion, completionKnown := firstToken(raw, "output_tokens", "completion_tokens")
+	cacheWrite, cacheWriteKnown := firstToken(raw, "cache_creation_input_tokens")
+	// Anthropic input_tokens excludes cache writes and reads. Responses input
+	// already includes its cached subset. A Messages response or either cache
+	// field identifies the Anthropic decomposition; missing parts stay unknown.
+	_, hasRead := raw["cache_read_input_tokens"]
+	_, hasWrite := raw["cache_creation_input_tokens"]
+	if v["type"] == "message" || hasRead || hasWrite {
+		prompt, promptKnown = firstToken(raw, "input_tokens")
+		for _, key := range []string{"cache_creation_input_tokens", "cache_read_input_tokens"} {
+			count, known := firstToken(raw, key)
+			if !known || count > math.MaxInt64-prompt {
+				promptKnown = false
+				continue
+			}
+			prompt += count
+		}
+	}
 	cached, cachedKnown := firstToken(raw, "cache_read_input_tokens")
 	if !cachedKnown {
 		for _, key := range []string{"prompt_tokens_details", "input_tokens_details"} {
@@ -49,9 +68,9 @@ func ExtractUsage(v map[string]interface{}) *UsageSummary {
 		}
 	}
 	return &UsageSummary{
-		PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, ReasoningTokens: reasoning,
+		PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, CacheWriteTokens: cacheWrite, ReasoningTokens: reasoning,
 		PromptTokensKnown: promptKnown, CompletionTokensKnown: completionKnown,
-		CachedTokensKnown: cachedKnown, ReasoningTokensKnown: reasoningKnown,
+		CachedTokensKnown: cachedKnown, CacheWriteTokensKnown: cacheWriteKnown, ReasoningTokensKnown: reasoningKnown,
 	}
 }
 
@@ -115,11 +134,9 @@ func frameEnd(buf []byte) (int, int) {
 }
 
 type SseUsageParser struct {
-	buffer              []byte
-	summary             *UsageSummary
-	anthropicInput      *uint64
-	anthropicCached     *uint64
-	anthropicCompletion *uint64
+	buffer         []byte
+	summary        *UsageSummary
+	anthropicUsage map[string]interface{}
 }
 
 func NewSseUsageParser() *SseUsageParser { return &SseUsageParser{} }
@@ -193,14 +210,13 @@ func (p *SseUsageParser) handleFrame(frame []byte) {
 }
 
 func (p *SseUsageParser) captureAnthropicUsage(raw map[string]interface{}) {
-	if u, ok := firstToken(raw, "input_tokens"); ok {
-		p.anthropicInput = &u
+	if p.anthropicUsage == nil {
+		p.anthropicUsage = map[string]interface{}{}
 	}
-	if u, ok := firstToken(raw, "output_tokens"); ok {
-		p.anthropicCompletion = &u
-	}
-	if u, ok := firstToken(raw, "cache_read_input_tokens"); ok {
-		p.anthropicCached = &u
+	for _, key := range []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
+		if value, present := raw[key]; present {
+			p.anthropicUsage[key] = value
+		}
 	}
 }
 
@@ -208,21 +224,8 @@ func (p *SseUsageParser) Finish() *UsageSummary {
 	if p.summary != nil {
 		return p.summary
 	}
-	if p.anthropicInput == nil && p.anthropicCompletion == nil && p.anthropicCached == nil {
+	if len(p.anthropicUsage) == 0 {
 		return nil
 	}
-	result := &UsageSummary{}
-	if p.anthropicInput != nil {
-		result.PromptTokens = *p.anthropicInput
-		result.PromptTokensKnown = true
-	}
-	if p.anthropicCompletion != nil {
-		result.CompletionTokens = *p.anthropicCompletion
-		result.CompletionTokensKnown = true
-	}
-	if p.anthropicCached != nil {
-		result.CachedTokens = *p.anthropicCached
-		result.CachedTokensKnown = true
-	}
-	return result
+	return ExtractUsage(map[string]interface{}{"type": "message", "usage": p.anthropicUsage})
 }

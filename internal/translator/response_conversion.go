@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 // OpenAIToAnthropicResponse converts Chat completion output to Messages output.
@@ -81,11 +83,30 @@ func OpenAIToAnthropicResponse(chat map[string]interface{}) (map[string]interfac
 	if resp["id"] == nil {
 		resp["id"] = fmt.Sprintf("msg_%d", time.Now().UnixNano())
 	}
-	if usage, ok := chat["usage"].(map[string]interface{}); ok {
-		resp["usage"] = map[string]interface{}{
-			"input_tokens":  usage["prompt_tokens"],
-			"output_tokens": usage["completion_tokens"],
+	if summary := usage.ExtractUsage(chat); summary != nil {
+		prompt, completion, cached, _ := summary.NullableTokens()
+		mapped := map[string]interface{}{
+			"input_tokens":  nil,
+			"output_tokens": nil,
 		}
+		if prompt != nil {
+			mapped["input_tokens"] = *prompt
+		}
+		if completion != nil {
+			mapped["output_tokens"] = *completion
+		}
+		if prompt != nil && cached != nil {
+			if *cached > *prompt {
+				return nil, &ResponsesConversionError{Kind: "invalid", Message: "cached tokens exceed total input"}
+			}
+			mapped["input_tokens"] = *prompt - *cached
+		}
+		if cached != nil {
+			mapped["cache_read_input_tokens"] = *cached
+			// Chat input has already assigned all non-read tokens to input_tokens.
+			mapped["cache_creation_input_tokens"] = int64(0)
+		}
+		resp["usage"] = mapped
 	}
 	return resp, nil
 }

@@ -1,6 +1,43 @@
 package usage
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+func TestAnthropicCacheTotalsAndResponsesCachedSubset(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		raw    map[string]interface{}
+		prompt uint64
+		known  bool
+	}{
+		{"anthropic", map[string]interface{}{"input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 700}, 1000, true},
+		{"missing cache write", map[string]interface{}{"input_tokens": 100, "cache_read_input_tokens": 0}, 100, false},
+		{"missing cache read", map[string]interface{}{"input_tokens": 100, "cache_creation_input_tokens": 0}, 100, false},
+		{"responses", map[string]interface{}{"input_tokens": 100, "input_tokens_details": map[string]interface{}{"cached_tokens": 70}}, 100, true},
+		{"zero", map[string]interface{}{"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}, 0, true},
+		{"invalid cache write", map[string]interface{}{"input_tokens": 100, "cache_creation_input_tokens": -1, "cache_read_input_tokens": 0}, 100, false},
+		{"overflow", map[string]interface{}{"input_tokens": int64(math.MaxInt64), "cache_creation_input_tokens": 0, "cache_read_input_tokens": 1}, math.MaxInt64, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ExtractUsage(map[string]interface{}{"usage": tc.raw})
+			if s.PromptTokens != tc.prompt || s.PromptTokensKnown != tc.known {
+				t.Fatalf("summary=%+v, want prompt=%d known=%t", s, tc.prompt, tc.known)
+			}
+		})
+	}
+}
+
+func TestAnthropicStreamCacheUsageMergesDeltaAndSplitFrames(t *testing.T) {
+	p := NewSseUsageParser()
+	p.Push([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":700,\"output_tokens\":0}}}\r\n\r"))
+	p.Push([]byte("\ndata: {\"type\":\"message_delta\",\"usage\":{\"cache_creation_input_tokens\":200,\"output_tokens\":50}}\n\n"))
+	s := p.Finish()
+	if s == nil || s.PromptTokens != 1000 || s.CompletionTokens != 50 || s.CachedTokens != 700 || s.CacheWriteTokens != 200 || !s.CacheWriteTokensKnown {
+		t.Fatalf("stream usage=%+v", s)
+	}
+}
 
 func TestExtractUsagePreservesCachedAndReasoningDetails(t *testing.T) {
 	summary := ExtractUsage(map[string]interface{}{
@@ -89,7 +126,7 @@ func TestUsageKnownFlagsPreservePartialAndRejectInvalidCounts(t *testing.T) {
 	p := NewSseUsageParser()
 	p.Push([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n"))
 	s := p.Finish()
-	if s == nil || !s.PromptTokensKnown || !s.CompletionTokensKnown || s.CachedTokensKnown || s.ReasoningTokensKnown {
+	if s == nil || s.PromptTokensKnown || !s.CompletionTokensKnown || s.CachedTokensKnown || s.ReasoningTokensKnown {
 		t.Fatalf("partial SSE usage=%+v", s)
 	}
 }
