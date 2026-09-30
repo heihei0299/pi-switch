@@ -474,6 +474,9 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	respBody, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if ctxErr := c.Request.Context().Err(); ctxErr != nil {
+		readErr = ctxErr
+	}
 	if readErr != nil {
 		status := upstreamErrorStatus(c.Request.Context())
 		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
@@ -512,6 +515,9 @@ func handleChatCompletions(c *gin.Context) {
 					if err2 == nil {
 						respBody2, readErr2 := io.ReadAll(resp2.Body)
 						resp2.Body.Close()
+						if ctxErr := c.Request.Context().Err(); ctxErr != nil {
+							readErr2 = ctxErr
+						}
 						if readErr2 != nil {
 							status := upstreamErrorStatus(c.Request.Context())
 							logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)

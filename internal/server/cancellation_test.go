@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,5 +175,66 @@ func TestCanceledStreamDoesNotForwardTerminalChunk(t *testing.T) {
 	}
 	if !body.closed {
 		t.Error("upstream body not closed")
+	}
+}
+
+type eofOnCancelBody struct {
+	cancel  context.CancelFunc
+	payload string
+	closed  bool
+}
+
+func (b *eofOnCancelBody) Read(p []byte) (int, error) {
+	b.cancel()
+	return copy(p, b.payload), io.EOF
+}
+
+func (b *eofOnCancelBody) Close() error { b.closed = true; return nil }
+
+func TestNonStreamingCancellationAtEOFIsRecordedAsFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, api, payload string
+		retry              bool
+	}{
+		{"first", "openai-completions", `{"choices":[{"message":{"content":"hello"},"finish_reason":"stop"}]}`, false},
+		{"first converted", "openai-responses", `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}]}`, false},
+		{"retry", "openai-completions", `{"choices":[{"message":{"content":"hello"},"finish_reason":"stop"}]}`, true},
+		{"retry converted", "openai-responses", `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auditFixture(t, tc.api, "http://upstream.test")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			body := &eofOnCancelBody{cancel: cancel, payload: tc.payload}
+			original := http.DefaultTransport
+			defer func() { http.DefaultTransport = original }()
+			calls := 0
+			http.DefaultTransport = cancellationTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				status, responseBody := http.StatusOK, io.ReadCloser(body)
+				if tc.retry && calls == 1 {
+					status = http.StatusBadRequest
+					responseBody = io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error"}}`))
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: responseBody, Request: r}, nil
+			})
+			w := httptest.NewRecorder()
+			NewProxyRouter().ServeHTTP(w, auditRequest("/v1/chat/completions", false).WithContext(ctx))
+			if w.Body.Len() != 0 {
+				t.Errorf("canceled request returned response body: %s", w.Body.String())
+			}
+			if !body.closed {
+				t.Error("upstream body not closed")
+			}
+			stats := getStatsMap(t, NewMgmtRouter())
+			rows := stats["recentRequests"].([]interface{})
+			if len(rows) != 1 {
+				t.Fatalf("request facts=%v, want one canceled request", rows)
+			}
+			row := rows[0].(map[string]interface{})
+			if row["ok"] != false || row["status"] != float64(499) || row["error"] != context.Canceled.Error() {
+				t.Errorf("canceled request facts=%v, want failure/499/context canceled", row)
+			}
+		})
 	}
 }
