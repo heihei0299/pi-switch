@@ -55,6 +55,8 @@
 
 8. 配置局部变更必须在跨进程写锁内读取最新配置、校验并原子保存；CLI、HTTP、TUI 共用 `UpdateAtPath`。整文件替换也获取同一锁，仍按显式整文件替换处理。进程异常退出由操作系统释放锁；锁文件保持原 inode，不能删除后重建。
 
+9. provider test 与 fetch-models 的 HTTP/CLI 路径使用所选 channel 的有效 URL/API key 与合并 headers；profile 提供默认值，channel 同名 header（大小写不敏感）覆盖 profile，显式 Authorization 覆盖自动 Bearer。header 合并与 proxy 共用；只读操作不写 config 或请求统计，channel 定向拉取维持仅新增模型的既有语义。
+
 ### 2.3 Gateway
 
 | 输入 | 语义 |
@@ -169,6 +171,7 @@
 | usage 缺失与明确零值在日志/明细/导出中可区分，缓存率不猜测未知样本 | §2.5.8 | bug audit 07 | nullable usage HTTP/detail/export tests | SQLite 与响应 cached/reasoning NULL 不显示为零命中率 |
 | Anthropic 总输入包含 cache creation/read，费用区分缓存写入与读取 | §2.5.9 | bug audit 06 | raw/SSE/cross-protocol usage 与 HTTP cost tests | input 100 + write 200 + read 700 记为总输入 1000 |
 | 实际 status/error/upstream URL 贯穿 SQLite/Stats/明细/导出，历史缺失值不猜测 | §2.5.10 | bug audit 08 | HTTP 401/429/503/201、legacy import 和旧 schema migration tests | 429 保持 429 及原始错误内容 |
+| provider test/fetch-models 与 proxy 使用同一 profile/channel header 合并 | §2.2.9 | bug audit 09 | HTTP/CLI credential/header tests | 自定义 tenant/auth header 被上游收到，只读操作不落请求统计 |
 | reasoning 是 completion 子集，cached/reasoning 缺失/零/已知可区分 | §2.4.6；§2.5.2 | IMP-04；后续 IMP-11 | usage table/stream tests | Stats token/cost 与 upstream usage 对照 |
 | conversation source、显式 ID 优先、歧义不猜测 | §2.5.3/4 | 后续 IMP-09 | matcher table/concurrent fixture tests | 真实 session 目录中同模型并发归入 unlabeled |
 | Stats GET 只读 SQLite，不触发 legacy migration 写入 | §2.5.5 | 后续 IMP-10/11 | handler read-only/concurrency tests | daemon 启动健康且首次 Stats 不同步导入 |

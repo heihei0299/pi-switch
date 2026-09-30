@@ -59,7 +59,7 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 	if plan.Upstream.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+plan.Upstream.APIKey)
 	}
-	for key, value := range mergeOutboundHeaders(plan.ProfileHeaders, plan.Upstream.Headers) {
+	for key, value := range config.MergeHeaders(plan.ProfileHeaders, plan.Upstream.Headers) {
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("User-Agent", resolveUserAgentValues(plan.ProfileUserAgent, plan.GlobalUserAgent))
@@ -82,17 +82,6 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 	}, nil
 }
 
-func mergeOutboundHeaders(profile, channel map[string]string) map[string]string {
-	merged := make(map[string]string, len(profile)+len(channel))
-	for key, value := range profile {
-		setOutboundHeader(merged, key, value)
-	}
-	for key, value := range channel {
-		setOutboundHeader(merged, key, value)
-	}
-	return merged
-}
-
 func selectedOutboundUpstream(prof config.ProviderProfile) config.Upstream {
 	upstreams := prof.ResolvedUpstreams()
 	if len(upstreams) == 0 {
@@ -109,16 +98,6 @@ func selectedOutboundUpstream(prof config.ProviderProfile) config.Upstream {
 		u.Headers = prof.Headers
 	}
 	return u
-}
-
-func setOutboundHeader(headers map[string]string, key, value string) {
-	for existing := range headers {
-		if strings.EqualFold(existing, key) {
-			delete(headers, existing)
-			break
-		}
-	}
-	headers[key] = value
 }
 
 func resolveUserAgentValues(profile, global *string) string {

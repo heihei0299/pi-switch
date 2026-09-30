@@ -98,7 +98,7 @@ func FetchUpstreamIDs(baseURL, apiKey string, headers map[string]string) ([]stri
 // of `pi-switch provider fetch-models`. Returns a human-readable reason instead
 // of an error so callers can surface it as their own kind of failure.
 func FetchUpstreamModelIDs(prof config.ProviderProfile) ([]string, string) {
-	return FetchUpstreamIDs(prof.PrimaryBaseURL(), prof.PrimaryAPIKey(), nil)
+	return FetchUpstreamIDs(prof.PrimaryBaseURL(), prof.PrimaryAPIKey(), prof.PrimaryHeaders())
 }
 
 // TestProfileUpstream performs the read-only upstream probe behind
@@ -109,6 +109,7 @@ func FetchUpstreamModelIDs(prof config.ProviderProfile) ([]string, string) {
 func TestProfileUpstream(prof config.ProviderProfile) (success bool, message string, responseMs int64) {
 	baseURL := strings.TrimRight(prof.PrimaryBaseURL(), "/")
 	apiKey := prof.PrimaryAPIKey()
+	headers := prof.PrimaryHeaders()
 	if baseURL == "" {
 		return false, "baseUrl is empty", 0
 	}
@@ -124,6 +125,9 @@ func TestProfileUpstream(prof config.ProviderProfile) (success bool, message str
 		}
 		if apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		for key, value := range headers {
+			req.Header.Set(key, value)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -230,8 +234,11 @@ func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
 	if idx < 0 {
 		return nil, EnrichCounts{}, profileErr(ErrUnknownChannel, "unknown channel %q", channel)
 	}
-	u := prof.Upstreams[idx]
-	ids, lastErr := FetchUpstreamIDs(u.BaseURL, u.APIKey, u.Headers)
+	// Select this channel for the same inherited URL, key and header policy
+	// used by primary-channel probes. The original profile is not modified.
+	selected := prof
+	selected.Upstreams = prof.Upstreams[idx : idx+1]
+	ids, lastErr := FetchUpstreamModelIDs(selected)
 	if ids == nil {
 		return nil, EnrichCounts{}, profileErr(ErrUpstreamFetchFailed, "%s", lastErr)
 	}

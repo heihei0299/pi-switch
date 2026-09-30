@@ -325,13 +325,12 @@ func handleFetchModels(c *gin.Context) {
 		return
 	}
 	baseURL := prof.PrimaryBaseURL()
-	apiKey := prof.PrimaryAPIKey()
 	if baseURL == "" {
 		c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
 		return
 	}
 	// 只读列出：拉取复用 fetchUpstreamIDs（渠道定向路径用同一原语），此处不写盘。
-	ids, lastErr := profile.FetchUpstreamIDs(baseURL, apiKey, nil)
+	ids, lastErr := profile.FetchUpstreamModelIDs(prof)
 	if ids == nil {
 		c.JSON(500, gin.H{"error": lastErr})
 		return

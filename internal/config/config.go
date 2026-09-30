@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -673,10 +674,24 @@ func (p ProviderProfile) PrimaryAPIKey() string {
 }
 
 func (p ProviderProfile) PrimaryHeaders() map[string]string {
-	if len(p.Upstreams) > 0 && p.Upstreams[0].Headers != nil {
-		return p.Upstreams[0].Headers
+	if len(p.Upstreams) > 0 {
+		return MergeHeaders(p.Headers, p.Upstreams[0].Headers)
 	}
-	return p.Headers
+	return MergeHeaders(p.Headers, nil)
+}
+
+// MergeHeaders applies channel overrides without treating header case as a
+// distinct key. Both proxy requests and provider probes use this policy.
+func MergeHeaders(profile, channel map[string]string) map[string]string {
+	merged := make(map[string]string, len(profile)+len(channel))
+	for _, source := range []map[string]string{profile, channel} {
+		for key, value := range source {
+			if key != "" {
+				merged[http.CanonicalHeaderKey(key)] = value
+			}
+		}
+	}
+	return merged
 }
 
 func (p ProviderProfile) ResolvedUpstreams() []Upstream {
