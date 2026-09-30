@@ -91,3 +91,62 @@ func TestProxyUsagePreservesUnknownAndExplicitZero(t *testing.T) {
 		})
 	}
 }
+
+func TestMessagesUsageDoesNotGuessUnknownCache(t *testing.T) {
+	for _, tc := range []struct {
+		name, details    string
+		uncached, cached interface{}
+	}{
+		{"unknown", "", nil, nil},
+		{"zero", `,"prompt_tokens_details":{"cached_tokens":0}`, float64(100), float64(0)},
+		{"known", `,"prompt_tokens_details":{"cached_tokens":25}`, float64(75), float64(25)},
+	} {
+		for _, retry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/retry=%t", tc.name, retry), func(t *testing.T) {
+				calls := 0
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					w.Header().Set("Content-Type", "application/json")
+					if retry && calls == 1 {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprint(w, `{"error":{"type":"invalid_request_error"}}`)
+						return
+					}
+					fmt.Fprintf(w, `{"choices":[{"message":{"content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5%s}}`, tc.details)
+				}))
+				defer upstream.Close()
+				auditFixture(t, "openai-completions", upstream.URL)
+				w := httptest.NewRecorder()
+				NewProxyRouter().ServeHTTP(w, auditRequest("/v1/messages", false))
+				if w.Code != http.StatusOK {
+					t.Fatalf("HTTP %d: %s", w.Code, w.Body.String())
+				}
+				var response map[string]interface{}
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				mapped, _ := response["usage"].(map[string]interface{})
+				if mapped["input_tokens"] != tc.uncached || mapped["output_tokens"] != float64(5) || mapped["cache_read_input_tokens"] != tc.cached {
+					t.Errorf("Messages usage=%v, want ordinary input %v/output 5/cache read %v", mapped, tc.uncached, tc.cached)
+				}
+				if tc.cached == nil && mapped["cache_creation_input_tokens"] != nil {
+					t.Errorf("unknown cache distribution fabricated cache write: %v", mapped)
+				} else if tc.cached != nil && mapped["cache_creation_input_tokens"] != float64(0) {
+					t.Errorf("known Chat usage should have zero cache write: %v", mapped)
+				}
+				stats := getStatsMap(t, NewMgmtRouter())
+				rows := stats["recentRequests"].([]interface{})
+				if len(rows) != 1 {
+					t.Fatalf("request facts=%v, want one request", rows)
+				}
+				row := rows[0].(map[string]interface{})
+				if row["promptTokens"] != float64(100) || row["completionTokens"] != float64(5) || row["cachedTokens"] != tc.cached {
+					t.Errorf("Stats lost raw upstream usage facts: %v", row)
+				}
+				if tc.cached == nil && row["cost"] != nil {
+					t.Errorf("unknown cache distribution fabricated consumption: %v", row)
+				}
+			})
+		}
+	}
+}

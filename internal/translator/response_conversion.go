@@ -89,12 +89,10 @@ func OpenAIToAnthropicResponse(chat map[string]interface{}) (map[string]interfac
 			"input_tokens":  nil,
 			"output_tokens": nil,
 		}
-		if prompt != nil {
-			mapped["input_tokens"] = *prompt
-		}
 		if completion != nil {
 			mapped["output_tokens"] = *completion
 		}
+		// Ordinary Anthropic input cannot be derived without the cached subset.
 		if prompt != nil && cached != nil {
 			if *cached > *prompt {
 				return nil, &ResponsesConversionError{Kind: "invalid", Message: "cached tokens exceed total input"}
