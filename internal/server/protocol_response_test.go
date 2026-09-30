@@ -114,3 +114,68 @@ func TestResponseConversionFailureReturnsBadGateway(t *testing.T) {
 		}
 	}
 }
+
+func TestChatFinishReasonReachesResponsesClient(t *testing.T) {
+	for _, tc := range []struct {
+		name, finish, message, itemType, status, reason string
+	}{
+		{"length text", "length", `{"role":"assistant","content":"partial"}`, "message", "incomplete", "max_output_tokens"},
+		{"filtered text", "content_filter", `{"role":"assistant","content":"partial"}`, "message", "incomplete", "content_filter"},
+		{"completed text", "stop", `{"role":"assistant","content":"partial"}`, "message", "completed", ""},
+		{"length tool", "length", `{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"q\":"}}]}`, "function_call", "incomplete", "max_output_tokens"},
+		{"completed tool", "tool_calls", `{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"pi\"}"}}]}`, "function_call", "completed", ""},
+	} {
+		for _, retry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/retry=%t", tc.name, retry), func(t *testing.T) {
+				calls := 0
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					w.Header().Set("Content-Type", "application/json")
+					if retry && calls == 1 {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprint(w, `{"error":{"type":"invalid_request_error"}}`)
+						return
+					}
+					fmt.Fprintf(w, `{"model":"audit-model","choices":[{"message":%s,"finish_reason":%q}]}`, tc.message, tc.finish)
+				}))
+				defer upstream.Close()
+				auditFixture(t, "openai-completions", upstream.URL)
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"audit-model","input":"hello","max_output_tokens":128}`))
+				NewProxyRouter().ServeHTTP(w, req)
+				if w.Code != http.StatusOK {
+					t.Fatalf("HTTP %d: %s", w.Code, w.Body.String())
+				}
+				var got map[string]interface{}
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got["status"] != tc.status {
+					t.Errorf("status=%v, want %s", got["status"], tc.status)
+				}
+				details, _ := got["incomplete_details"].(map[string]interface{})
+				if tc.reason != "" && details["reason"] != tc.reason {
+					t.Errorf("incomplete_details=%v, want reason %s", details, tc.reason)
+				} else if tc.reason == "" && len(details) != 0 {
+					t.Errorf("completed response has incomplete_details=%v", details)
+				}
+				output, _ := got["output"].([]interface{})
+				if len(output) != 1 {
+					t.Fatalf("output=%v, want one %s item", output, tc.itemType)
+				}
+				item := output[0].(map[string]interface{})
+				if item["type"] != tc.itemType || item["status"] != tc.status {
+					t.Errorf("output item=%v, want %s/%s", item, tc.itemType, tc.status)
+				}
+				if tc.itemType == "message" {
+					parts, _ := item["content"].([]interface{})
+					if len(parts) != 1 || parts[0].(map[string]interface{})["text"] != "partial" {
+						t.Errorf("response text lost: %v", item)
+					}
+				} else if item["call_id"] != "call-1" || item["name"] != "lookup" || item["arguments"] == nil {
+					t.Errorf("tool call lost: %v", item)
+				}
+			})
+		}
+	}
+}

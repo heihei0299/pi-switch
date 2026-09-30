@@ -536,12 +536,24 @@ func chatReasoningText(msg map[string]interface{}) string {
 	}
 }
 
+func responsesStatusForChatFinish(reason string) (status, incompleteReason string) {
+	switch reason {
+	case "length":
+		return "incomplete", "max_output_tokens"
+	case "content_filter":
+		return "incomplete", "content_filter"
+	default:
+		return "completed", ""
+	}
+}
+
 func ChatResponseToResponses(chat map[string]interface{}, model string, created *uint64) (map[string]interface{}, error) {
 	choices, ok := chat["choices"].([]interface{})
 	if !ok {
 		return nil, &ResponsesConversionError{Kind: "invalid", Message: "chat response has no choices array"}
 	}
 	var output []interface{}
+	status, incompleteReason := "completed", ""
 	for _, ch := range choices {
 		cm, ok := ch.(map[string]interface{})
 		if !ok {
@@ -550,6 +562,11 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 		msg, _ := cm["message"].(map[string]interface{})
 		if msg == nil {
 			continue
+		}
+		finishReason, _ := cm["finish_reason"].(string)
+		itemStatus, itemIncompleteReason := responsesStatusForChatFinish(finishReason)
+		if itemIncompleteReason != "" && incompleteReason == "" {
+			status, incompleteReason = itemStatus, itemIncompleteReason
 		}
 		var parts []interface{}
 		if reasoning := chatReasoningText(msg); reasoning != "" {
@@ -576,7 +593,7 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 			output = append(output, map[string]interface{}{
 				"type": "message", "role": "assistant",
 				"content": parts,
-				"status":  "completed",
+				"status":  itemStatus,
 			})
 		}
 		if tc, ok := msg["tool_calls"].([]interface{}); ok {
@@ -594,7 +611,7 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 					"call_id":   m["id"],
 					"name":      fun["name"],
 					"arguments": fun["arguments"],
-					"status":    "completed",
+					"status":    itemStatus,
 				})
 			}
 		}
@@ -606,7 +623,10 @@ func ChatResponseToResponses(chat map[string]interface{}, model string, created 
 		"object": "response",
 		"model":  model,
 		"output": output,
-		"status": "completed",
+		"status": status,
+	}
+	if incompleteReason != "" {
+		resp["incomplete_details"] = map[string]interface{}{"reason": incompleteReason}
 	}
 	if id, ok := chat["id"].(string); ok {
 		resp["id"] = id
@@ -778,10 +798,8 @@ func chatUsageToResponsesUsageGeneric(u interface{}) map[string]interface{} {
 }
 
 func (c *ChatSseToResponses) outputItemStatus() string {
-	if c.FinishReason == "length" || c.FinishReason == "content_filter" {
-		return "incomplete"
-	}
-	return "completed"
+	status, _ := responsesStatusForChatFinish(c.FinishReason)
+	return status
 }
 
 func (c *ChatSseToResponses) Finish() []map[string]interface{} {
@@ -806,29 +824,17 @@ func (c *ChatSseToResponses) Finish() []map[string]interface{} {
 			"type": "response.output_item.done", "output_index": call.OutputIndex, "item": toolCallItem(&call, c.outputItemStatus()),
 		})
 	}
-	status := "completed"
-	eventType := "response.completed"
-	var incompleteDetails map[string]interface{}
-	switch c.FinishReason {
-	case "length":
-		status = "incomplete"
-		eventType = "response.incomplete"
-		incompleteDetails = map[string]interface{}{"reason": "max_output_tokens"}
-	case "content_filter":
-		status = "incomplete"
-		eventType = "response.incomplete"
-		incompleteDetails = map[string]interface{}{"reason": "content_filter"}
-	}
+	status, incompleteReason := responsesStatusForChatFinish(c.FinishReason)
 	resp := map[string]interface{}{
 		"id": c.ResponseID, "object": "response", "created_at": float64(c.CreatedAt), "status": status, "model": c.Model, "output": c.completedOutput(),
 	}
-	if incompleteDetails != nil {
-		resp["incomplete_details"] = incompleteDetails
+	if incompleteReason != "" {
+		resp["incomplete_details"] = map[string]interface{}{"reason": incompleteReason}
 	}
 	if c.Usage != nil {
 		resp["usage"] = c.Usage
 	}
-	events = append(events, map[string]interface{}{"type": eventType, "response": resp})
+	events = append(events, map[string]interface{}{"type": "response." + status, "response": resp})
 	return events
 }
 
