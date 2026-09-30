@@ -100,7 +100,7 @@ func TestSaveAtPath_AtomicWriteLeavesNoTempFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if e.Name() != "config.json" {
+		if e.Name() != "config.json" && e.Name() != "config.json.lock" {
 			t.Fatalf("unexpected leftover file after atomic write: %s", e.Name())
 		}
 	}

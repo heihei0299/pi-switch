@@ -182,10 +182,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 0 {
 				if it, ok := m.list.SelectedItem().(profileItem); ok && it.name != "(no profiles)" {
 					cfgPath := config.ResolvePath()
-					cfg := m.cfg
 					name := it.name
-					cfg.Current = &name
-					if err := config.SaveAtPath(cfg, cfgPath); err != nil {
+					if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
+						if _, ok := cfg.Profiles[name]; !ok {
+							return fmt.Errorf("profile %q no longer exists", name)
+						}
+						current := name
+						cfg.Current = &current
+						return nil
+					}); err != nil {
 						m.statusMsg = "switch failed: " + err.Error()
 					} else {
 						m.cfg.Current = &name

@@ -53,6 +53,8 @@
 6. 旧配置的逃生通道：若磁盘上的配置含不可代理 API，整文件门会拒绝保存并点名 profile/字段，但 **Profile CRUD 仍然可用**（`PUT /api/profiles/:name` 改成可代理的 api、`DELETE /api/profiles/:name` 删除该 profile），也可以直接编辑磁盘文件；`GET /api/config/validate` 会先一步把问题报出来，WebUI 的 api 选择器把不可代理的 api 显示为不可选（但仍保留旧值）。因此不会出现无法修复的配置。
 7. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
+8. 配置局部变更必须在跨进程写锁内读取最新配置、校验并原子保存；CLI、HTTP、TUI 共用 `UpdateAtPath`。整文件替换也获取同一锁，仍按显式整文件替换处理。进程异常退出由操作系统释放锁；锁文件保持原 inode，不能删除后重建。
+
 ### 2.3 Gateway
 
 | 输入 | 语义 |
@@ -130,6 +132,7 @@
 | exposedModels=[] 是零暴露 | §2.2 exposedModels:[] | IMP-05 | gateway、`/v1/models`、route tests | 实际列表、Gateway provider 和 route 均为空 |
 | exposedModels=null 是非法，不转成 [] 或全部 | §2.2 exposedModels:null | IMP-05；后续 IMP-07 | validation error path tests | API 保存前返回字段错误且无文件写入 |
 | model id 缺失/null/空字符串不发布、不路由 | §2.2 model id | IMP-05；后续 IMP-07/08 | model validation tests | Gateway 和 `/v1/models` 无空 ID |
+| 配置局部并发写入不丢失成功变更，异常退出不遗留占用锁 | §2.2.8 | bug audit 01 | goroutine/subprocess config mutation tests | CLI 与 HTTP 同时改不同配置项后全部保留 |
 | 无模型 metadata/context/maxTokens 不伪造，三个 max key 不重写 | §2.2 model metadata；§2.4.5 | IMP-02 | clamp nil/zero metadata tests | 无 metadata 的真实请求保持客户端 max 值且不触发本地伪造 |
 | models 文件不存在时 current 为空，publish 创建目录并原子写 | §2.3 models file | IMP-05 | golden/atomic write tests | 真实 models.json 副本首次 publish 可被 Pi 解析 |
 | models.json 损坏/不可读时读取边界报错而非空 current | §2.3 models file | IMP-05 | gateway read boundary tests | 损坏文件下 `GET /api/models/gateway` 返回 500，不返回 `gateway: null` |

@@ -249,19 +249,32 @@ func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
 	if b, err := json.Marshal(seeds); err == nil {
 		_ = json.Unmarshal(b, &entries)
 	}
-	seen := map[string]bool{}
-	for _, m := range prof.Upstreams[idx].Models {
-		seen[m.ID] = true
-	}
-	for _, e := range entries {
-		if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
-			continue
+	// The network call intentionally happens outside the config lock. The
+	// latest profile is reloaded in the transaction below before merging so a
+	// concurrent model/expose update cannot be overwritten by this fetch.
+	if err := updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
+		latest, ok := cfg.Profiles[name]
+		if !ok {
+			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", name))
 		}
-		seen[e.ID] = true
-		prof.Upstreams[idx].Models = append(prof.Upstreams[idx].Models, e)
-	}
-	cfg.Profiles[name] = prof
-	if err := persist(cfg, "failed to save config: "); err != nil {
+		latestIdx := EnsureMutationChannel(&latest, channel)
+		if latestIdx < 0 {
+			return keepMutation(profileErr(ErrUnknownChannel, "unknown channel %q", channel))
+		}
+		seen := map[string]bool{}
+		for _, m := range latest.Upstreams[latestIdx].Models {
+			seen[m.ID] = true
+		}
+		for _, e := range entries {
+			if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
+				continue
+			}
+			seen[e.ID] = true
+			latest.Upstreams[latestIdx].Models = append(latest.Upstreams[latestIdx].Models, e)
+		}
+		cfg.Profiles[name] = latest
+		return nil
+	}); err != nil {
 		return nil, EnrichCounts{}, err
 	}
 	return ids, EnrichCounts{Enriched: enriched, Skipped: skipped, Failed: failed, Warning: warning}, nil

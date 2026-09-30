@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/heihei0299/pi-switch/internal/protocol"
 )
@@ -493,19 +494,77 @@ func writeFileAtomic(path string, data []byte) error {
 	return nil
 }
 
-// SaveAtPath applies the save-time migration and writes cfg to path atomically,
-// creating the parent directory as needed. Every entry point must go through
-// this so that no caller skips the migration or the 0600 atomic write.
-func SaveAtPath(cfg PiSwitchConfig, path string) error {
-	cfg = MigratedForSave(cfg)
+// ErrConfigWriteLockBusy reports that another process held the config lock
+// for the full bounded wait period. Callers can surface this as a transient
+// storage error without confusing it with malformed config data.
+var ErrConfigWriteLockBusy = errors.New("config write lock busy")
+
+const configWriteLockWait = 5 * time.Second
+
+// withConfigWriteLock locks a stable sidecar inode, so atomic replacement of
+// the config never changes the lock identity. The OS releases it on process exit.
+func withConfigWriteLock(path string, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
+	f, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	deadline := time.Now().Add(configWriteLockWait)
+	for {
+		locked, err := tryConfigWriteLock(f)
+		if err != nil {
+			return err
+		}
+		if locked {
+			defer unlockConfigWriteLock(f)
+			return fn()
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: %s", ErrConfigWriteLockBusy, path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func saveAtPathUnlocked(cfg PiSwitchConfig, path string) error {
+	cfg = MigratedForSave(cfg)
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(path, append(b, '\n'))
+}
+
+// SaveAtPath applies the save-time migration and writes cfg to path atomically,
+// creating the parent directory as needed. Every entry point must go through
+// this so that no caller skips the migration or the 0600 atomic write.
+func SaveAtPath(cfg PiSwitchConfig, path string) error {
+	return withConfigWriteLock(path, func() error {
+		return saveAtPathUnlocked(cfg, path)
+	})
+}
+
+// UpdateAtPath loads the latest config while holding the cross-process write
+// lock, applies mutate, and persists the result atomically. All read-modify-
+// write mutation paths should use this entry point so concurrent CLI, server,
+// and TUI operations cannot overwrite one another with stale snapshots.
+func UpdateAtPath(path string, mutate func(*PiSwitchConfig) error) error {
+	if mutate == nil {
+		return errors.New("config mutation callback is nil")
+	}
+	return withConfigWriteLock(path, func() error {
+		cfg, _, err := LoadConfigAtPath(path)
+		if err != nil {
+			return err
+		}
+		if err := mutate(&cfg); err != nil {
+			return err
+		}
+		return saveAtPathUnlocked(cfg, path)
+	})
 }
 
 // ChannelName returns the stable key of the i-th upstream ("" when unnamed).
