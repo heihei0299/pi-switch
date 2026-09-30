@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -446,6 +447,7 @@ func handleChatCompletions(c *gin.Context) {
 	needRespConvert := plan.NeedsConvert()
 	bbytes, _ := json.Marshal(upstreamBody)
 	outboundPlan := OutboundRequestPlan{
+		Context:          c.Request.Context(),
 		Upstream:         upstream,
 		Path:             upstreamPath,
 		ProfileHeaders:   prof.Headers,
@@ -463,12 +465,23 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
-		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
+		status := upstreamErrorStatus(c.Request.Context())
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
+		if status != 499 {
+			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
+		}
 		return
 	}
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if readErr != nil {
+		status := upstreamErrorStatus(c.Request.Context())
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
+		if status != 499 {
+			c.JSON(status, inferenceError(readErr.Error(), "upstream_error"))
+		}
+		return
+	}
 	if resp.StatusCode >= 400 {
 		bodyStr := string(respBody)
 		shouldRetry := resp.StatusCode == 400 && strings.Contains(bodyStr, "invalid_request_error")
@@ -497,8 +510,16 @@ func handleChatCompletions(c *gin.Context) {
 				if err2 == nil {
 					resp2, err2 := outbound2.Client.Do(outbound2.Request)
 					if err2 == nil {
-						respBody2, _ := io.ReadAll(resp2.Body)
+						respBody2, readErr2 := io.ReadAll(resp2.Body)
 						resp2.Body.Close()
+						if readErr2 != nil {
+							status := upstreamErrorStatus(c.Request.Context())
+							logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)
+							if status != 499 {
+								c.JSON(status, inferenceError(readErr2.Error(), "upstream_error"))
+							}
+							return
+						}
 						if resp2.StatusCode < 400 {
 							// Success on retry: handle as normal success
 							finalBody2 := respBody2
@@ -545,6 +566,9 @@ func handleChatCompletions(c *gin.Context) {
 						}
 						// Retry also failed: fall through to original 400 handling but log retry body
 						_ = respBody2
+					} else if c.Request.Context().Err() != nil {
+						logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 499, err2.Error(), outbound2.Metadata.URL)
+						return
 					}
 				}
 			}
@@ -678,6 +702,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	upstreamPath := plan.UpstreamPath
 	bbytes, _ := json.Marshal(upstreamBody)
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
+		Context:          c.Request.Context(),
 		Upstream:         upstream,
 		Path:             upstreamPath,
 		ProfileHeaders:   prof.Headers,
@@ -695,8 +720,11 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	}
 	resp, err := outbound.Client.Do(outbound.Request)
 	if err != nil {
-		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), 502, err.Error(), outbound.Metadata.URL)
-		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
+		status := upstreamErrorStatus(c.Request.Context())
+		logRequest(name, realModel, false, 0, 0, 0, 0, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
+		if status != 499 {
+			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
+		}
 		return
 	}
 	if resp.StatusCode >= 400 {
@@ -740,9 +768,16 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	terminalSeen := false
 	logicalFailure := false
 	var readErr error
+	clientCanceled := false
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
+			if err := c.Request.Context().Err(); err != nil {
+				readErr = err
+				clientCanceled = true
+				_ = resp.Body.Close()
+				break
+			}
 			chunk := buf[:n]
 			parser.Push(chunk)
 			totalBytes.Write(chunk)
@@ -754,7 +789,12 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 					logicalFailure = true
 				}
 			})
-			_, _ = c.Writer.Write(chunk)
+			if _, writeErr := c.Writer.Write(chunk); writeErr != nil {
+				readErr = writeErr
+				clientCanceled = true
+				_ = resp.Body.Close()
+				break
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -764,6 +804,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 			break
 		}
 	}
+	clientCanceled = clientCanceled || c.Request.Context().Err() != nil
 	usageSum := parser.Finish()
 	var prompt, completion, cached, reasoning int
 	var cost *float64
@@ -779,7 +820,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 		prompt, completion, cached, reasoning = extractUsage(respObj)
 		cost = proxy.CalcCost(modelEntry, prompt, completion, cached)
 	}
-	streamFailed := logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
+	streamFailed := clientCanceled || logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
 	errorMessage := ""
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		errorMessage = readErr.Error()
@@ -792,6 +833,12 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 	statusCode := resp.StatusCode
 	if streamFailed {
 		statusCode = http.StatusBadGateway
+	}
+	if clientCanceled {
+		statusCode = 499
+		if c.Request.Context().Err() != nil {
+			errorMessage = c.Request.Context().Err().Error()
+		}
 	}
 	latMs := time.Since(start).Milliseconds()
 	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
@@ -817,11 +864,29 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 	c.Status(resp.StatusCode)
 	flusher, _ := c.Writer.(http.Flusher)
 	streamFailed := false
+	clientCanceled := false
 	var streamErr error
 	terminalSeen := false
 	upstreamFormat := translator.FormatOpenAIResponses
 	if responsesStyle {
 		upstreamFormat = translator.FormatOpenAIChat
+	}
+	write := func(line string) {
+		if clientCanceled {
+			return
+		}
+		if err := c.Request.Context().Err(); err != nil {
+			streamFailed, clientCanceled, streamErr = true, true, err
+			return
+		}
+		if _, err := c.Writer.Write([]byte(line)); err != nil {
+			streamFailed, clientCanceled, streamErr = true, true, err
+			_ = resp.Body.Close()
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}
 	emit := func(ev map[string]interface{}) {
 		if _, ok := ev["error"]; ok {
@@ -838,10 +903,7 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 		} else {
 			line = fmt.Sprintf("data: %s\n\n", string(b))
 		}
-		_, _ = c.Writer.Write([]byte(line))
-		if flusher != nil {
-			flusher.Flush()
-		}
+		write(line)
 	}
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
@@ -851,6 +913,9 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 			chunk := tmp[:n]
 			parser.Push(chunk)
 			consumeSSEFrames(&buf, chunk, func(data string) {
+				if clientCanceled {
+					return
+				}
 				if data == "" {
 					return
 				}
@@ -871,9 +936,15 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 					return
 				}
 				for _, ev := range events {
+					if clientCanceled {
+						break
+					}
 					emit(ev)
 				}
 			})
+			if clientCanceled {
+				break
+			}
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
@@ -883,19 +954,22 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 			break
 		}
 	}
+	if err := c.Request.Context().Err(); err != nil {
+		streamFailed, clientCanceled, streamErr = true, true, err
+	}
 	if !streamFailed && !terminalSeen {
 		streamFailed = true
 		streamErr = errors.New("upstream stream ended without terminal event")
 	}
 	if !streamFailed {
 		for _, ev := range conv.Finish() {
+			if clientCanceled {
+				break
+			}
 			emit(ev)
 		}
-		if !responsesStyle {
-			_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
+		if !responsesStyle && !streamFailed {
+			write("data: [DONE]\n\n")
 		}
 	}
 	usageSum := parser.Finish()
@@ -926,6 +1000,9 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 			errorMessage = "upstream stream failed"
 		}
 	}
+	if clientCanceled {
+		statusCode = 499
+	}
 	latMs := time.Since(start).Milliseconds()
 	logRequest(provider, realModel, !streamFailed, prompt, completion, cached, reasoning, cost, convID, convName, latMs, statusCode, errorMessage, requestURLOf(resp))
 }
@@ -935,6 +1012,14 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 	var out map[string]interface{}
 	_ = json.Unmarshal(b, &out)
 	return out
+}
+
+// An aborted downstream request has no upstream HTTP status to return.
+func upstreamErrorStatus(ctx context.Context) int {
+	if ctx.Err() != nil {
+		return 499
+	}
+	return http.StatusBadGateway
 }
 
 func transformResponseBody(plan translator.Plan, raw []byte, model string) ([]byte, error) {
