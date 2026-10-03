@@ -5,11 +5,11 @@
 [![版本](https://img.shields.io/badge/version-20260912.1.1-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
-[![许可证](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![许可证](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
-**WebUI 优先的 pi agent 控制面板**
+**面向 pi agent、以 WebUI 为主的控制面板。**
 
-通过浏览器优先的 WebUI 管理 provider 配置、运行本地模型名路由网关 — CLI 与 TUI 复用同一套 Go 核心（gin + bubbletea）。
+管理 provider 配置，并发布本地模型名网关；也可通过 CLI 和 TUI 在终端中操作。
 
 [English](README.md) | [中文](#)
 
@@ -17,462 +17,100 @@
 
 ---
 
-## 📸 截图 — WebUI
+## 界面截图
 
 <div align="center">
 
-<img src="assets/webui-home.png" alt="pi-switch WebUI — Home" width="48%"/>
-<img src="assets/webui-profiles.png" alt="pi-switch WebUI — Profiles" width="48%"/>
+<img src="assets/webui-home.png" alt="pi-switch WebUI 首页" width="48%"/>
+<img src="assets/webui-profiles.png" alt="pi-switch WebUI Profiles" width="48%"/>
 <br/>
-<img src="assets/webui-gateway.png" alt="pi-switch WebUI — Gateway" width="48%"/>
-<img src="assets/webui-stats.png" alt="pi-switch WebUI — Stats" width="48%"/>
+<img src="assets/webui-gateway.png" alt="pi-switch WebUI Gateway" width="48%"/>
+<img src="assets/webui-stats.png" alt="pi-switch WebUI 统计" width="48%"/>
 
-<br/>
-<sub>Home · Profiles · Gateway（Current vs Proposed）· Stats — 深色主题 1280×800。TUI 仍可用：<code>assets/main.png</code></sub>
 </div>
 
 ---
 
-## 📥 安装
+## 功能简介
 
-```bash
-# npm（推荐）
+- 管理 provider 配置、模型列表和各渠道暴露的模型。
+- 在 Gateway 页面预览并发布模型到 Pi。
+- 通过本地代理按模型名路由请求。
+- 在 WebUI 查看请求与 token 用量，并管理 pi packages。
+- WebUI、CLI 和 TUI 共用同一套 Go 核心。
+
+架构与详细行为见 [WebUI 指南](./WEBUI_GUIDE.md)、[后端架构](./docs/architecture.md) 和[系统契约](./docs/system-contract.md)。
+
+## 安装
+
+### 通过 npm 安装
+
+~~~bash
 npm install -g @heihei0299/pi-switch
 
 # 或通过 pi 安装
 pi install npm:@heihei0299/pi-switch
-```
+~~~
 
-**从源码构建**（需要 Node.js >= 20, Go 1.24+）：
+### 从源码构建
 
-```bash
+需要 Node.js 23.6 或更高版本，以及 Go 1.24.2 或更高版本。
+
+~~~bash
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
 npm install
-npm run build              # 构建 webui/dist + go build（通过 embed.FS 嵌入 webui）
-# 或分步：
-# npm run build:webui      # vite 构建 → webui/dist
-# npm run build:go         # go build，通过 ldflags 从 package.json 注入版本号（嵌入 webui/dist）
+npm run build
 node bin/pi-switch.js webui start --daemon
-# 打开 http://127.0.0.1:43110
-```
-
-### 系统兼容性
-
-**支持的平台：**
-- ✅ Windows (x64)
-- ✅ macOS (Intel 与 Apple Silicon)
-- ✅ Linux (x64) - glibc 与 musl
-
-**Linux 用户：** Go 构建使用 `modernc.org/sqlite`（纯 Go，无 CGO）— 单一静态二进制，无 glibc/musl 区分。
-
-**交叉编译（无 CGO）：**
-```bash
-npm run build:all  # GOOS=linux/darwin/windows × GOARCH=amd64/arm64 → bin/pi-switch-*
-# Wrapper bin/pi-switch.js 通过 process.platform/arch 选择正确二进制
-```
-
----
-
-## 🚀 快速开始 — WebUI 优先
-
-```bash
-pi-switch webui start --daemon  # 浏览器界面 http://127.0.0.1:43110（推荐）
-pi-switch tui                   # 交互式 TUI（备选）
-pi-switch doctor                # 运行环境诊断
-```
-
-> **WebUI 是主界面。** CLI、TUI、WebUI 都是同一套 Go 核心（gin + bubbletea）之上的薄适配层。
-> WebUI 在浏览器中覆盖 Profiles、Gateway、Proxy、Stats、Settings 等全部能力；
-> TUI 与 CLI 为终端工作流提供同等操作。
-> 架构、新增操作的 4 步 recipe 与完整 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md)。
-
-### 常用命令 — CLI 与 WebUI 对照
-
-```bash
-# Provider 管理（CLI）
-pi-switch provider add <名称> [--preset <id>] [--api-key <key>]
-pi-switch provider list
-pi-switch provider show <名称>
-pi-switch provider delete <名称>
-pi-switch provider expose <名称> <model-ids...> --channel main    # 暴露模型到 pi agent
-pi-switch provider fetch-models <名称>             # 从 API 抓取模型列表
-
-# WebUI：Profiles → + Add profile → Edit → Expose
-
-# 代理（网关）
-pi-switch proxy start --daemon                     # 启动代理守护进程
-pi-switch proxy status
-
-# WebUI：Gateway → Current vs Proposed → Apply to Pi， Proxy → Start/Stop
-
-# Package 管理
-pi-switch package list                             # 列出已安装的包
-pi-switch package add <spec> [--disabled]          # 添加包；spec 是单个 token，例如 npm:pkg 或 ./目录
-pi-switch package remove <id>                      # 删除包
-pi-switch package show <id>                        # 显示包详情
-pi-switch package import                           # 从 pi agent 目录导入已发现的包
-
-# WebUI：Packages → Add / Toggle / Remove
-
-# WebUI（浏览器配置）——建议始终使用 --daemon 后台运行，
-# 这样可以用 `pi-switch webui stop` 停止。
-# 绑定非 loopback 的 --host 需要密码：设置 PI_SWITCH_WEBUI_PASSWORD，
-# 或用 --generate-password 生成到 ~/.pi-switch/webui_password（0600）；
-# 否则拒绝启动。
-#
-# 超出 loopback 时的已知限制：代理此时只接受 HTTP Basic，而 pi-switch 发布到
-# ~/.pi/agent/models.json 的 provider 携带 Bearer 形式的 apiKey（"pi-switch-proxy"）。
-# 使用这些已发布 provider 的客户端会拿到 401，`gateway publish` 会就此给出警告
-# （以配置里的代理 host 判定，故运行期用与配置不同的 --host 启动的代理不在覆盖内；
-# 且只在 plan 里确实发布了带模型的 pi-switch provider 时才告警）。
-# 把代理绑回 loopback，或改用能发送 Basic 的客户端。共享密码有意**不**写进
-# models.json。
-pi-switch webui start --daemon [--host <ip>] [--port <端口>] [--generate-password]
-pi-switch webui status
-pi-switch webui stop
-
-# 其他
-pi-switch presets                                   # 列出内置预设
-pi-switch presets show <id>                         # 显示单个预设
-pi-switch config show                               # 显示当前配置路径
-pi-switch stats                                     # 未实现——退出码非零
-```
+~~~
 
----
-
-## ✨ 功能特性
+支持 Windows、macOS 和 Linux。可在 [Releases](https://github.com/heihei0299/pi-switch/releases) 查看可下载版本。
 
-| 分类 | 亮点 |
-|------|------|
-| 🌐 **WebUI（主界面）** | 浏览器控制面板 `http://127.0.0.1:43110` — Profiles 增删改查、Gateway `Current vs Proposed` 差异与 `Apply to Pi`、Proxy 启停、Stats 仪表（时间窗口/自动刷新）、Packages、Settings、Doctor。Daemon 托管（独立 pid/log/port），本地回环免认证、非回环 Basic 认证。 |
-| 🔌 **Provider 管理** | 增删改查、复制、搜索/过滤、模型管理、**多渠道**（`upstreams[]` 含 api/baseUrl/apiKey/headers/weight/name，每条渠道拥有自己的 `models`/`exposedModels` 分区）、按渠道 fetch/expose、网关发布与二级模型选择、配置 Responses API 透传/转换模式 |
-| ⇥ **cc-switch 导入** | **未实现**：Go 版本没有该能力，CLI/TUI/WebUI 均无入口，相关端点返回 501 |
-| 💡 **内置预设** | OpenAI、Anthropic、DeepSeek — 一键创建配置。列表只有一份来源（`ProviderPresets`），并按写入口使用的同一条 api 能力规则过滤，因此不会提供写入口会拒绝的 api（`google-generative-ai` 属于「已知但当前不可代理」，故没有 Google 预设） |
-| 🌉 **模型名网关** | **独立**进程/插件 — Profiles 只写本地配置，Gateway 通过 `Current vs Proposed` 预览与 `Apply to Pi` 显式把最多两个固定 provider（`pi-switch-res` / `pi-switch-chat`）发布到 `~/.pi/agent/models.json`；无状态裸模型名路由、SSE 流式、User-Agent 伪装、OpenAI ↔ Anthropic 与 Responses ↔ Chat Completions 转换、断路器 |
-| 🗂️ **模型目录** | 用 https://models.dev 快照补齐缺失模型元数据（cost/limit/reasoning/input/name），缓存在 `~/.pi-switch/cache/models-dev.json`（24h TTL，过期降级告警）：拉取时按 profile 的 `modelsDevProvider` 映射 enrich，网关预览/发布时只补缺失（已有值优先，不写回池，重名跳过） |
-| 📦 **Package 管理** | 在 CLI、TUI、WebUI 中安装、启用/禁用和管理包 |
-| 🖥️ **TUI（次要）** | charmbracelet/bubbletea + lipgloss + bubbles — profile 列表/切换、网关发布、统计（totalCost `-` / `$0.00` / `$1.2K`），与 WebUI/CLI 全量对齐 |
-| 🌐 **双语支持** | English / 中文，持久化到配置，Settings 中切换 |
-| 📊 **使用统计** | 按 provider、按模型的请求指标与延迟；四维度 token 总量（输入/输出/缓存/推理）、缓存命中率、时间窗口查询（当天/24h/7 天/自定义）、按对话统计 — 数据模型见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) |
-| 💾 **备份与同步** | **未实现**：不做自动备份，config 导出/导入/恢复均为 501（仅 `legacy/` 下的旧 JS 实现可参考） |
-| 🩺 **诊断工具** | `doctor` 命令检查配置、models.json、结构完整性 |
+## 快速开始
 
----
+启动浏览器界面并打开 <http://127.0.0.1:43110>：
 
-## ⇥ 从 cc-switch 导入——未实现
+~~~bash
+pi-switch webui start --daemon
+~~~
 
-从 [cc-switch](https://github.com/farion1231/cc-switch) 导入 provider 的能力在 **Go 版本中未实现**：没有 CLI 命令、没有 TUI 入口、也没有 WebUI 入口；`pi-switch ccs import` 与 `POST /api/ccswitch/import` 都会明确拒绝，而不是回报一次什么都没做的"导入成功"。
+运行 <code>pi-switch doctor</code> 检查环境，用 <code>pi-switch webui stop</code> 停止界面。也可以使用终端界面 <code>pi-switch tui</code> 或其他 <code>pi-switch</code> 命令。
 
-遗留 JS 实现（`src/commands.js`，未包含在 npm 的 `files` 列表中）曾只读地读取 `~/.cc-switch/cc-switch.db`，并把 Claude/Codex/Gemini 映射到对应 API。若需要该能力，应单独立 spec；本构建不提供旧行为。
+### 在 Pi 中使用模型
 
----
+1. 在 **Profiles** 中添加 provider 并暴露模型。
+2. 在 **Gateway** 中检查变更，然后选择 **Apply to Pi**。
+3. 在 **Proxy** 中启动代理，或运行 <code>pi-switch proxy start --daemon</code>。
+4. 在 Pi 中，Responses 模型选择 <code>pi-switch-res</code>，Chat 模型选择 <code>pi-switch-chat</code>，然后选择已暴露的模型。
 
-## 📊 使用统计
+WebUI 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[安全说明](./WEBUI_GUIDE.md#security)。
 
-每次代理请求都会以 JSON 行追加写入 `~/.pi-switch/requests.log`。流式响应通过 tee 旁路解析：请求的输入/输出/命中缓存/推理 token 数（上游上报时）与对话标识在流结束后补写进日志——流本身从不缓冲，逐 token 体验不变。推理 token 是输出 token 的子集（解析自上游上报的 `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`），不计入总量。
+## 常见问题
 
-- **WebUI 统计页**：token 总量平铺 5 格（输入/输出/缓存/推理/合计）并带子集角标（`Cached ⊆ Input`、`Reasoning ⊆ Output`）；`By provider` / `By conversation` 表格、时间范围选择器（当天 / 24 小时 / 7 天 / 自定义）、自动刷新档位（Off / 5s / 30s / 5min）与分页的请求明细。
-- **统计接口**（`GET /api/stats`）：返回 `totalTokens` 四维度——输入/输出/缓存/推理（`total = 输入 + 输出`，推理是输出的子集）——以及 `cacheHitRate`、按供应商与按模型的 token 明细与 `byConversation`。
-- 完整数据模型、窗口语义与日志 schema 见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) 与 `stats.rs` / `usage.rs` 模块 — README 仅保留概览以保持轻量。
+**如何在 Pi 中切换模型？**
 
----
+打开 <code>/model</code>，选择已发布的 <code>pi-switch-res</code> 或 <code>pi-switch-chat</code> provider，再选择已暴露的模型。
 
-## 🎯 核心流程
+**数据存放在哪里？**
 
-### 网关路由
+配置和本地请求数据存放在 <code>~/.pi-switch/</code>。Pi 的 provider 注册表位于 <code>~/.pi/agent/models.json</code>。
 
-```mermaid
-graph LR
-    subgraph Setup["⚙️ 配置阶段"]
-        A[添加 Provider] --> B[配置模型]
-        B --> C[暴露给 Pi]
-    end
+## 开发
 
-    subgraph Runtime["🚀 运行阶段"]
-        E["请求<br/>model: gpt-5.4"] --> F{解析路由}
-        F --> G[定位唯一暴露的渠道]
-        G --> H{成功？}
-        H -->|✓| I[响应]
-        H -->|✗| L[错误透传]
-        L --> M[60s 冷却]
-        M --> N[半开探测]
-        N -->|✓| G
-        N -->|✗| M
-    end
+需要 Node.js 23.6 或更高版本，以及 Go 1.24.2 或更高版本。
 
-    Setup --> Runtime
+~~~bash
+npm install
+npm run build
+bash scripts/test-limited.sh
+npm run test:webui
+~~~
 
-    style A fill:#50fa7b,stroke:#50fa7b,color:#282a36
-    style E fill:#8be9fd,stroke:#8be9fd,color:#282a36
-    style I fill:#50fa7b,stroke:#50fa7b,color:#282a36
-    style L fill:#ff5555,stroke:#ff5555,color:#f8f8f2
-```
+## 致谢
 
-### 操作步骤 — WebUI 优先
+- 感谢 [cc-switch](https://github.com/farion1231/cc-switch) 和 [cc-switch-cli](https://github.com/SaladDay/cc-switch-cli) 带来的配置管理与终端界面思路。
+- 感谢 [LINUX DO](https://linux.do/) 社区的讨论与启发。
 
-**1. 添加 provider** — WebUI：`Profiles → + Add profile → 填写表单 → Save`；或 CLI：
-
-```bash
-pi-switch provider add provider-a --api openai-completions --base-url https://api.example.com/v1 \
-    --api-key '$API_KEY' --models gpt-5.4,claude-sonnet-4-5
-```
-
-_TUI：`Profiles → a → 填写表单 → Ctrl+S` 仍作为终端备选。_
-
-**2. 暴露模型到 pi agent** — WebUI：`Profiles → 选择 provider → Models → 勾选 → Save`（仅写 `~/.pi-switch/config.json`）；或 CLI：
-
-```bash
-pi-switch provider expose provider-a gpt-5.4 --channel main
-```
-
-**2.5 发布到 Pi** — Gateway 显式写入最多两个固定 provider：`pi-switch-res`（Responses）与 `pi-switch-chat`（Chat）。模型按暴露渠道的 API contract 聚合。
-
-```bash
-# WebUI：Gateway → Current vs Proposed → Apply to Pi
-# 或通过 API：PUT /api/models/gateway
-```
-
-WebUI 里是 `Gateway → Apply to Pi`（展示 pending 差异，支持回滚）。供应商与网关隔离保证 Profiles 的修改绝不自动写入 `~/.pi/agent/models.json` — 必须显式发布。
-
-**3. 启动代理** — 读取已发布的固定网关 provider
-
-```bash
-pi-switch proxy start --daemon
-```
-
-_WebUI：`Proxy → Start`（同一 daemon，状态在 WebUI 中展示）。_
-
-**4. 在 pi 中使用** — Responses 模型选 `pi-switch-res`，Chat 模型选 `pi-switch-chat`，再挑一个裸模型 ID（如 `gpt-5.4`）
-
-### 网关路由原理
-
-请求按 body 中的模型名路由 — 无带外状态，没有"当前目标"概念：
-
-- **裸模型名路由** — `"model": "gpt-5.4"` 解析到唯一暴露它的供应商/渠道；重复暴露的裸 ID 会被网关校验拒绝，无法消歧时返回 ambiguity 错误
-- **固定网关 provider** — pi 最多看到 `pi-switch-res` 与 `pi-switch-chat`，模型列表按渠道 API contract 聚合
-- **网关校验** — 不支持的渠道 API 在预览中给出 diagnostic 并跳过；重复暴露的裸 ID 与额外使用 `pi-switch-proxy` 的 provider 会被原子拒绝，第三方 provider 原样保留
-- **旧 provider 迁移** — 首次固定 provider 发布会移除旧的 pi-switch Supplier/Channel 条目、迁移唯一归属的模型级字段、优先保留已有固定 provider 编辑，并保留第三方 provider
-- **来源路由** — 代理保存 Supplier/Channel 凭证，把每个裸模型 id 路由到唯一暴露的来源
-- **断路器** — 连续 3 次失败后进入 60s 冷却，半开探测成功后自动恢复
-- **流式（SSE）** — 同格式请求（openai→openai、anthropic→anthropic）逐字流式；Responses↔Chat 跨格式路由也支持（双向转换）；保留上游响应头（Content-Type 等）
-- **OpenAI ↔ Anthropic** — 自动在 chat completions 和 messages API 间转换
-- **User-Agent 伪装** — 内置 Claude Code / Codex / Gemini 预设发送对应客户端的真实 User-Agent（及 `anthropic-beta` 等头）以通过上游客户端校验；支持全局或按 profile 设置
-
-> **已知限制** — OpenAI ↔ Anthropic **转换**路径无法流式：它需要解析完整 JSON 来转换格式。如果 pi 发 `stream: true` 但模型路由到跨格式上游（OpenAI 请求 → Anthropic 上游，或反之），响应会以单次非流式返回。同格式路由正常流式。
-
-
----
-
-## 🏗️ 架构
-
-```
-pi-switch/
-├── bin/pi-switch.js         # CLI 入口 — 按平台选择 Go 二进制 → bin/pi-switch-<goos>-<goarch>
-├── bin/pi-switch-*          # Go 二进制（linux/darwin/windows × amd64/arm64，纯 Go）
-├── cmd/pi-switch/main.go    # Go 入口（gin + proxy/mgmt 路由、daemon、tui）
-├── internal/
-│   ├── config/              # 配置加载/保存、类型、per-request 热重载、v1→v2 迁移
-│   ├── gateway/             # 网关发布（models.json:providers[pi-switch]）
-│   ├── profile/             # HTTP 与 CLI 共用的供应商业务（Create/Duplicate/FetchModels/Expose/Test）
-│   ├── protocol/            # API 身份与能力（IsKnown/CanProxy/CanGateway、responsesMode 规则）
-│   ├── proxy/               # 代理辅助（cost、limit 钳制）
-│   ├── limit/               # contextWindow/maxTokens 钳制（估算=ceil(jsonLen/4)，预留 4096）
-│   ├── translator/          # OpenAI ↔ Anthropic ↔ Responses 转换（native/convert via responsesMode）
-│   ├── server/              # gin 路由（proxy :43112、mgmt :43110、/api/*、embed.FS）
-│   ├── store/               # SQLite（modernc.org/sqlite，纯 Go）+ 请求日志
-│   ├── scan/                # sessionScan（离线 ~/.pi/agent/sessions JSONL 关联）
-│   ├── daemon/              # Daemon 生命周期（pid 文件 ~/.pi-switch/*.pid，多实例 ss 提示）
-│   ├── tui/                 # 终端 UI（charmbracelet/bubbletea + bubbles + lipgloss）
-│   └── usage/               # SSE 使用量解析（StreamTee）
-├── webui/                   # React 前端（Vite + Tailwind，通过 embed.FS 嵌入）
-│   ├── src/components/      # Home、Profiles、Gateway、Proxy、Stats 等
-│   └── dist/                # vite 构建产物（通过 webui/embed.go 嵌入 Go 二进制）
-├── scripts/build-all.sh     # 交叉编译矩阵 GOOS×GOARCH（无 CGO）
-└── go.mod
-```
-
-**配置文件：**
-- `~/.pi-switch/config.json` — profiles、渠道/模型池、代理设置
-- `~/.pi-switch/requests.db` — SQLite（modernc）按请求日志（状态、延迟、token 使用量、消费、对话）— 从旧 requests.log + .db 零迁移
-- `~/.pi-switch/backups/` — 旧 JS 实现写入的带时间戳备份；**Go 版本没有任何备份实现**（`GET /api/backups` 与 config 导出/导入/恢复均返回 501）
-- `~/.pi/agent/models.json` — pi 的 provider 注册表（pi-switch 只发布固定的 `pi-switch-res` / `pi-switch-chat` provider）
-
-WebUI 的薄适配层架构、新增操作的 4 步 recipe 与 REST ↔ 核心映射见 [WEBUI_GUIDE.md](./WEBUI_GUIDE.md) — 该指南是厚参考，本 README 保持轻量。
-
----
-
-## ❓ 常见问题
-
-<details>
-<summary><b>如何在 pi 中切换模型？</b></summary>
-<br>
-
-在 pi 中打开 `/model`，选择已发布的 `pi-switch-res` 或 `pi-switch-chat` provider，再挑一个裸模型 ID（如 `gpt-5.4`）。代理按每个请求的模型名路由 — 无需额外操作。
-
-要添加更多模型，在 WebUI 中暴露（`Profiles → 选择 provider → Models`）或使用 CLI：
-```bash
-pi-switch provider expose <名称> <model-id>... --channel <渠道>
-```
-
-</details>
-
-
-<details>
-<summary><b>[proxy] 徽章是什么意思？</b></summary>
-<br>
-
-`[proxy]` 徽章表示该 profile 是一个元 profile（`"proxy": true`），用于在 pi 中注册指向本地网关的 provider，不参与上游路由。
-
-在当前的网关模式下，通常不需要 proxy profile — 代理读取发布到 `~/.pi/agent/models.json` 的固定 provider（通过 **Gateway → Apply to Pi** 显式发布，启动时不再自动写）。
-
-</details>
-
-<details>
-<summary><b>网关路由如何工作？</b></summary>
-<br>
-
-代理发布两个固定 provider：Responses 模型走 `pi-switch-res`，Chat 模型走 `pi-switch-chat`。当 pi 发送 `"model": "gpt-5.4"` 的请求时，代理会：
-
-1. 找到唯一暴露 `gpt-5.4` 的供应商/渠道
-2. 用该渠道的凭证转发，且不改动裸模型 ID
-3. 多个渠道暴露同一裸 ID 时返回 ambiguity 错误
-
-```bash
-# 1. 暴露模型（按渠道）
-pi-switch provider expose provider-a gpt-5.4 --channel main
-pi-switch provider expose provider-b gpt-5.4 --channel main
-
-# 2. 启动代理守护进程
-pi-switch proxy start --daemon
-```
-
-在 pi 中按模型的 API contract 选择 `pi-switch-res` 或 `pi-switch-chat`，然后挑 `gpt-5.4`。每个请求的模型名决定路由 — 不需要管理"target"。
-
-</details>
-
-<details>
-<summary><b>reasoning 模型报错 `unknown variant 'developer'`（400）？</b></summary>
-<br>
-
-**问题** — pi 对标记了 `reasoning: true` 的模型默认使用 OpenAI 的 `developer` role（2025 新推荐项）。部分上游网关的 schema 只接受 `system` / `user` / `assistant` / `tool`（如 opencode zen），直接拒绝请求：
-
-```
-400: messages[0].role: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`
-```
-
-**修复 — 修改 pi 的配置文件 `~/.pi/agent/models.json`**：在 `pi-switch-res` 或 `pi-switch-chat` 里对应模型条目上加 `"compat": { "supportsDeveloperRole": false }`，pi 会改用 `system` role 发送，思考功能保留：
-
-```json
-{
-  "id": "deepseek-v4-flash",
-  "reasoning": true,
-  "compat": { "supportsDeveloperRole": false }
-}
-```
-
-**注意** — 下一次 Gateway 发布会重建相关的固定 provider 条目，抹掉对 models.json 的手动修改。想持久化，把同样的 compat 写进 `~/.pi-switch/config.json` 里对应的模型条目——发布会原样透传。
-
-参考 — 带 opencode 上游的固定 Chat provider 条目（脱敏示例）：
-
-```json
-{
-  "pi-switch-chat": {
-    "api": "openai-completions",
-    "apiKey": "pi-switch-proxy",
-    "baseUrl": "http://127.0.0.1:43112/v1",
-    "models": [
-      {
-        "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
-        "contextWindow": 1000000,
-        "cost": { "cacheRead": 0.0028, "cacheWrite": 0.0, "input": 0.14, "output": 0.28 },
-        "id": "deepseek-v4-flash",
-        "input": ["text"],
-        "maxTokens": 384000,
-        "name": "DeepSeek V4 Flash",
-        "reasoning": true,
-        "thinkingLevelMap": { "xhigh": "max" }
-      },
-      {
-        "compat": { "requiresReasoningContentOnAssistantMessages": true, "supportsDeveloperRole": false, "supportsLongCacheRetention": true, "thinkingFormat": "deepseek" },
-        "contextWindow": 1000000,
-        "cost": { "cacheRead": 0.0145, "cacheWrite": 0.0, "input": 1.74, "output": 3.48 },
-        "id": "deepseek-v4-pro",
-        "input": ["text"],
-        "maxTokens": 384000,
-        "name": "DeepSeek V4 Pro",
-        "reasoning": true,
-        "thinkingLevelMap": { "xhigh": "max" }
-      },
-      {
-        "contextWindow": 1000000,
-        "cost": { "cacheRead": 0.08, "cacheWrite": 0.0, "input": 0.4, "output": 2.0 },
-        "id": "mimo-v2.5",
-        "input": ["text", "image"],
-        "maxTokens": 1000000,
-        "name": "MiMo V2.5",
-        "reasoning": true
-      }
-    ],
-    "proxy": false
-  }
-}
-```
-</details>
-
-<details>
-<summary><b>User-Agent 伪装如何工作？</b></summary>
-<br>
-
-有些上游渠道只接受白名单内的客户端（校验 User-Agent 名称前缀）。pi-switch 内置三个预设，发送对应客户端的真实身份：
-
-| 预设 | User-Agent | 额外头 |
-|------|------------|--------|
-| Claude Code | `claude-cli/2.1.161 (external, cli)` | `anthropic-version`、`anthropic-beta` |
-| Codex | `codex_cli_rs/0.1.0` | — |
-| Gemini | `gemini-cli/0.1.5` | `x-goog-api-client` |
-
-- **全局**：`Settings → User-Agent`，用 `←/→` 切换（TUI）或下拉框（WebUI）。
-- **按 profile**：在 profile 详情页按 `u` 循环切换；profile 级的值会覆盖全局。适合只有部分上游有 UA 白名单的情况。
-
-注意：这只能通过"看客户端名称"的校验，不会伪造更深的请求级令牌（turn state、session id 等）——严格的一方端点会校验这些。
-
-</details>
-
-<details>
-<summary><b>我的数据存储在哪里？</b></summary>
-<br>
-
-所有数据在 `~/.pi-switch/` 下。pi 的注册表是 `~/.pi/agent/models.json`。数据不会离开你的设备。
-
-</details>
-
----
-
-## 🛠️ 开发
-
-```bash
-npm run build                    # 一次性：构建 webui/dist + go build（通过 embed.FS 嵌入）
-npm run build:webui              # vite 构建 → webui/dist
-npm run build:go                 # go build，通过 ldflags 从 package.json 注入版本号（嵌入 webui/dist）
-go test ./...                    # Go 集成测试
-go vet ./...                     # Vet
-NODE_ENV=test npx --prefix webui vitest run  # WebUI 测试
-```
-
-**注意：** 在 Windows 上执行 `npm run build` 前请停掉 TUI/daemon，避免文件锁定错误。
-
----
-
-## 🙏 致谢
-
-- **[cc-switch](https://github.com/farion1231/cc-switch)** — Claude Code 的原版 TUI 配置切换工具，开创了交互式终端界面和代理故障转移的设计模式
-- **[cc-switch-cli](https://github.com/SaladDay/cc-switch-cli)** — CLI 版本，提供了简洁的命令行 provider 管理接口
-
-也感谢 **[LINUX DO](https://linux.do/)** 社区的讨论催生了这个项目。
-
----
-
-## 📜 许可证
+## 许可证
 
 MIT
