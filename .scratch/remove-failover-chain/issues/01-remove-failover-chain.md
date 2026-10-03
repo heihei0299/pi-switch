@@ -30,7 +30,7 @@ Spec: `.scratch/remove-failover-chain/spec.md`
 - API：`PUT /proxy/failover` 改 `410 Gone`，body `{ error: { message: "failover removed, will be replaced by per-conversation breaker", type: "gone" } }`；`GET /health` 等回显移除 `failover`。
 - WebUI：`webui/src/components/ProxyPanel.tsx` 移除 `FailoverEditor`、`api.setFailover`、`types.failover`、`i18n` failover keys；`ProxyPanel` 仅保留 host/port。
 - TUI/CLI：移除 `Settings → Failover` 菜单与 `proxy failover` 生效路径，改为提示已移除。
-- 文档：`README.md / README_ZH.md` 移除 `proxy failover` 命令与 Gateway Routing & Failover 中 failover 描述；`CONTEXT.md` 首段已移除“支持同模型 failover”。
+- 文档：`README.md / README_ZH.md` 移除 `proxy failover` 命令与 Gateway Routing & Failover 中 failover 描述；`docs/glossary.md` 首段已移除“支持同模型 failover”。
 
 ## 验收
 1. 含 `failover` 的旧 `config.json` 可加载，首次保存后不含该键；`GET /health` 不含 `failover`。
@@ -56,5 +56,5 @@ Spec: `.scratch/remove-failover-chain/spec.md`
   - [x] 7. go test ./... (8 packages) 与 webui npm run test (27 files 226 tests) 通过；retry.go 保留但无调用
 - 测试结果：Go 8 packages passed (with 13 skipped legacy failover tests), WebUI 27 files 226 tests passed, 新增回归 5 文件（config/server/webui）
 - typecheck：go vet ./... 通过
-- 文档对齐：CONTEXT.md 首段移除 failover、README.md/README_ZH.md 移除 failover 命令与 Automatic failover 段、HomePanel/ProfilesPanel/SettingsPanel/i18n 清理
+- 文档对齐：docs/glossary.md 首段移除 failover、README.md/README_ZH.md 移除 failover 命令与 Automatic failover 段、HomePanel/ProfilesPanel/SettingsPanel/i18n 清理
 - 遗留 / 后续建议：per-conversation 熔断另起 spec 实现；retry.go 保留待新熔断复用；TUI Settings→Failover 已无入口但未单独 UI 测试；裸 model 未命中时 502 no_route 需在 Release Notes 提示用户改显式 pin

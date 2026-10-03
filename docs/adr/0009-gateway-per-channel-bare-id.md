@@ -15,7 +15,7 @@ ADR-0008 为保跨渠道同 `modelId` 唯一，将 `网关` 模型 `id` 定为 `
 1. **裸 `id`**：`网关` 落盘 `models[].id` 仅为裸 `modelId`，不含 `supplier/channel` 前缀；跨 `渠道` 同 `modelId` 视为同一逻辑模型的多次暴露。
 2. **按 `渠道` 分 provider**：`BuildProposedGatewayEntry`/`Publish` 按每 `渠道` 生成独立 provider 条目 `providers[supplier/channel]`，`api` 必须取 `Channel.api`，`models` 仅含该 `渠道` 的裸 `id` 列表。`providers` 的 key 即源标识，无需在 `id` 内编码。
 3. **严格不兼容**：代理侧 `POST /v1/chat/completions|/v1/responses` 的 `body.model` 含 `/` 直接 `400`，不再接受 `supplier[/channel]/model` 前缀；裸 `id` 多处暴露时报 `502 ambiguous`，由调用方消解。存量 `models.json` 仍按新 provider wrapper 读取，旧 flat 或带 `/` 的模型 id 不做剥离，下一次发布会覆盖为新结构。
-4. **术语更新**：`CONTEXT.md: 网关/网关发布/渠道` 同步改写为上述定义。
+4. **术语**：本文按「网关」「网关发布」「渠道」使用相关概念，具体语义以本 ADR 的决定为准。
 
 ## 备选
 

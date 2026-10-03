@@ -4,7 +4,7 @@ Status: ready-for-agent
 Version: 1.0
 Author: pi-switch maintainers
 Date: 2026-09-03
-Scope: `config` / `server` 代理路由 / `webui` / `tui` / `docs` / `CONTEXT.md`（不含新熔断实现）
+Scope: `config` / `server` 代理路由 / `webui` / `tui` / `docs` / `docs/glossary.md`（不含新熔断实现）
 
 ## 1. 背景与目标
 
@@ -21,13 +21,13 @@ Scope: `config` / `server` 代理路由 / `webui` / `tui` / `docs` / `CONTEXT.md
 - 不在本 spec 实现新的 per-conversation 熔断/限流/重试策略。
 - 不改变 `Supplier/Channel` 数据模型（多 channel + weight + 渠道 pin 保留）、`Gateway` 聚合与发布、`token/cost` 统计、`sessionScan` 归属。
 
-## 2. 术语（以 CONTEXT.md 为准）
+## 2. 术语（以 docs/glossary.md 为准）
 - **供应商（Supplier）**：`ProviderProfile`，为模型与凭证唯一事实来源。
 - **渠道（Channel）**：`Upstream` 同义词，`name` 为供应商内唯一主键。
 - **裸模型 ID**：如 `gpt-4o`，不含 `supplier/` 前缀。
 - **渠道精确路由**：`supplier/channel/model` 精确 pin 到单渠道，不跨供应商。
 
-本次后 `故障转移（Failover）` 为历史术语，不再作为功能术语使用（CONTEXT.md 首段已移除“支持同模型 failover”句）。
+本次后 `故障转移（Failover）` 为历史术语，不再作为功能术语使用（docs/glossary.md 首段已移除“支持同模型 failover”句）。
 
 ## 3. 决策（与 Q11-Q14 一致）
 
@@ -85,7 +85,7 @@ Scope: `config` / `server` 代理路由 / `webui` / `tui` / `docs` / `CONTEXT.md
 
 ### 4.6 文档
 - `README.md / README_ZH.md`：移除 `proxy failover` 命令示例、Gateway Routing & Failover 章节中的 failover 描述、WebUI 中 Proxy/Gateway 面板编辑故障转移链的说明；保留“渠道精确路由 `supplier/channel/model` 精确 pin”句。
-- `CONTEXT.md`：首段已移除“支持同模型 failover”句（本 spec 已完成）。
+- `docs/glossary.md`：首段已移除“支持同模型 failover”句（本 spec 已完成）。
 
 ### 4.7 兼容与迁移
 - 旧 `config.json` 含 `failover` 的用户：升级后首次任意保存（或代理启动时 `MigratedForSave`）自动删除该键，无需手动迁移；读时不报错。
