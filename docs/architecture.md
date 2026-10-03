@@ -4,7 +4,7 @@
 >
 > 核心原则：`config.json` 保存供应商事实，Gateway 是显式发布的派生视图，Proxy 负责请求路由与协议转换，`requests.db` 保存请求事实。
 >
-> 架构评估结论与行动清单见 `docs/architecture-review.md`；边界不变量见 `docs/system-contract.md`。
+> 架构导航以本文为准；边界不变量见 `docs/system-contract.md` 与 `docs/adr/`。
 
 ## 1. 先看哪里
 

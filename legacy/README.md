@@ -5,7 +5,7 @@
 - `legacy/extensions/` — `pi` 扩展入口；它 `import` 下面的 `src/commands.js`
 - `legacy/src/` — 旧的命令/core/proxy/stats/presets 实现
 
-归档原因（`docs/architecture-review.md` 的 A5）：`package.json` 的 `pi.extensions` 指向 `./extensions/index.ts`，而该路径不在发布包内，属**悬空入口**——安装者按 manifest 找不到入口。既然这些文件已不发布，保留一个指向不存在文件的字段只会误导，故摘除该字段并把这些目录移出仓库根（用 `git mv`，历史保留）。
+归档原因：`package.json` 的 `pi.extensions` 指向 `./extensions/index.ts`，而该路径不在发布包内，属**悬空入口**——安装者按 manifest 找不到入口。既然这些文件已不发布，保留一个指向不存在文件的字段只会误导，故摘除该字段并把这些目录移出仓库根（用 `git mv`，历史保留）。
 
 ## 保留而非删除的理由
 
