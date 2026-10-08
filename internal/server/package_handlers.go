@@ -271,6 +271,40 @@ func DeleteInstalledPackage(id string) error {
 	return nil
 }
 
+func ToggleInstalledPackage(id string) (bool, error) {
+	if id == "" {
+		return false, errors.New("package id is required")
+	}
+	db, err := openPiSwitchDB()
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var enabled int
+	if err := db.QueryRow(`SELECT enabled FROM packages WHERE id=? AND installed=1`, id).Scan(&enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrPackageNotFound
+		}
+		return false, err
+	}
+	newEnabled := 0
+	if enabled == 0 {
+		newEnabled = 1
+	}
+	result, err := db.Exec(`UPDATE packages SET enabled=?, updated_at=? WHERE id=? AND installed=1`, newEnabled, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if changed == 0 {
+		return false, ErrPackageNotFound
+	}
+	return newEnabled == 1, nil
+}
+
 func handlePackagesList(c *gin.Context) {
 	out, err := ListInstalledPackages()
 	if err != nil {
@@ -420,23 +454,14 @@ func handlePackageDelete(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 func handlePackageToggle(c *gin.Context) {
-	id := c.Param("id")
-	db, err := openPiSwitchDB()
+	enabled, err := ToggleInstalledPackage(c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrPackageNotFound) {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	defer db.Close()
-	var enabled int
-	err = db.QueryRow(`SELECT enabled FROM packages WHERE id=?`, id).Scan(&enabled)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	newEnabled := 0
-	if enabled == 0 {
-		newEnabled = 1
-	}
-	_, _ = db.Exec(`UPDATE packages SET enabled=?, updated_at=? WHERE id=?`, newEnabled, time.Now().UnixMilli(), id)
-	c.JSON(200, gin.H{"ok": true, "enabled": newEnabled == 1})
+	c.JSON(200, gin.H{"ok": true, "enabled": enabled})
 }

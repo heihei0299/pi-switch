@@ -65,3 +65,21 @@ func TestPackageDeleteSupportsScopedImportedID(t *testing.T) {
 		}
 	}
 }
+
+func TestToggleInstalledPackageReturnsStateAndRejectsMissing(t *testing.T) {
+	t.Setenv("PI_SWITCH_DB", filepath.Join(t.TempDir(), "requests.db"))
+	if err := AddInstalledPackage("npm:demo", true); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := ToggleInstalledPackage("npm:demo")
+	if err != nil || enabled {
+		t.Fatalf("disable package = %v, %v; want false, nil", enabled, err)
+	}
+	enabled, err = ToggleInstalledPackage("npm:demo")
+	if err != nil || !enabled {
+		t.Fatalf("enable package = %v, %v; want true, nil", enabled, err)
+	}
+	if _, err := ToggleInstalledPackage("missing"); err != ErrPackageNotFound {
+		t.Fatalf("toggle missing package error = %v, want ErrPackageNotFound", err)
+	}
+}

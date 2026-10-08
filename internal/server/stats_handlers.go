@@ -121,6 +121,16 @@ func newStatsService(db *sql.DB) (statsservice.Service, error) {
 	}, nil
 }
 
+// OpenStatsService returns the management stats service with the configured
+// conversation source and the same cached session candidates as the API.
+func OpenStatsService() (statsservice.Service, error) {
+	db, err := store.GetDB()
+	if err != nil {
+		return statsservice.Service{}, err
+	}
+	return newStatsService(db)
+}
+
 // --- stats handler with window filtering ---
 func handleStats(c *gin.Context) {
 	if c.Query("groupBy") == "conversation" {

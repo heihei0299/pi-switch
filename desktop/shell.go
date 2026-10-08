@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/gateway"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 type desktopShell struct {
 	window               *mygo.Window
 	nativeWindow         *mygo.Window
+	complexWindow        *mygo.Window
 	uiURL                string
 	tray                 *mygo.Tray
 	startMinimized       bool
@@ -30,6 +32,7 @@ type desktopShell struct {
 	proxyMessage         string
 	trayMessage          string
 	overview             nativeOverview
+	complexPreview       *nativeComplexPreview
 	overviewError        string
 	overviewBusy         bool
 	profileQuery         string
@@ -150,6 +153,7 @@ func (a *desktopShell) applicationMenu() *mygo.Menu {
 		{Label: "File", Submenu: []*mygo.MenuItem{
 			{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 			{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
+			{Label: "Show Complex UI Prototypes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showComplexPrototypes() }},
 			{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 			{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 			{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -164,6 +168,7 @@ func (a *desktopShell) trayMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 		{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
+		{Label: "Show Complex UI Prototypes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showComplexPrototypes() }},
 		{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 		{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 		{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -250,6 +255,206 @@ func (a *desktopShell) onNativeWindowClose(e *mygo.CloseEvent) {
 	e.PreventDefault()
 	if a.nativeWindow != nil {
 		a.nativeWindow.Hide()
+	}
+}
+
+func (a *desktopShell) showComplexPrototypes() {
+	if a.complexWindow == nil {
+		a.complexPreview = newNativeComplexPreview()
+		a.complexPreview.refreshGateway = a.refreshNativeGatewayPreview
+		a.complexPreview.publishGateway = a.publishNativeGatewaySelection
+		a.complexPreview.publishGatewayDraft = a.publishNativeGatewayDraft
+		a.complexPreview.runPackageTask = a.runNativePackageTask
+		a.complexPreview.refreshStats = a.refreshNativeStats
+		a.complexPreview.refreshConversationRequests = a.refreshNativeConversationRequests
+		a.complexWindow = mygo.NewWindow(mygo.WindowOptions{
+			Title:           "pi-switch — Complex UI Prototypes",
+			Width:           900,
+			Height:          720,
+			MinWidth:        640,
+			MinHeight:       480,
+			BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
+			StateKey:        "complex-prototypes",
+			Content:         ui.View(a.complexPreview.view),
+		})
+		a.complexWindow.OnClose(a.onComplexWindowClose)
+	}
+	a.complexWindow.Restore()
+	a.complexWindow.Show()
+	a.complexWindow.Focus()
+	a.refreshNativeGatewayPreview(nativeGatewaySelections(a.complexPreview))
+	a.refreshNativeStats(0, 0, a.complexPreview.statsFilters)
+}
+
+func (a *desktopShell) runNativePackageTask(task func() (string, error)) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.packagesLoading || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.packagesLoading = true
+	preview.packagesError = ""
+	window.Invalidate()
+	go func() {
+		message, err := task()
+		var packages []nativePackage
+		var listErr error
+		if err == nil {
+			packages, listErr = loadNativePackages()
+		}
+		window.Update(func() {
+			preview.packagesLoading = false
+			preview.packagesLoaded = true
+			if err != nil {
+				preview.packagesError = err.Error()
+				return
+			}
+			if listErr != nil {
+				preview.packagesError = listErr.Error()
+				return
+			}
+			preview.packages = packages
+			preview.packagesError = ""
+			preview.packagesMessage = message
+		})
+	}()
+}
+
+func (a *desktopShell) refreshNativeGatewayPreview(selections []gateway.GatewaySelection) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.gatewayLoading = true
+	preview.gatewayError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeGatewayPreviewForSelection(selections)
+		window.Update(func() {
+			preview.gatewayLoading = false
+			if err != nil {
+				preview.gatewayError = err.Error()
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = selections != nil
+			preview.gatewayError = ""
+		})
+	}()
+}
+
+func (a *desktopShell) publishNativeGatewaySelection(selections []gateway.GatewaySelection) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.gatewayPublishing = true
+	preview.gatewayPublishMessage = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := publishNativeGatewaySelection(selections)
+		window.Update(func() {
+			preview.gatewayPublishing = false
+			if err != nil {
+				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = selections != nil
+			preview.gatewayPublishMessage = "Published selected Gateway models."
+		})
+	}()
+}
+
+func (a *desktopShell) publishNativeGatewayDraft(raw string) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.gatewayPublishing = true
+	preview.gatewayPublishMessage = ""
+	preview.jsonStatus = "Publishing Gateway draft…"
+	window.Invalidate()
+	go func() {
+		loaded, err := publishNativeGatewayDraft(raw)
+		window.Update(func() {
+			preview.gatewayPublishing = false
+			if err != nil {
+				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
+				preview.jsonStatus = preview.gatewayPublishMessage
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = false
+			preview.gatewayPublishMessage = "Published Gateway draft."
+			preview.jsonStatus = preview.gatewayPublishMessage
+			preview.invalidateJSONDraftValidation()
+		})
+	}()
+}
+
+func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, filters nativeStatsFilters) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.statsLoading || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.statsLoading = true
+	preview.statsError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeStats(requestPage, conversationPage, 10, filters)
+		window.Update(func() {
+			preview.statsLoading = false
+			if err != nil {
+				preview.statsError = err.Error()
+				return
+			}
+			preview.stats = loaded
+			preview.statsLoaded = true
+			preview.statsError = ""
+			preview.selectedUsage = -1
+		})
+	}()
+}
+
+func (a *desktopShell) refreshNativeConversationRequests(id string, page int) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.conversationRequestsLoading || a.exiting {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	preview.conversationRequests = nativeConversationPage{id: id, page: page}
+	preview.conversationRequestsLoading = true
+	preview.conversationRequestsError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeConversationPage(id, page, 10)
+		window.Update(func() {
+			preview.conversationRequestsLoading = false
+			if err != nil {
+				preview.conversationRequestsError = err.Error()
+				return
+			}
+			preview.conversationRequests = loaded
+			preview.conversationRequestsError = ""
+		})
+	}()
+}
+
+func (a *desktopShell) onComplexWindowClose(e *mygo.CloseEvent) {
+	if a.exiting {
+		return
+	}
+	e.PreventDefault()
+	if a.complexWindow != nil {
+		a.complexWindow.Hide()
 	}
 }
 

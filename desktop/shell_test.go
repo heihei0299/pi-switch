@@ -53,7 +53,7 @@ func TestStartsHiddenOnlyWhenTrayIsAvailable(t *testing.T) {
 func TestMenusKeepActionsReachable(t *testing.T) {
 	app := &desktopShell{}
 	applicationMenu := app.applicationMenu()
-	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Start Proxy", "Stop Proxy"} {
+	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Show Complex UI Prototypes", "Start Proxy", "Stop Proxy"} {
 		if !menuHasLabel(applicationMenu.Items(), label) {
 			t.Fatalf("application menu is missing %q", label)
 		}
@@ -62,7 +62,7 @@ func TestMenusKeepActionsReachable(t *testing.T) {
 		t.Fatal("application menu is missing Quit")
 	}
 	trayMenu := app.trayMenu()
-	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Quit"} {
+	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Show Complex UI Prototypes", "Quit"} {
 		if !menuHasLabel(trayMenu.Items(), label) {
 			t.Fatalf("tray menu is missing %q", label)
 		}
@@ -114,5 +114,20 @@ func TestNativeWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
 	app.onNativeWindowClose(quitEvent)
 	if quitEvent.DefaultPrevented() {
 		t.Fatal("explicit app quit should be allowed to close the native overview")
+	}
+}
+
+func TestComplexWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
+	app := &desktopShell{}
+	closeEvent := &mygo.CloseEvent{}
+	app.onComplexWindowClose(closeEvent)
+	if !closeEvent.DefaultPrevented() {
+		t.Fatal("closing the complex preview should hide it rather than quit")
+	}
+	app.exiting = true
+	quitEvent := &mygo.CloseEvent{}
+	app.onComplexWindowClose(quitEvent)
+	if quitEvent.DefaultPrevented() {
+		t.Fatal("explicit app quit should be allowed to close the complex preview")
 	}
 }
