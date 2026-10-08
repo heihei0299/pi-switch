@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestServiceExecutable(t *testing.T) {
+	got, err := serviceExecutable(Service{Executable: "/opt/pi-switch"})
+	if err != nil || got != "/opt/pi-switch" {
+		t.Fatalf("configured executable = %q, %v", got, err)
+	}
+	got, err = serviceExecutable(Service{})
+	if err != nil || got == "" {
+		t.Fatalf("default executable = %q, %v", got, err)
+	}
+}
+
 func TestServiceByName(t *testing.T) {
 	if ServiceByName("proxy") == nil || ServiceByName("proxy").PidFile != "proxy.pid" {
 		t.Fatalf("proxy service mismatch")

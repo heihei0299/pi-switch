@@ -20,6 +20,7 @@ type Service struct {
 	LogFile    string
 	Subcommand string
 	Label      string
+	Executable string // Optional process executable; defaults to the current executable.
 }
 
 var Proxy = Service{PidFile: "proxy.pid", LogFile: "proxy.log", Subcommand: "proxy", Label: "Proxy"}
@@ -336,7 +337,7 @@ func listeningPID(port uint16) (uint32, bool) {
 	if runtime.GOOS != "linux" {
 		return 0, false
 	}
-	if output, err := exec.Command("ss", "-ltnp", "H").Output(); err == nil {
+	if output, err := exec.Command("ss", "-ltnp", "-H").Output(); err == nil {
 		needle := ":" + strconv.Itoa(int(port))
 		for _, line := range strings.Split(string(output), "\n") {
 			fields := strings.Fields(line)
@@ -422,6 +423,13 @@ func procNetListenerPID(port uint16) (uint32, bool) {
 	return 0, false
 }
 
+func serviceExecutable(s Service) (string, error) {
+	if s.Executable != "" {
+		return s.Executable, nil
+	}
+	return os.Executable()
+}
+
 func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	lock, err := acquireLock(s)
 	if err != nil {
@@ -454,7 +462,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	}
 	defer lf.Close()
 
-	exe, err := os.Executable()
+	exe, err := serviceExecutable(s)
 	if err != nil {
 		return DaemonResult{}, fmt.Errorf("cannot get executable: %w", err)
 	}
