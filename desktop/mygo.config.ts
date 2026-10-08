@@ -12,4 +12,9 @@ export default defineConfig({
   frontendDist: "dist",
   bindings: "src/mygo.ts",
   out: "build",
+  linux: {
+    command: "pi-switch-mygo-spike",
+    comment: "Development-only pi-switch desktop preview",
+    categories: ["Utility"],
+  },
 });

@@ -1,15 +1,21 @@
-# MyGo desktop shell (WP-02 in progress)
+# MyGo desktop shell — test distribution only
 
-This remains an isolated development app (`com.heihei0299.piswitch.mygo-spike`), not a distributable desktop release. The main window can start/stop/check the existing Proxy daemon; closing the window hides it, while **Quit** exits the desktop app without stopping Proxy. Tray setup failures are shown in the window, and the File menu remains the fallback. `--start-minimized` is honored only when a tray is available.
+This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a supported or public desktop release. WP-05/06 native views are previews; the React WebView remains the real management UI. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
 
-The desktop shell reuses the root `internal/daemon` package. To start Proxy it needs a pi-switch CLI executable, found in the app resources, on `PATH`, or explicitly through `PI_SWITCH_CLI_PATH`. Until WP-07 bundles the CLI, development builds may need that environment variable.
+The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. Windows requires the WebView2 runtime. macOS test builds are not Developer ID signed/notarized, and Windows builds have no publisher signature; neither should be installed or redistributed as a release.
 
-## Run without touching user data
+No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes; Debian package-manager transactions, system rollback, daemon lifecycle, and real-user data migration remain unverified. The existing CLI/npm package and its six-target build workflow are unchanged.
 
-Use a built pi-switch CLI from this checkout and fresh temporary paths. Keep the same isolated environment for both the desktop app and any CLI invocation:
+## Build
+
+The [Desktop CI workflow](../.github/workflows/desktop.yml) builds Linux, Windows, and macOS test artifacts from a clean checkout, bundles the matching CLI, and retains the outputs as Actions artifacts for seven days. It does not publish them.
+
+A local `mygo build` writes `webui/dist`, `desktop/dist`, `desktop/build`, and a CLI binary under `desktop/resources`; use a disposable worktree rather than overwriting existing generated files. The build requires the locked desktop Bun dependencies and the WebUI npm dependencies. MyGo's `buildCommand` builds the embedded WebUI and desktop frontend.
+
+For development without touching real data, use a CLI from this checkout and fresh temporary paths. Keep the same isolated environment for both the desktop app and CLI invocation:
 
 ```bash
-data_dir=$(mktemp -d /tmp/pi-switch-wp02.XXXXXX)
+data_dir=$(mktemp -d /tmp/pi-switch-mygo.XXXXXX)
 mkdir -p "$data_dir/config" "$data_dir/xdg"
 cd desktop
 PI_SWITCH_CLI_PATH=/path/to/pi-switch \
@@ -21,14 +27,4 @@ XDG_CONFIG_HOME="$data_dir/xdg" \
 bun run dev
 ```
 
-The app identity and XDG path remain isolated from production while Gate A is blocked. Do not point the environment variables at real user paths.
-
-## Checks
-
-```bash
-CGO_ENABLED=0 go test -mod=readonly ./...
-go vet -mod=readonly ./...
-./node_modules/.bin/mygo vet .
-```
-
-Unit tests do not replace Linux/Windows GUI, tray, IME, high-DPI, crash/restart, or performance acceptance. Gate A remains blocked; this implementation is not release-ready.
+Do not point test builds at real user paths. The desktop workflow is configured to validate compilation, UI tests, and the Linux tarball install/reinstall/uninstall lifecycle in an isolated `HOME`; remote Actions execution, interactive GUI, real IME/high-DPI, Debian package-manager install/rollback, daemon lifecycle, and supported-platform smoke tests remain unverified.

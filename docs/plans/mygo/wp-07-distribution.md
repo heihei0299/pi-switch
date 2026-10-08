@@ -1,6 +1,6 @@
 # WP-07：构建、分发与升级
 
-> 状态：待实施 · 前置依赖：Gate B（M3 可后续追加） · 验收关联：AT-01, AT-10, AT-12, AT-13, AT-14, AT-16, AT-17, AT-18
+> 状态：实施中（独立 test-artifact workflow 已加入；未发布，Gate D 未通过） · 前置依赖：Gate B（M3 可后续追加） · 验收关联：AT-01, AT-10, AT-12, AT-13, AT-14, AT-16, AT-17, AT-18
 >
 > 关联：[总索引](./README.md) · [核心契约](./architecture.md) · [验收定义](./acceptance.md) · [验证与证据](./verification.md) · [发布/回滚](./release-gates.md)
 
@@ -17,6 +17,14 @@
 - [ ] 打包 Linux 系统依赖与缺失诊断、Windows WebView2 检查、macOS 签名/公证配置；固定 MyGo 依赖。
 - [ ] 在洁净机器执行安装、重装、升级、卸载、旧 CLI 回退及 daemon 留存检查；核对 config/models.json/requests.db。
 - [ ] 确保 source commit 与二进制身份一致，secret scan 和打包内容无凭据；没签名/公证时只标记测试分发。
+
+## 当前进展（2026-10-08）
+
+- 新增独立 Desktop CI：为 Linux、Windows、macOS 六个架构组合打包短期 Actions test artifact，构建后检查 CLI resource 内嵌的 commit/target 并生成对应身份清单；不改现有 CLI/npm workflow，也不发布 Release/npm。已在隔离 worktree 成功构建 Linux amd64 `.deb`/tarball/app。
+- Linux amd64 打包 job 现在会从隔离 `HOME` 对生成的 tarball 执行安装、覆盖式重装和卸载 smoke；还验证含绝对 symlink 的恶意归档会被拒绝，不会覆盖现有安装或写出 staging，并验证模拟 config/models/requests 数据及用户同名命令保留。
+- 保持 spike app ID；Linux 安装依赖由 MyGo 声明 GTK 3/WebKitGTK，AppIndicator 可缺省；Windows/macOS 无发行者签名或公证，不得当作正式发行物。
+- Linux tarball `install.sh` 已在临时 HOME 验证安装、重装替换、卸载、config/models/requests 数据保留，以及与应用同名的用户命令不会被覆盖或卸载；此外在临时源码副本构建 `0.1.1` 包，并用其 installer 将隔离 HOME 中的 `0.1.0` 包升级，确认新版二进制替换、旧文件移除、用户数据保留。该测试没有发布版本，也未验证真实用户数据迁移；Debian 系统级安装/回滚、GitHub workflow 和跨平台 GUI 仍未验收，Gate B/D 未通过。验证结果见[本 WP 记录](../../test-reports/mygo-wp-07-distribution-2026-10-08.md)。
+- 现有 Linux amd64 `.deb` 的 ar/control/data 归档结构、包名/版本/架构、GTK/WebKitGTK 依赖和安装载荷已静态检查；未安装 `dpkg`/`dpkg-deb`，不代表系统级安装或升级验证。
 
 ## 对应验收案例（需附可复现证据）
 

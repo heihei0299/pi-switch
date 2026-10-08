@@ -3,3 +3,6 @@ node_modules/
 /build/
 /.mygo/
 mygo_windows_*.syso
+/resources/pi-switch
+/resources/pi-switch.exe
+/resources/build-identity.json
