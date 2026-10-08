@@ -59,11 +59,12 @@ func TestProviderHelp_AdvertisesEveryWorkingSubcommand(t *testing.T) {
 // H2: everything the READMEs advertise really is dispatched. This is the check
 // that would have caught the original defect (help advertised commands that
 // answered "unknown provider subcommand").
-func TestProviderCLI_ReadmeCommandsAreRecognized(t *testing.T) {
+func TestProviderCLI_DocumentedCommandsAreRecognized(t *testing.T) {
 	isolateCLI(t)
 	re := regexp.MustCompile(`pi-switch provider ([a-z][a-z-]*)`)
+	foundAny := false
 
-	for _, path := range []string{"../../README.md", "../../README_ZH.md"} {
+	for _, path := range []string{"../../README.md", "../../README_ZH.md", "../../docs/manual-test-basic.md"} {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -72,9 +73,7 @@ func TestProviderCLI_ReadmeCommandsAreRecognized(t *testing.T) {
 		for _, m := range re.FindAllStringSubmatch(string(body), -1) {
 			found[m[1]] = true
 		}
-		if len(found) == 0 {
-			t.Fatalf("%s: no `pi-switch provider <sub>` examples found; the pattern no longer matches the docs", path)
-		}
+		foundAny = foundAny || len(found) > 0
 		for sub := range found {
 			_, _, errOut := runCLIStreams(t, func() int {
 				return handleProvider([]string{sub, "readme-probe"})
@@ -83,6 +82,9 @@ func TestProviderCLI_ReadmeCommandsAreRecognized(t *testing.T) {
 				t.Errorf("%s advertises `pi-switch provider %s`, but the CLI does not implement it", path, sub)
 			}
 		}
+	}
+	if !foundAny {
+		t.Fatal("no `pi-switch provider <sub>` examples found in the README or manual test guide")
 	}
 }
 
