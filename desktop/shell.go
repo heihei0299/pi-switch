@@ -20,6 +20,7 @@ const (
 
 type desktopShell struct {
 	window         *mygo.Window
+	uiURL          string
 	tray           *mygo.Tray
 	startMinimized bool
 	exiting        bool
@@ -193,7 +194,7 @@ func (a *desktopShell) start() {
 	a.createTray()
 	hidden := a.startsHidden()
 	a.window = mygo.NewWindow(mygo.WindowOptions{
-		Title:           "pi-switch — Desktop (development)",
+		Title:           "pi-switch",
 		Width:           760,
 		Height:          560,
 		MinWidth:        560,
@@ -202,7 +203,7 @@ func (a *desktopShell) start() {
 		StateKey:        "main",
 		Hidden:          hidden,
 		AutoHideMenuBar: true,
-		Content:         ui.View(a.view),
+		URL:             a.uiURL,
 	})
 	a.window.OnClose(a.onWindowClose)
 	a.refreshProxy()

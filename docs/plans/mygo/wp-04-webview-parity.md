@@ -1,6 +1,6 @@
 # WP-04：React 页面承载及功能等价
 
-> 状态：待实施 · 前置依赖：WP-03 · 验收关联：AT-02, AT-03, AT-04, AT-05, AT-06, AT-07, AT-15
+> 状态：实施中（React WebUI 已挂载到 MyGo 窗口；Gate B 未完成） · 前置依赖：WP-03 · 验收关联：AT-02, AT-03, AT-04, AT-05, AT-06, AT-07, AT-15
 >
 > 关联：[总索引](./README.md) · [核心契约](./architecture.md) · [验收定义](./acceptance.md) · [验证与证据](./verification.md) · [发布/回滚](./release-gates.md)
 
@@ -15,8 +15,8 @@
 
 - [ ] 逐页建立 WebUI → 桌面 WebView 对照矩阵，至少覆盖 Home、Profiles、Proxy、Gateway、Stats/Conversations、Packages、Settings/Backups/Doctor。
 - [ ] 对 Profile 草稿 JSON、Gateway preview/diff/publish、分页、空态、加载态、错误提示建立可重跑回归。
-- [ ] 每次处理后台代理状态时均通过已有服务边界，不从 React 组件直接操作模型注册或数据库。
-- [ ] 完成 Gate B 前保留浏览器 WebUI 入口作为故障回退，不在此阶段删除 React。
+- [x] 每次处理后台代理状态时均通过已有服务边界，不从 React 组件直接操作模型注册或数据库。
+- [x] 完成 Gate B 前保留浏览器 WebUI 入口作为故障回退，不在此阶段删除 React。
 
 ## 对应验收案例（需附可复现证据）
 

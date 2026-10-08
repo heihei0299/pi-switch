@@ -4,40 +4,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"runtime"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
-
-// Greeter is callable from the frontend: `mygo generate` turns its methods
-// into typed TypeScript functions in src/mygo.ts.
-type Greeter struct{}
-
-// Greet returns a greeting for name.
-func (Greeter) Greet(name string) string {
-	if name == "" {
-		name = "stranger"
-	}
-	return "Hello, " + name + "! This message comes from Go."
-}
-
-// SystemInfo describes the machine the app runs on.
-type SystemInfo struct {
-	OS        string `json:"os"`
-	Arch      string `json:"arch"`
-	GoVersion string `json:"goVersion"`
-}
-
-// Info returns information about the system.
-func (Greeter) Info() SystemInfo {
-	return SystemInfo{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version()}
-}
-
-// Tick is sent to the page every second.
-var Tick = mygo.NewEvent[time.Time]("tick")
 
 type nativeDemo struct {
 	name  string
@@ -67,27 +37,20 @@ func (a *nativeDemo) view(c *ui.Context) {
 	})
 }
 
-func registerLegacyWebUI() error {
-	dist := os.Getenv("PI_SWITCH_SPIKE_WEBUI_DIST")
-	if dist == "" {
-		return fmt.Errorf("PI_SWITCH_SPIKE_WEBUI_DIST must point to a built WebUI directory")
-	}
-	if _, err := os.Stat(filepath.Join(dist, "index.html")); err != nil {
-		return fmt.Errorf("WebUI entrypoint in %q: %w", dist, err)
-	}
-	return mygo.Protocol.Handle("pi-switch-ui", mygo.FileServer(os.DirFS(dist)))
-}
-
 func main() {
-	mygo.Bind(Greeter{})
-	mygo.App.SetName("pi-switch MyGo Spike")
+	mygo.App.SetName("pi-switch")
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
+	}
+	uiURL, err := registerManagementUI()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	shell := &desktopShell{
 		startMinimized: startsMinimized(os.Args[1:]),
 		proxyMessage:   "Checking proxy status…",
+		uiURL:          uiURL,
 	}
 	mygo.App.SetMenu(shell.applicationMenu())
 	mygo.App.OnSecondInstance(func(_ []string, _ string) { shell.showWindow() })
