@@ -1,78 +1,46 @@
-# 验证命令、CI 准入与交付证据
+# MyGo 测试命令（按改动选择）
 
-> 以下命令是执行阶段要求，非本次文档重组的运行记录。每个工作包的实际命令与结果必须逐项记录。
+> 远程 `mygo` 分支已包含 `desktop/` MyGo 模块、代理控制、管理适配器和 React WebUI 挂载。只验证本次改动；不重新执行 WP-00 的完整基线，也不每个任务跑一遍 CI。
 
-## 5. 验证命令与 CI 门槛
+## 单项开发：选择相关命令
 
-以下是**执行阶段应运行的命令清单**，不是本计划提交已运行的测试。若脚本/工具链变化，记录新命令与原因，不能静默跳过。
+```bash
+# 改了 Go 核心：以实际包路径替换，测试受影响模块
+go test ./internal/<实际包>/...
 
-### 5.1 既有核心基线（仓库根目录）
-
-~~~bash
-go version
-node --version
-npm install
-npm run build:webui
-go vet ./...
-PI_SWITCH_DB="$(mktemp -u)" go test ./...
-npm --prefix webui run typecheck
-npm run test:webui
-cd webui && npx playwright install --with-deps chromium && cd ..
-npm --prefix webui run test:e2e
-bash scripts/check-secrets.sh
-npm run build:go
-bash scripts/functional-check.sh bin/pi-switch
-bin/pi-switch --build-info
-~~~
-
-受限机器可以用仓库自带 <code>bash scripts/test-limited.sh</code> 跑 Go/WebUI/TS/smoke 套件，但仍需另跑 CI 中的 vet、Playwright、secret scan、构建身份验证；该脚本不能替代完整 CI。CI 当前 Go 测试失败项应按 WP-00 单独解决后才把全绿作为实施前置。
-
-**注意**：上面 PI_SWITCH_DB 的一次性空路径只用于测试套件；写入配置或触发 daemon 的集成实验必须使用 AT 测试专门目录并同时设置四个隔离环境变量，不能仅靠 PI_SWITCH_CONFIG_DIR。
-
-### 5.2 新增桌面验证（WP-01 验证通过后确定并落库）
-
-建议独立桌面模块，以实际创建的命令和依赖版本为准：
-
-~~~bash
-# 示例路径/任务，不表示 desktop/ 目前已经存在
-go -C desktop version
+# 改了 MyGo 桌面模块（Go 1.27.1 工具链）
 go -C desktop test ./...
-go -C desktop vet ./...
-# mygo dev/build：使用锁定版 CLI，记录精确调用参数和输出目录
-# 每个目标平台：编译产物 + 安装包内容校验 + 真机 GUI smoke
-~~~
 
-- 新建 GUI/IPC 测试：服务调用 DTO、错误/取消、安全 origin、单实例和窗口生命周期；
-- 新建原生 UI 测试（如果选择 M3）：页面事件、键盘焦点、长列表、草稿编辑、无障碍；
-- 新建跨进程回归：GUI 与 Proxy/daemon 在相互崩溃或退出后仍符合所有权约定；
-- 新增主分支保护前先检查 CI 的触发规则：现有 workflows 仅对 main push、面向 main PR 和 workflow_dispatch 运行；在 mygo 分支的普通 push 不会自动获得完整 CI 证明。
+# 改了 React WebUI
+npm run test:webui
+npm --prefix webui run typecheck
 
-### 5.3 最终 PR 验收顺序
+# 修改前端构建/资源嵌入时，才运行相应构建
+npm run build:webui
+npm --prefix desktop run build:web
+```
 
-1. 单一工作包的新增/改动测试（必过），再执行对应核心回归（必过）。
-2. code review：确认未复制业务规则、无密钥/未授权文件读取、遵守系统契约。
-3. 完成工作包的验证后提交一个 commit；报告 commit SHA、确实执行的命令、失败与未验证项。
-4. M2 候选走全量 Go + WebUI + Desktop + CI cross build + 安全审计 + 至少 Linux/Windows 真机 GUI 验收。
-5. 主分支全量测试和评审通过后**再单独决定**是否合并；不得自动合并、推送额外分支或发布 npm。
-6. M3 删除旧栈之前另做完整一轮行为、性能、用户数据迁移与回滚验证。
+桌面窗口相关改动，启动实际应用手动操作一次即可；**不能用编译通过代替 GUI 功能正常**。新改动没涉及某套测试，就不要求运行该套。
 
-## 7. 必须留存的实施记录
+## 仅风险相关改动使用隔离目录
 
-每个工作包/issue 至少包含：
+```bash
+export PI_SWITCH_CONFIG=/tmp/pi-switch-mygo-test/config.json
+export PI_SWITCH_CONFIG_DIR=/tmp/pi-switch-mygo-test
+export PI_SWITCH_DB=/tmp/pi-switch-mygo-test/requests.db
+export PI_SWITCH_MODELS=/tmp/pi-switch-mygo-test/models.json
+```
 
-~~~text
-WP/Issue：WP-xx / #xx
-目标及不在范围内的事项：
-前置条件 / 基线 SHA / MyGo 锁定版本：
-修改文件及架构边界：
-具体测试命令（实际执行）：
-验收 AT-*：PASS / FAIL / BLOCK（含链接）
-跨平台结果：Linux Wayland / Windows / macOS（未测必须写明）
-安全与数据兼容检查：
-code review 结论：
-遗留风险与回滚步骤：
-交付 commit SHA（每工作包一次；不含无关变更）：
-是否提议合并：否 / 待批准
-~~~
+先确认程序确实读取这四个临时路径，再用假配置测试对应写入或代理启停。不能对真实用户配置或真实 API Key 做试验。
 
-验收证据可以保存为独立 docs/test-reports/ 文档、CI artifact 或 issue 评论，**不得包含真实 API Key 或任何敏感文件**。不复用旧会话的隐含结论；后续实现首先读取本计划和最新 system-contract，若发现冲突先新增 ADR 决策，不悄悄更改合同。
+## 最后一次全量验证
+
+准备合并 `main` 时，通过现有 `.github/workflows/ci.yml` 跑完整 Go/WebUI 测试、构建及安全扫描，再人工检查供应商、Gateway 显式发布、Proxy、Stats 主流程。CI 中独立桌面模块的测试和实际 GUI 检查按本次变更补充；普通 `mygo` push 不会自动触发原工作流，需要显式运行或在 PR 上验证。
+
+Windows/macOS/Linux 的实际 GUI 与安装测试放到对应平台的发布准备阶段，不要求每个任务同时验证三端。
+
+## 结果记录
+
+一行即可：`修改范围；运行命令；通过/失败；未测试项目；commit SHA`。
+
+遇到失败先修复当前任务；独立 bug 独立提交。最终全量测试通过后再决定是否合并，不自动合并或发布。
