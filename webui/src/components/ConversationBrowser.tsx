@@ -29,6 +29,7 @@ export function ConversationBrowser({ refreshTick, visible }: { refreshTick: num
   const [convData, setConvData] = useState<ConversationsPage | null>(null);
   const [expandedConvs, setExpandedConvs] = useState<Set<string>>(new Set());
   const convSeq = useRef(0);
+  const convRequest = useRef<AbortController | null>(null);
   const loadConversations = useCallback(
     async (
       range: ConversationRange,
@@ -38,10 +39,13 @@ export function ConversationBrowser({ refreshTick, visible }: { refreshTick: num
       pageSize: number,
       keepOnError = false,
     ) => {
+      convRequest.current?.abort();
+      const controller = new AbortController();
+      convRequest.current = controller;
       const id = ++convSeq.current;
       try {
-        const next = await api.statsConversations(range, from, to, page, pageSize);
-        if (id === convSeq.current) {
+        const next = await api.statsConversations(range, from, to, page, pageSize, controller.signal);
+        if (id === convSeq.current && !controller.signal.aborted) {
           const lastPage = next.total > 0 ? Math.ceil(next.total / pageSize) - 1 : 0;
           if (page > lastPage) {
             // Same clamp semantics as the main load: a shrunken window can
@@ -54,13 +58,18 @@ export function ConversationBrowser({ refreshTick, visible }: { refreshTick: num
           setConvLoadError(null);
         }
       } catch (error) {
-        if (id === convSeq.current) {
+        if (id === convSeq.current && !controller.signal.aborted) {
           setConvLoadError(error instanceof Error ? error.message : String(error));
         }
       }
     },
     [],
   );
+
+  useEffect(() => () => convRequest.current?.abort(), []);
+  useEffect(() => {
+    if (!conversationsOpen) convRequest.current?.abort();
+  }, [conversationsOpen]);
 
   useEffect(() => {
     if (!conversationsOpen || convData != null) {
@@ -333,14 +342,18 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
   const [pageSize, setPageSize] = useState(50);
   const [error, setError] = useState(false);
   const seq = useRef(0);
+  const request = useRef<AbortController | null>(null);
 
   const load = useCallback(
     async (page: number, pageSize: number) => {
+      request.current?.abort();
+      const controller = new AbortController();
+      request.current = controller;
       const id = ++seq.current;
       setError(false);
       try {
-        const next = await api.conversationRequests(conv.conversationId, page, pageSize);
-        if (id === seq.current) {
+        const next = await api.conversationRequests(conv.conversationId, page, pageSize, controller.signal);
+        if (id === seq.current && !controller.signal.aborted) {
           const lastPage = next.total > 0 ? Math.ceil(next.total / pageSize) - 1 : 0;
           if (page > lastPage) {
             // The conversation shrank while we were on a later page: clamp
@@ -352,13 +365,15 @@ function ExpandedConversationRequests({ conv }: { conv: ConversationStats }) {
           setData(next);
         }
       } catch {
-        if (id === seq.current) {
+        if (id === seq.current && !controller.signal.aborted) {
           setError(true);
         }
       }
     },
     [conv.conversationId],
   );
+
+  useEffect(() => () => request.current?.abort(), []);
 
   useEffect(() => {
     void load(0, 50);

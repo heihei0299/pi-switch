@@ -38,6 +38,7 @@ export function UsageStatsSection({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const seq = useRef(0);
+  const request = useRef<AbortController | null>(null);
   const load = useCallback(
     async (
       range: StatsRange,
@@ -47,10 +48,13 @@ export function UsageStatsSection({
       pageSize: number,
       keepOnError = false,
     ) => {
+      request.current?.abort();
+      const controller = new AbortController();
+      request.current = controller;
       const id = ++seq.current;
       try {
-        const next = await api.stats(range, from, to, page, pageSize);
-        if (id === seq.current) {
+        const next = await api.stats(range, from, to, page, pageSize, controller.signal);
+        if (id === seq.current && !controller.signal.aborted) {
           const lastPage =
             next.recentRequestTotal != null && next.recentRequestTotal > 0
               ? Math.ceil(next.recentRequestTotal / pageSize) - 1
@@ -69,13 +73,15 @@ export function UsageStatsSection({
       } catch (error) {
         // Keep the last successful snapshot, but surface the contract/network
         // error instead of silently rendering an empty dashboard.
-        if (id === seq.current) {
+        if (id === seq.current && !controller.signal.aborted) {
           setStatsError(error instanceof Error ? error.message : String(error));
         }
       }
     },
     [],
   );
+
+  useEffect(() => () => request.current?.abort(), []);
 
   useEffect(() => {
     const { from, to } = computeStatsWindow("today", null, null);

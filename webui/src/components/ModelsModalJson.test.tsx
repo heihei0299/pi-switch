@@ -52,6 +52,22 @@ describe("ModelsModal JSON dual editor — T2", () => {
     expect(screen.getByRole("button", { name: "JSON" })).toBeInTheDocument();
   });
 
+  it("cancels provider model fetch when the editor unmounts", async () => {
+    let signal: AbortSignal | undefined;
+    vi.spyOn(api, "fetchModels").mockImplementation((_name, _channel, requestSignal) => {
+      signal = requestSignal;
+      return new Promise(() => {});
+    });
+    const panel = renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+    await waitFor(() => expect(screen.getByText(/Model config/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Fetch from provider/ }));
+    await waitFor(() => expect(signal).toBeDefined());
+
+    panel.unmount();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("JSON tab shows models array JSON with passthrough", async () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "Models" }));

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelEntry, ProviderProfile } from "../types";
 import { api } from "../api";
 import {
@@ -49,6 +49,7 @@ export function ModelPoolEditor({
   };
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [fetching, setFetching] = useState(false);
+  const fetchRequest = useRef<AbortController | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [mode, setMode] = useState<"structured" | "raw">("structured");
   const [text, setText] = useState<string>(() => {
@@ -75,6 +76,10 @@ export function ModelPoolEditor({
       setText("[]");
     }
   }, [draft.state.value, drafts, mode]);
+  useEffect(() => () => {
+    fetchRequest.current?.abort();
+    fetchRequest.current = null;
+  }, []);
   const jsonValidation = useMemo(() => validateModelsJson(text), [text]);
   const modelsErrorLine = useMemo(() => {
     try {
@@ -188,9 +193,13 @@ export function ModelPoolEditor({
   }
 
   async function fetchFromProvider() {
+    fetchRequest.current?.abort();
+    const controller = new AbortController();
+    fetchRequest.current = controller;
     setFetching(true);
     try {
-      const { models: ids, enrich } = await api.fetchModels(name, activeChannelParam);
+      const { models: ids, enrich } = await api.fetchModels(name, activeChannelParam, controller.signal);
+      if (controller.signal.aborted) return;
       setDrafts((prev) => {
         const have = new Set(prev.map((d) => d.id));
         const added = ids.filter((id) => !have.has(id)).map((id) => {
@@ -219,9 +228,12 @@ export function ModelPoolEditor({
         toast("ok", `${base}: ${enrichMsg}${warningPart}`);
       }
     } catch (e) {
-      toast("err", e instanceof Error ? e.message : String(e));
+      if (!controller.signal.aborted) toast("err", e instanceof Error ? e.message : String(e));
     } finally {
-      setFetching(false);
+      if (fetchRequest.current === controller) {
+        fetchRequest.current = null;
+        setFetching(false);
+      }
     }
   }
 

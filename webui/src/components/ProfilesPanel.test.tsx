@@ -330,7 +330,7 @@ describe("ModelsModal channel partition", () => {
     fireEvent.click(screen.getByRole("tab", { name: "bk" }));
     await waitFor(() => expect(screen.getByDisplayValue("b1")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /Fetch from provider/ }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("native", "bk"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("native", "bk", expect.any(AbortSignal)));
   });
 
   it("per-channel save writes only the active channel pool", async () => {
@@ -392,4 +392,3 @@ describe("ProfilesPanel cc-switch honesty", () => {
     expect(screen.queryByText(/Import from cc-switch/i)).toBeNull();
   });
 });
-

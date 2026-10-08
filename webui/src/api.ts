@@ -53,11 +53,12 @@ import type { Decoder } from "./apiSchema";
 
 // Single point of coupling to the backend. Every call maps to one REST route in
 // internal/server/server.go, which in turn delegates to the shared Go core.
-async function req<T>(method: string, path: string, body: unknown, decode: Decoder<T>): Promise<T> {
+async function req<T>(method: string, path: string, body: unknown, decode: Decoder<T>, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    ...(signal ? { signal } : {}),
   });
   const text = await res.text();
   let data: unknown = null;
@@ -81,18 +82,19 @@ const enc = encodeURIComponent;
 
 export const api = {
   // reads
-  getState: () => req<AppState>("GET", "/state", undefined, decodeAppState),
+  getState: (signal?: AbortSignal) => req<AppState>("GET", "/state", undefined, decodeAppState, signal),
   getPresets: () => req<PresetInfo[]>("GET", "/presets", undefined, decodePresets),
   getPreset: (id: string) => req<ProviderProfile & { name?: string }>("GET", `/presets/${enc(id)}`, undefined, decodePresetProfile),
   getProfile: (name: string) => req<ProfileDetail>("GET", `/profiles/${enc(name)}`, undefined, decodeProfileDetail),
-  doctor: () => req<DoctorCheck[]>("GET", "/doctor", undefined, decodeDoctorChecks),
-  validate: () => req<ValidationIssue[]>("GET", "/config/validate", undefined, decodeValidationIssues),
-  stats: (range: StatsRange, from: number, to: number, page = 0, limit = 50) =>
+  doctor: (signal?: AbortSignal) => req<DoctorCheck[]>("GET", "/doctor", undefined, decodeDoctorChecks, signal),
+  validate: (signal?: AbortSignal) => req<ValidationIssue[]>("GET", "/config/validate", undefined, decodeValidationIssues, signal),
+  stats: (range: StatsRange, from: number, to: number, page = 0, limit = 50, signal?: AbortSignal) =>
     req<UsageStats>(
       "GET",
       `/stats?range=${range}&from=${from}&to=${to}&page=${page}&limit=${limit}`,
       undefined,
       decodeUsageStats,
+      signal,
     ),
   statsConversations: (
     range: ConversationRange,
@@ -100,6 +102,7 @@ export const api = {
     to: number | null,
     page = 0,
     limit = 50,
+    signal?: AbortSignal,
   ) => {
     // "all" means full history: omit the window params so the backend keeps
     // the null-window (no params) behaviour.
@@ -107,14 +110,15 @@ export const api = {
       range === "all"
         ? `page=${page}&limit=${limit}`
         : `range=${range}&from=${from}&to=${to}&page=${page}&limit=${limit}`;
-    return req<ConversationsPage>("GET", `/stats/conversations?${params}`, undefined, decodeConversationsPage);
+    return req<ConversationsPage>("GET", `/stats/conversations?${params}`, undefined, decodeConversationsPage, signal);
   },
-  conversationRequests: (id: string, page = 0, limit = 50) =>
+  conversationRequests: (id: string, page = 0, limit = 50, signal?: AbortSignal) =>
     req<ConversationRequestsPage>(
       "GET",
       `/stats/conversations/${enc(id)}/requests?page=${page}&limit=${limit}`,
       undefined,
       decodeConversationRequestsPage,
+      signal,
     ),
   proxyStatus: () => req<DaemonResult>("GET", "/proxy/status", undefined, decodeDaemonResult),
   buildInfo: () => req<BuildInfo>("GET", "/buildInfo", undefined, decodeBuildInfo),
@@ -141,12 +145,13 @@ export const api = {
     req("POST", `/profiles/${enc(name)}/duplicate`, { as: asName }, decodeOk),
   testProfile: (name: string) =>
     req<TestResult>("POST", `/profiles/${enc(name)}/test`, undefined, decodeTestResult),
-  fetchModels: (name: string, channel?: string) =>
+  fetchModels: (name: string, channel?: string, signal?: AbortSignal) =>
     req<{ models: string[]; enrich?: EnrichStats }>(
       "POST",
       `/profiles/${enc(name)}/fetch-models${channel ? `?channel=${enc(channel)}` : ""}`,
       undefined,
       decodeFetchModels,
+      signal,
     ),
   updateModels: (name: string, models: ModelEntry[], channel?: string) =>
     req<{ ok: boolean; backup?: string | null; enrich?: EnrichStats }>(

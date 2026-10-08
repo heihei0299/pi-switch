@@ -82,6 +82,15 @@ describe("API runtime contract boundary", () => {
     await expect(api.getState()).rejects.toEqual(new ContractError("$", "valid JSON response"));
   });
 
+  it("forwards request cancellation and preserves AbortError", async () => {
+    const controller = new AbortController();
+    const aborted = new DOMException("aborted", "AbortError");
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(aborted);
+
+    await expect(api.getState(controller.signal)).rejects.toBe(aborted);
+    expect(fetch).toHaveBeenCalledWith("/api/state", expect.objectContaining({ signal: controller.signal }));
+  });
+
   it("decodes the same build identity exposed by the management API", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(JSON.stringify({
       version: "20260908.0.2",

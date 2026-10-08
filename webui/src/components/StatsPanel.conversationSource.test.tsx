@@ -9,9 +9,9 @@ const convReqMock = vi.fn();
 
 vi.mock("../api", () => ({
   api: {
-    stats: (...args: unknown[]) => statsMock(...args),
-    statsConversations: (...args: unknown[]) => convMock(...args),
-    conversationRequests: (...args: unknown[]) => convReqMock(...args),
+    stats: (...args: unknown[]) => statsMock(...args.slice(0, 5)),
+    statsConversations: (...args: unknown[]) => convMock(...args.slice(0, 5)),
+    conversationRequests: (...args: unknown[]) => convReqMock(...args.slice(0, 3)),
   },
   logsExportUrl: () => "/api/logs/export?format=json",
 }));

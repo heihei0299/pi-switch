@@ -1,6 +1,6 @@
 # WP-03：共享服务与桌面适配器
 
-> 状态：待实施 · 前置依赖：WP-02 · 验收关联：AT-02, AT-03, AT-04, AT-05, AT-06, AT-07, AT-10
+> 状态：实施中（desktop 已复用管理 REST router，并接入取消与 origin/host 限制；验收未完成） · 前置依赖：WP-02 · 验收关联：AT-02, AT-03, AT-04, AT-05, AT-06, AT-07, AT-10
 >
 > 关联：[总索引](./README.md) · [核心契约](./architecture.md) · [验收定义](./acceptance.md) · [验证与证据](./verification.md) · [发布/回滚](./release-gates.md)
 
@@ -14,9 +14,9 @@
 ## 可逐项执行的任务
 
 - [ ] 列出已有 WebUI API、CLI 调用与业务实现的调用链，标出可以复用的 application service。
-- [ ] 优先复用现有 REST 契约；确需 Bind 时抽取小接口，禁止桌面层直接读写 config/models/SQLite。
-- [ ] 建立统一的 DTO/错误/校验契约与取消语义，防止 HTTP 与桌面 RPC 出现两套判断。
-- [ ] 验证外部网页无法调用受信 MyGo Bind，回环/非回环管理 API 的授权和 CSRF/origin 策略保持有效。
+- [x] 优先复用现有 REST 契约；确需 Bind 时抽取小接口，禁止桌面层直接读写 config/models/SQLite。
+- [x] 建立统一的 DTO/错误/校验契约与取消语义，防止 HTTP 与桌面 RPC 出现两套判断。
+- [x] 验证外部网页无法调用受信 MyGo Bind，回环/非回环管理 API 的授权和 CSRF/origin 策略保持有效。
 
 ## 对应验收案例（需附可复现证据）
 

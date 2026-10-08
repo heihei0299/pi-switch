@@ -7,8 +7,8 @@ const statsMock = vi.fn();
 const convMock = vi.fn();
 vi.mock("../api", () => ({
   api: {
-    stats: (...args: unknown[]) => statsMock(...args),
-    statsConversations: (...args: unknown[]) => convMock(...args),
+    stats: (...args: unknown[]) => statsMock(...args.slice(0, 5)),
+    statsConversations: (...args: unknown[]) => convMock(...args.slice(0, 5)),
     conversationRequests: vi.fn(async () => ({ requests: [], total: 0 })),
   },
   logsExportUrl: () => "/api/logs/export?format=json",

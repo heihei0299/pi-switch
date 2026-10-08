@@ -87,19 +87,22 @@ function Shell({ onConfigLang }: { onConfigLang: (lang: string | null) => void }
   const [error, setError] = useState<string | null>(null);
   const { t } = useI18n();
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const next = await api.getState();
+      const next = await api.getState(signal);
       setState(next);
       onConfigLang(next.settings.language ?? null);
       setError(null);
     } catch (e) {
+      if (signal?.aborted) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [onConfigLang]);
 
   useEffect(() => {
-    void refresh();
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
   }, [refresh]);
 
   const handleNav = useCallback((key: NavKey) => {
