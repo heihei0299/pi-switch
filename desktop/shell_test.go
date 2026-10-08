@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 )
 
 func TestStartsMinimized(t *testing.T) {
@@ -54,7 +53,7 @@ func TestStartsHiddenOnlyWhenTrayIsAvailable(t *testing.T) {
 func TestMenusKeepActionsReachable(t *testing.T) {
 	app := &desktopShell{}
 	applicationMenu := app.applicationMenu()
-	for _, label := range []string{"Show pi-switch", "Start Proxy", "Stop Proxy"} {
+	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Start Proxy", "Stop Proxy"} {
 		if !menuHasLabel(applicationMenu.Items(), label) {
 			t.Fatalf("application menu is missing %q", label)
 		}
@@ -62,8 +61,11 @@ func TestMenusKeepActionsReachable(t *testing.T) {
 	if !menuHasRole(applicationMenu.Items(), mygo.RoleQuit) {
 		t.Fatal("application menu is missing Quit")
 	}
-	if !menuHasLabel(app.trayMenu().Items(), "Quit") {
-		t.Fatal("tray menu is missing Quit")
+	trayMenu := app.trayMenu()
+	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Quit"} {
+		if !menuHasLabel(trayMenu.Items(), label) {
+			t.Fatalf("tray menu is missing %q", label)
+		}
 	}
 }
 
@@ -100,20 +102,17 @@ func menuHasRole(items []*mygo.MenuItem, role mygo.MenuRole) bool {
 	return false
 }
 
-func TestDesktopShellViewShowsFallbackAndAcceptsInput(t *testing.T) {
-	app := &desktopShell{
-		proxyMessage: "Proxy daemon is not running",
-		trayMessage:  "System tray unavailable; use File > Show pi-switch.",
+func TestNativeWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
+	app := &desktopShell{}
+	closeEvent := &mygo.CloseEvent{}
+	app.onNativeWindowClose(closeEvent)
+	if !closeEvent.DefaultPrevented() {
+		t.Fatal("closing the native overview should hide it rather than quit")
 	}
-	tester := ui.NewTester(app.view, 760, 560)
-	if !tester.HasText("System tray unavailable") {
-		t.Fatalf("tray fallback message missing from %q", tester.Texts())
-	}
-	if err := tester.Click("IME / keyboard input"); err != nil {
-		t.Fatal(err)
-	}
-	tester.Type("中文")
-	if !tester.HasText("中文") {
-		t.Fatalf("typed text not reflected in UI: %q", tester.Texts())
+	app.exiting = true
+	quitEvent := &mygo.CloseEvent{}
+	app.onNativeWindowClose(quitEvent)
+	if quitEvent.DefaultPrevented() {
+		t.Fatal("explicit app quit should be allowed to close the native overview")
 	}
 }

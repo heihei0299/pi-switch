@@ -1,6 +1,6 @@
 # WP-05：简单页面原生 UI 迁移
 
-> 状态：待实施 · 前置依赖：Gate B · 验收关联：AT-11, AT-12, AT-14, AT-15
+> 状态：实施中（可选 Native Overview 已加入；WebView 仍为默认/回退入口，Gate B 未通过） · 前置依赖：Gate B · 验收关联：AT-11, AT-12, AT-14, AT-15
 >
 > 关联：[总索引](./README.md) · [核心契约](./architecture.md) · [验收定义](./acceptance.md) · [验证与证据](./verification.md) · [发布/回滚](./release-gates.md)
 
@@ -16,6 +16,20 @@
 - [ ] 复用相同服务 DTO、校验和错误语义；为 native ui 视图补单测和输入/焦点回归。
 - [ ] 覆盖列表虚拟化、空数据、长文本、深浅主题、键盘导航、无障碍及 fcitx5 组合输入。
 - [ ] 用重复测量对照 WebView/Native 的可交互时间、RSS、CPU 与滚动行为，保留可随时回退的旧页面。
+
+## 当前进展（2026-10-08）
+
+- 已加入可选的原生概览窗口，显示 Proxy 状态/控制、基本 Profiles 列表和 Proxy/Web UI 地址摘要；WebView 仍是默认入口，未因本地单测切换用户默认页面。
+- 原生列表使用共享 config 类型读取且只渲染 profile 名称，不显示 API Key；Proxy 操作复用现有 daemon 服务。还未完成全部页面的 DTO/行为等价验证。
+- 自动 UI 测试覆盖空态、长列表虚拟化、键盘 Home/Up/Down/End 导航、名称过滤、模拟 IME composition 和 scale 2/dark theme 渲染；真实 fcitx5、屏幕阅读器及桌面窗口操作未验证。
+- Gate B、跨平台 GUI 和重复性能测量仍未通过；详见[本 WP 验证记录](../../test-reports/mygo-wp-05-native-basic-2026-10-08.md)。
+
+## 后续推进（2026-10-08）
+
+- Native Overview 增加当前 Profile 的 API、上游主机和模型/暴露数量摘要，并支持安全切换；写入走共享配置锁，过期 Profile 名称会被拒绝。
+- 上游地址只显示 scheme/host/port，不显示 URL userinfo、path 或 query；隔离测试确认 API Key 与 URL 凭据不进入 UI。
+- 概览刷新失败时保留上次成功的 Profile/地址摘要和选择，同时显示错误；成功刷新才替换快照并重置列表选择。
+- 此增量仍不构成 Home/Profiles/Settings 的完整行为等价证据，Gate B 保持未通过。
 
 ## 对应验收案例（需附可复现证据）
 

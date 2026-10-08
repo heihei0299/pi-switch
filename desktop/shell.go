@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -19,15 +20,23 @@ const (
 )
 
 type desktopShell struct {
-	window         *mygo.Window
-	uiURL          string
-	tray           *mygo.Tray
-	startMinimized bool
-	exiting        bool
-	busy           bool
-	input          string
-	proxyMessage   string
-	trayMessage    string
+	window               *mygo.Window
+	nativeWindow         *mygo.Window
+	uiURL                string
+	tray                 *mygo.Tray
+	startMinimized       bool
+	exiting              bool
+	busy                 bool
+	proxyMessage         string
+	trayMessage          string
+	overview             nativeOverview
+	overviewError        string
+	overviewBusy         bool
+	profileQuery         string
+	profileList          ui.ListState
+	selectedProfile      int
+	profileSwitching     bool
+	profileSwitchMessage string
 }
 
 func startsMinimized(args []string) bool {
@@ -119,6 +128,9 @@ func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
 		window.Update(func() {
 			a.busy = false
 			a.proxyMessage = message
+			if a.nativeWindow != nil {
+				a.nativeWindow.Invalidate()
+			}
 		})
 	}()
 }
@@ -137,6 +149,7 @@ func (a *desktopShell) applicationMenu() *mygo.Menu {
 		{Role: mygo.RoleAppMenu},
 		{Label: "File", Submenu: []*mygo.MenuItem{
 			{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+			{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
 			{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 			{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 			{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -150,6 +163,7 @@ func (a *desktopShell) applicationMenu() *mygo.Menu {
 func (a *desktopShell) trayMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+		{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
 		{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 		{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 		{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -209,6 +223,94 @@ func (a *desktopShell) start() {
 	a.refreshProxy()
 }
 
+func (a *desktopShell) showNativeOverview() {
+	if a.nativeWindow == nil {
+		a.nativeWindow = mygo.NewWindow(mygo.WindowOptions{
+			Title:           "pi-switch — Native Overview",
+			Width:           760,
+			Height:          600,
+			MinWidth:        560,
+			MinHeight:       420,
+			BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
+			StateKey:        "native-overview",
+			Content:         ui.View(a.view),
+		})
+		a.nativeWindow.OnClose(a.onNativeWindowClose)
+	}
+	a.nativeWindow.Restore()
+	a.nativeWindow.Show()
+	a.nativeWindow.Focus()
+	a.refreshNativeOverview()
+}
+
+func (a *desktopShell) onNativeWindowClose(e *mygo.CloseEvent) {
+	if a.exiting {
+		return
+	}
+	e.PreventDefault()
+	if a.nativeWindow != nil {
+		a.nativeWindow.Hide()
+	}
+}
+
+func (a *desktopShell) refreshNativeOverview() {
+	if a.nativeWindow == nil || a.overviewBusy || a.exiting {
+		return
+	}
+	a.overviewBusy = true
+	a.nativeWindow.Invalidate()
+	window := a.nativeWindow
+	go func() {
+		overview, err := loadNativeOverview()
+		window.Update(func() {
+			a.updateNativeOverview(overview, err)
+		})
+	}()
+}
+
+func (a *desktopShell) updateNativeOverview(overview nativeOverview, err error) {
+	a.overviewBusy = false
+	if err != nil {
+		a.overviewError = err.Error()
+		return
+	}
+	a.overview = overview
+	a.overviewError = ""
+	a.selectedProfile = -1
+}
+
+func (a *desktopShell) switchProfile(name string) {
+	if a.profileSwitching || a.exiting || a.nativeWindow == nil {
+		return
+	}
+	a.profileSwitching = true
+	a.profileSwitchMessage = "Switching profile…"
+	window := a.nativeWindow
+	window.Invalidate()
+	go func() {
+		err := setNativeCurrentProfile(name)
+		var overview nativeOverview
+		var overviewErr error
+		if err == nil {
+			overview, overviewErr = loadNativeOverview()
+		}
+		window.Update(func() {
+			a.profileSwitching = false
+			if err != nil {
+				a.profileSwitchMessage = "Switch failed: " + err.Error()
+				return
+			}
+			a.profileSwitchMessage = "Switched to " + name
+			if overviewErr != nil {
+				a.overviewError = overviewErr.Error()
+				return
+			}
+			a.overview = overview
+			a.overviewError = ""
+		})
+	}()
+}
+
 func (a *desktopShell) onWindowClose(e *mygo.CloseEvent) {
 	if a.exiting {
 		return
@@ -221,15 +323,29 @@ func (a *desktopShell) onWindowClose(e *mygo.CloseEvent) {
 
 func (a *desktopShell) view(c *ui.Context) {
 	theme := c.Theme()
-	ui.Column(c).Fill().Padding(24).Gap(14).Children(func() {
-		ui.Text(c, "pi-switch").FontSize(26).Bold()
-		ui.Text(c, "Desktop shell · closing this window keeps the proxy running.").TextColor(theme.TextMuted)
-		ui.Text(c, "Proxy status").FontSize(18).Bold()
+	ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
+		ui.Text(c, "pi-switch").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
+		ui.Text(c, "Native overview preview · the Web UI remains available from the File menu.").TextColor(theme.TextMuted)
+		ui.Text(c, "Active Profile").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
+		activeProfile := currentOverviewProfile(a.overview.profiles)
+		if activeProfile == nil {
+			ui.Text(c, "No profile selected.").TextColor(theme.TextMuted)
+		} else {
+			ui.Text(c, activeProfile.name)
+			if activeProfile.api != "" {
+				ui.Text(c, "API: "+activeProfile.api)
+			}
+			if activeProfile.endpoint != "" {
+				ui.Text(c, "Upstream: "+activeProfile.endpoint)
+			}
+			ui.Text(c, fmt.Sprintf("Models: %d (%d exposed) · %d channel(s)", activeProfile.models, activeProfile.exposed, activeProfile.channels))
+		}
+		ui.Text(c, "Proxy status").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
 		message := a.proxyMessage
 		if message == "" {
 			message = "Status not checked yet."
 		}
-		ui.Text(c, message).TextColor(theme.Text)
+		ui.Text(c, message).TextColor(theme.Text).Role(ui.RoleStatus)
 		ui.Row(c).Gap(8).Children(func() {
 			if ui.PrimaryButton(c, "Start Proxy").Disabled(a.busy).Clicked() {
 				a.startProxy()
@@ -242,10 +358,89 @@ func (a *desktopShell) view(c *ui.Context) {
 			}
 		})
 		if a.trayMessage != "" {
-			ui.Text(c, a.trayMessage).TextColor(theme.Warning)
+			ui.Text(c, a.trayMessage).TextColor(theme.Warning).Role(ui.RoleStatus)
 		}
-		ui.Text(c, "Input check").FontSize(18).Bold()
-		ui.TextInput(c, &a.input).Label("IME / keyboard input").Placeholder("Type or paste here").Width(480)
-		ui.Text(c, a.input).TextColor(theme.TextMuted)
+		ui.Text(c, "Profiles").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
+		if ui.SearchField(c, &a.profileQuery).Label("Filter profiles").Width(440).Changed() {
+			a.selectedProfile = -1
+		}
+		profiles := a.visibleProfiles()
+		if len(profiles) == 0 {
+			a.selectedProfile = -1
+		} else if a.selectedProfile < 0 || a.selectedProfile >= len(profiles) {
+			a.selectedProfile = 0
+		}
+		a.profileList.Key = func(i int) any { return profiles[i].name }
+		a.profileList.Label = func(i int) string {
+			label := profiles[i].name
+			if profiles[i].current {
+				label += " (current)"
+			}
+			return label
+		}
+		a.profileList.Selected = &a.selectedProfile
+		selectedName := ""
+		selectedIsCurrent := false
+		if a.selectedProfile >= 0 && a.selectedProfile < len(profiles) {
+			selectedName = profiles[a.selectedProfile].name
+			selectedIsCurrent = profiles[a.selectedProfile].current
+		}
+		if ui.PrimaryButton(c, "Switch to selected profile").Disabled(a.overviewBusy || a.profileSwitching || selectedName == "" || selectedIsCurrent).Clicked() {
+			a.switchProfile(selectedName)
+		}
+		if a.profileSwitchMessage != "" {
+			ui.Text(c, a.profileSwitchMessage).Role(ui.RoleStatus)
+		}
+		ui.List(c, &a.profileList, len(profiles), func(i int) {
+			label := profiles[i].name
+			if profiles[i].current {
+				label += " (current)"
+			}
+			ui.Text(c, label).Padding(6, 8)
+		}).Label("Profiles").MinHeight(120).Grow(1).Children(func() {
+			if len(profiles) == 0 {
+				message := "No profiles configured."
+				if a.profileQuery != "" {
+					message = "No profiles match the filter."
+				}
+				ui.Text(c, message).TextColor(theme.TextMuted).Padding(12)
+			}
+		})
+		ui.Text(c, "Settings summary").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
+		if a.overviewError != "" {
+			ui.Text(c, a.overviewError).TextColor(theme.Warning).Role(ui.RoleStatus)
+		} else if a.overviewBusy {
+			ui.Text(c, "Loading settings…").TextColor(theme.TextMuted).Role(ui.RoleStatus)
+		} else {
+			ui.Text(c, "Proxy: "+a.overview.proxyAddress)
+			ui.Text(c, "Web UI: "+a.overview.webAddress)
+		}
+		if ui.Button(c, "Refresh Overview").Clicked() {
+			a.refreshNativeOverview()
+			a.refreshProxy()
+		}
 	})
+}
+
+func currentOverviewProfile(profiles []overviewProfile) *overviewProfile {
+	for i := range profiles {
+		if profiles[i].current {
+			return &profiles[i]
+		}
+	}
+	return nil
+}
+
+func (a *desktopShell) visibleProfiles() []overviewProfile {
+	query := strings.ToLower(strings.TrimSpace(a.profileQuery))
+	if query == "" {
+		return a.overview.profiles
+	}
+	var filtered []overviewProfile
+	for _, profile := range a.overview.profiles {
+		if strings.Contains(strings.ToLower(profile.name), query) {
+			filtered = append(filtered, profile)
+		}
+	}
+	return filtered
 }
