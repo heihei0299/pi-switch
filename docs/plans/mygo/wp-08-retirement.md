@@ -1,6 +1,6 @@
 # WP-08：旧 WebUI 退役（条件性）
 
-> 状态：待实施 · 前置依赖：Gate C + Gate D · 验收关联：AT-01, AT-15, AT-16, AT-18
+> 状态：延后（Gate C + Gate D 未通过；未删除 WebUI） · 前置依赖：Gate C + Gate D · 验收关联：AT-01, AT-15, AT-16, AT-18
 >
 > 关联：[总索引](./README.md) · [核心契约](./architecture.md) · [验收定义](./acceptance.md) · [验证与证据](./verification.md) · [发布/回滚](./release-gates.md)
 
@@ -16,6 +16,19 @@
 - [ ] 仅在 Gate C + Gate D 全部满足并形成 ADR 后，确定是“完全删除”还是为 CLI/WebUI 保留浏览器前端。
 - [ ] 一块一块删除，反向核对 AT-01、AT-15、AT-16、AT-18、更新/回滚和 npm 分发。
 - [ ] 有任一关键功能退化立即停止退役；回滚通过受控 revert/修复提交，不能删用户数据。
+
+## 当前评估（2026-10-08）
+
+**不执行依赖、文件或路由删除。** WP-06 已有真实本地 Gateway/config 和 Stats service 原型及隔离数据测试，但 JSON 编辑/Gateway 冲突处理、Stats 图表/失败详情、Packages 与物理 GUI 仍不等价或未验证，Gate C 未通过。WP-07 已有 Linux tarball 安装生命周期、CLI identity 和隔离数据保留测试，但 GitHub workflow 尚未运行，Debian 包管理器事务、daemon 生命周期、跨平台 GUI 与签名发布未验收，Gate D 未通过。因此当前只是“等 Gate C/D 后重审”，不是永久决定保留或删除浏览器 WebUI。
+
+| 退役候选面 | 相关位置 | 退役会影响的现有能力 |
+| --- | --- | --- |
+| React/Vite 页面与测试 | `webui/src/`、`webui/package.json`、`webui/package-lock.json`、`webui/vite.config.ts` | 供应商、Profiles、Proxy、Gateway、Stats/Conversations、Packages、Settings/Backups/Doctor 及其回归/e2e。 |
+| Go 内嵌资源与管理路由 | `webui/embed.go`、`internal/server/server.go` 的静态资源路由、`desktop/management.go` | CLI WebUI 与 MyGo 当前 custom-scheme 页面都依赖 `server.NewMgmtRouter`/嵌入资源；直接移除会破坏 WebUI 及当前桌面主窗口。 |
+| CLI/npm 浏览器入口 | `cmd/pi-switch/main.go` 的 `webui` 命令、根 `package.json` 的 `files`/build scripts、README 与 `WEBUI_GUIDE.md` | `pi-switch webui start/stop/status` 和 npm 包内的 `webui/dist` 是现有用户入口；删除需另行决定 CLI/npm 是否仍提供浏览器管理。 |
+| 构建与交付 | `.github/workflows/ci.yml`、根 WebUI build/test/e2e/npm pack 步骤、`desktop/mygo.config.ts` 的 build command | Go `embed` 编译、CI、npm 安装包和桌面 WebView 的静态资源均会受影响。 |
+
+本次仅记录库存与暂停条件，不形成 Gate C/D 已满足的 ADR，不改变上述用户能力。未来 Gate C + D 均有证据后，另立 ADR 决定完全移除或继续为 CLI/npm 保留浏览器前端。
 
 ## 对应验收案例（需附可复现证据）
 
