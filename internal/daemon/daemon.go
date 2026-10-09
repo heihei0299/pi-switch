@@ -213,9 +213,6 @@ func releaseLock(_ Service, file *os.File) {
 
 func processIdentity(pid uint32) ProcessIdentity {
 	identity := ProcessIdentity{}
-	if runtime.GOOS == "darwin" {
-		return processIdentityDarwin(pid)
-	}
 	identity.Executable, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err == nil {
