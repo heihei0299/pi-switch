@@ -229,6 +229,9 @@ func releaseLock(s Service, file *os.File) {
 
 func processIdentity(pid uint32) ProcessIdentity {
 	identity := ProcessIdentity{}
+	if runtime.GOOS == "darwin" {
+		return processIdentityDarwin(pid)
+	}
 	if runtime.GOOS == "windows" {
 		if pid == uint32(os.Getpid()) {
 			identity.Executable, _ = os.Executable()
@@ -281,20 +284,23 @@ func sameExecutable(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
 }
 
+func processIdentityMatches(expected, actual ProcessIdentity) bool {
+	return expected.Executable != "" && actual.Executable != "" &&
+		sameExecutable(expected.Executable, actual.Executable) &&
+		expected.StartToken != "" && actual.StartToken != "" &&
+		expected.StartToken == actual.StartToken
+}
+
 func managedProcess(info DaemonInfo) bool {
-	// Files written before identity metadata existed remain compatible, but
-	// every newly written record must match both executable and start token.
+	// Files written before identity metadata existed remain compatible except on macOS,
+	// where a PID-only record cannot be safely terminated.
 	if info.Executable == "" && info.StartToken == "" {
-		return true
+		return runtime.GOOS != "darwin"
 	}
-	actual := processIdentity(info.Pid)
-	if info.Executable == "" || actual.Executable == "" || !sameExecutable(info.Executable, actual.Executable) {
-		return false
-	}
-	if info.StartToken == "" || actual.StartToken == "" || info.StartToken != actual.StartToken {
-		return false
-	}
-	return true
+	return processIdentityMatches(
+		ProcessIdentity{Executable: info.Executable, StartToken: info.StartToken},
+		processIdentity(info.Pid),
+	)
 }
 
 func managedHealth(info DaemonInfo, attempts int) bool {
@@ -486,6 +492,10 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	pid := uint32(cmd.Process.Pid)
 	now := uint64(time.Now().UnixMilli())
 	identity := processIdentity(pid)
+	if runtime.GOOS == "darwin" && (identity.Executable == "" || identity.StartToken == "") {
+		_ = cmd.Process.Kill()
+		return DaemonResult{}, fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
+	}
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now, Executable: identity.Executable, StartToken: identity.StartToken, State: "starting"}
 	if err := writePidFile(s, info); err != nil {
 		_ = cmd.Process.Kill()
@@ -554,7 +564,11 @@ func Stop(s Service) (DaemonResult, error) {
 	proc, _ := os.FindProcess(int(info.Pid))
 	if proc != nil {
 		_ = proc.Signal(os.Interrupt)
-		if runtime.GOOS != "windows" {
+		if runtime.GOOS == "darwin" {
+			if managedProcess(*info) {
+				_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
+			}
+		} else if runtime.GOOS != "windows" {
 			_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
 		}
 	}
@@ -565,13 +579,16 @@ func Stop(s Service) (DaemonResult, error) {
 			return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)}, nil
 		}
 	}
+	if runtime.GOOS == "darwin" && !managedProcess(*info) {
+		return DaemonResult{}, fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
+	}
 	if proc != nil {
 		_ = proc.Kill()
 	}
-	if runtime.GOOS != "windows" {
-		_ = exec.Command("kill", "-9", strconv.Itoa(int(info.Pid))).Run()
-	} else {
+	if runtime.GOOS == "windows" {
 		_ = exec.Command("taskkill", "/F", "/PID", strconv.Itoa(int(info.Pid))).Run()
+	} else if runtime.GOOS != "darwin" {
+		_ = exec.Command("kill", "-9", strconv.Itoa(int(info.Pid))).Run()
 	}
 	removePidFile(s)
 	return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force killed", s.Label, info.Pid)}, nil

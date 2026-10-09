@@ -98,3 +98,23 @@ func TestCurrentProcessIdentityHasStableFields(t *testing.T) {
 		t.Fatalf("current process identity incomplete: %+v", identity)
 	}
 }
+
+func TestProcessIdentityMatchesRequiresExecutableAndStartToken(t *testing.T) {
+	expected := ProcessIdentity{Executable: "pi-switch", StartToken: "123:456"}
+	for _, test := range []struct {
+		name string
+		got  ProcessIdentity
+		want bool
+	}{
+		{name: "match", got: expected, want: true},
+		{name: "different executable", got: ProcessIdentity{Executable: "other", StartToken: expected.StartToken}},
+		{name: "different start", got: ProcessIdentity{Executable: expected.Executable, StartToken: "123:457"}},
+		{name: "unknown", got: ProcessIdentity{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := processIdentityMatches(expected, test.got); got != test.want {
+				t.Fatalf("processIdentityMatches(%+v) = %t, want %t", test.got, got, test.want)
+			}
+		})
+	}
+}
