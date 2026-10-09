@@ -3,7 +3,9 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestMain makes the "daemon child" case deterministic for the tests that call Start.
@@ -20,6 +22,18 @@ import (
 // startup (port taken, bad argument, lock held).
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && (os.Args[1] == "proxy" || os.Args[1] == "webui") && os.Args[2] == "start" {
+		if os.Getenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT_IN_USE") == "1" {
+			fmt.Fprintf(os.Stderr, "listen tcp 127.0.0.1:%s: bind: address already in use\n", os.Getenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT"))
+			pidPath := filepath.Join(os.Getenv("PI_SWITCH_CONFIG_DIR"), os.Args[1]+".pid")
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(pidPath); err == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			os.Exit(1)
+		}
 		if os.Getenv("PI_SWITCH_TEST_HOLD_DAEMON_CHILD") == "1" {
 			if path := os.Getenv("PI_SWITCH_TEST_DAEMON_CHILD_PID"); path != "" {
 				if err := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600); err != nil {

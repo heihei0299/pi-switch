@@ -114,6 +114,9 @@ func TestStart_ReturnsQuicklyWhenItsChildDiesOnStartup(t *testing.T) {
 	if err == nil {
 		t.Fatal("Start reported success although its child exited immediately")
 	}
+	if !strings.Contains(err.Error(), "exited before becoming healthy") {
+		t.Fatalf("Start error %q does not identify child exit", err)
+	}
 	// Without the Wait-goroutine signal this waits out all 15 attempts (≈3s here, up
 	// to ≈18s when probes time out), which is what the bound catches.
 	if elapsed > 2*time.Second {
@@ -139,6 +142,9 @@ func TestStartWaitsUntilFailedChildHasExited(t *testing.T) {
 	if err == nil {
 		t.Fatal("Start reported success although the child never served health")
 	}
+	if !strings.Contains(err.Error(), "health check timed out") {
+		t.Fatalf("Start error %q does not identify health timeout", err)
+	}
 	data, err := os.ReadFile(childPIDPath)
 	if err != nil {
 		t.Fatalf("child did not reach its running fixture: %v", err)
@@ -151,18 +157,19 @@ func TestStartWaitsUntilFailedChildHasExited(t *testing.T) {
 	if isAlive(childPID) {
 		t.Fatalf("Start returned before failed child PID %d exited", pid)
 	}
+	if _, err := os.Stat(filepath.Join(dir, "proxy.pid")); !os.IsNotExist(err) {
+		t.Fatalf("startup failure left this attempt's PID state behind: %v", err)
+	}
 }
 
 // F3: the port-in-use condition is a typed error, so callers stop matching text.
 // The condition is injected through the daemon log, which is what Start inspects —
 // the same fixture shape the server-level test already used.
 func TestStart_PortInUseIsATypedError(t *testing.T) {
-	dir := isolatedDaemonDir(t)
+	isolatedDaemonDir(t)
 	port := freePort(t)
-	log := filepath.Join(dir, "proxy.log")
-	if err := os.WriteFile(log, []byte("listen tcp 127.0.0.1:"+strconv.Itoa(int(port))+": bind: address already in use\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT_IN_USE", "1")
+	t.Setenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT", strconv.Itoa(int(port)))
 
 	_, err := Start(Proxy, "127.0.0.1", port)
 	if err == nil {
@@ -177,5 +184,25 @@ func TestStart_PortInUseIsATypedError(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q lost %q", msg, want)
 		}
+	}
+}
+
+func TestStartIgnoresHistoricalPortInUseLog(t *testing.T) {
+	dir := isolatedDaemonDir(t)
+	port := freePort(t)
+	log := filepath.Join(dir, "proxy.log")
+	if err := os.WriteFile(log, []byte("old run: address already in use\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Start(Proxy, "127.0.0.1", port)
+	if err == nil || errors.Is(err, ErrPortInUse) {
+		t.Fatalf("historical log error made current Start report ErrPortInUse: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exited before becoming healthy") || strings.Contains(err.Error(), "ss -tlnp") {
+		t.Fatalf("Start used stale log contents instead of the child exit: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "proxy.pid")); !os.IsNotExist(err) {
+		t.Fatalf("startup failure left PID state behind: %v", err)
 	}
 }

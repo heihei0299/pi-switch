@@ -106,17 +106,14 @@ func TestTuiDaemon_S6_ProxyStartEADDRINUSE500(t *testing.T) {
 	// Ensure no pid file
 	_ = os.Remove(filepath.Join(dir, "proxy.pid"))
 	_ = os.Remove(filepath.Join(dir, "proxy.log"))
-	// We will trigger EADDRINUSE by pre-populating log with that string and using a free port where daemon.Start health will fail
-	// Find free port
+	// Keep a listener open so daemon.Start rejects the occupied port before spawning a child.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	defer ln.Close()
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	ln.Close()
-	// Pre-create log with EADDRINUSE tail
-	_ = os.WriteFile(filepath.Join(dir, "proxy.log"), []byte("listen tcp 127.0.0.1:"+portStr+": bind: address already in use\n"), 0644)
 	r := NewMgmtRouter()
 	w := httptest.NewRecorder()
 	body := `{"daemon":true,"host":"127.0.0.1","port":` + strconv.Itoa(port) + `}`

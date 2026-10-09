@@ -201,10 +201,7 @@ func TestTuiDaemon_S5_StartAlreadyRunning(t *testing.T) {
 func TestTuiDaemon_S5_StartEADDRINUSE(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
-	// Simulate EADDRINUSE via pre-written log tail and health failure.
-	// Start spawns os.Executable (which is the test binary, not pi-switch), so it will not listen on the port -> health fails after 15×200ms.
-	// We pre-populate proxy.log with "address already in use" so that Start's EADDRINUSE detection should trigger.
-	// Find a free port (no listener)
+	// Simulate an EADDRINUSE emitted by this Start attempt's child.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -213,9 +210,8 @@ func TestTuiDaemon_S5_StartEADDRINUSE(t *testing.T) {
 	_, portStr, _ := net.SplitHostPort(addr)
 	port, _ := strconv.Atoi(portStr)
 	ln.Close() // now port is free, health will fail
-	// Pre-create log with EADDRINUSE tail
-	logPath := filepath.Join(dir, "proxy.log")
-	_ = os.WriteFile(logPath, []byte("some log\nlisten tcp 127.0.0.1:"+portStr+": bind: address already in use\n"), 0644)
+	t.Setenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT_IN_USE", "1")
+	t.Setenv("PI_SWITCH_TEST_DAEMON_CHILD_PORT", portStr)
 	done := make(chan error, 1)
 	go func() {
 		_, err := Start(Proxy, "127.0.0.1", uint16(port))

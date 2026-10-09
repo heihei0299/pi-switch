@@ -180,6 +180,12 @@ func removePidFile(s Service) {
 	_ = os.Remove(pidPath(s))
 }
 
+func removePidFileIfPID(s Service, pid uint32) {
+	if info := readPidFile(s); info != nil && info.Pid == pid {
+		removePidFile(s)
+	}
+}
+
 func acquireLock(s Service) (*os.File, error) {
 	if err := os.MkdirAll(configDir(), 0755); err != nil {
 		return nil, err
@@ -318,11 +324,36 @@ func terminateStartedChild(cmd *exec.Cmd, exited <-chan struct{}) error {
 	}
 }
 
-func failedStart(cmd *exec.Cmd, exited <-chan struct{}, cause error) error {
+func failedStart(s Service, pid uint32, cmd *exec.Cmd, exited <-chan struct{}, cause error) error {
 	if cleanupErr := terminateStartedChild(cmd, exited); cleanupErr != nil {
 		return fmt.Errorf("%w; startup child cleanup failed: %v", cause, cleanupErr)
 	}
+	removePidFileIfPID(s, pid)
 	return cause
+}
+
+func portInUseStartError(logPath string, logStart int64, host string, port uint16) error {
+	data, err := os.ReadFile(logPath)
+	if err != nil || int64(len(data)) < logStart {
+		return nil
+	}
+	currentLog := strings.ToLower(string(data[logStart:]))
+	if !strings.Contains(currentLog, net.JoinHostPort(host, strconv.Itoa(int(port)))) || !strings.Contains(currentLog, "address already in use") {
+		return nil
+	}
+	return fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
+}
+
+func exitedStartError(label, logPath string, exited <-chan struct{}, childExit <-chan error) error {
+	select {
+	case <-exited:
+		if err := <-childExit; err != nil {
+			return fmt.Errorf("%s daemon exited before becoming healthy: %w. Check %s for errors.", label, err, logPath)
+		}
+		return fmt.Errorf("%s daemon exited before becoming healthy. Check %s for errors.", label, logPath)
+	default:
+		return nil
+	}
 }
 
 func listeningPID(port uint16) (uint32, bool) {
@@ -367,9 +398,9 @@ func checkPortAvailable(s Service, host string, port uint16) error {
 		return fmt.Errorf("cannot verify that %s is available: %w", address, err)
 	}
 	if owner, known := listeningPID(port); known {
-		return fmt.Errorf("%w: unmanaged listener owns %s (PID %d); refusing to start %s", ErrPortInUse, address, owner, s.Label)
+		return fmt.Errorf("%w: unmanaged listener owns %s (PID %d); refusing to start %s; use ss -tlnp to locate", ErrPortInUse, address, owner, s.Label)
 	}
-	return fmt.Errorf("%w: %s is occupied by an unverified listener; refusing to start %s", ErrPortInUse, address, s.Label)
+	return fmt.Errorf("%w: %s is occupied by an unverified listener; refusing to start %s; use ss -tlnp to locate", ErrPortInUse, address, s.Label)
 }
 
 func procNetListenerPID(port uint16) (uint32, bool) {
@@ -481,6 +512,11 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		return DaemonResult{}, fmt.Errorf("Failed to open log file: %w", err)
 	}
 	defer lf.Close()
+	logInfo, err := lf.Stat()
+	if err != nil {
+		return DaemonResult{}, fmt.Errorf("cannot inspect log file: %w", err)
+	}
+	logStart := logInfo.Size()
 
 	exe, err := serviceExecutable(s)
 	if err != nil {
@@ -498,8 +534,9 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	// makes "the child is gone" observable at all. It also stops dead daemons from
 	// accumulating as zombies for as long as this process lives.
 	exited := make(chan struct{})
+	childExit := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
+		childExit <- cmd.Wait()
 		close(exited)
 	}()
 
@@ -507,53 +544,53 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	now := uint64(time.Now().UnixMilli())
 	identity := processIdentity(pid)
 	if identity.Executable == "" || identity.StartToken == "" {
-		cause := fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
-		return DaemonResult{}, failedStart(cmd, exited, cause)
+		cause := portInUseStartError(lp, logStart, host, port)
+		if cause == nil {
+			cause = exitedStartError(s.Label, lp, exited, childExit)
+		}
+		if cause == nil {
+			cause = fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
+		}
+		return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 	}
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now, Executable: identity.Executable, StartToken: identity.StartToken, State: "starting"}
 	if err := writePidFile(s, info); err != nil {
 		cause := fmt.Errorf("cannot write daemon state: %w", err)
-		return DaemonResult{}, failedStart(cmd, exited, cause)
+		return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 	}
 
 	if runtime.GOOS == "linux" {
 		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
-			removePidFile(s)
 			cause := fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
-			return DaemonResult{}, failedStart(cmd, exited, cause)
+			return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 		}
 	}
 	healthy := waitForHealth(info, exited)
 	if healthy && runtime.GOOS == "linux" {
 		if owner, known := listeningPID(info.Port); !known || owner != info.Pid {
-			removePidFile(s)
 			var cause error
 			if known {
 				cause = fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
 			} else {
 				cause = fmt.Errorf("%w: listener on %s:%d has an unverified owner; %s daemon was not registered", ErrPortInUse, host, port, s.Label)
 			}
-			return DaemonResult{}, failedStart(cmd, exited, cause)
+			return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 		}
 	}
 	if !healthy {
-		removePidFile(s)
-		var cause error
-		if data, err := os.ReadFile(lp); err == nil {
-			if strings.Contains(strings.ToLower(string(data)), "address already in use") {
-				cause = fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
-			}
+		cause := portInUseStartError(lp, logStart, host, port)
+		if cause == nil {
+			cause = exitedStartError(s.Label, lp, exited, childExit)
 		}
 		if cause == nil {
-			cause = fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
+			cause = fmt.Errorf("%s daemon health check timed out on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
 		}
-		return DaemonResult{}, failedStart(cmd, exited, cause)
+		return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 	}
 	info.State = "running"
 	if err := writePidFile(s, info); err != nil {
-		removePidFile(s)
 		cause := fmt.Errorf("cannot finalize daemon state: %w", err)
-		return DaemonResult{}, failedStart(cmd, exited, cause)
+		return DaemonResult{}, failedStart(s, pid, cmd, exited, cause)
 	}
 	// Process.Release is deliberately NOT called: it is documented as the alternative
 	// to Wait, and the Wait goroutine above now owns the child. Measured both orders —
