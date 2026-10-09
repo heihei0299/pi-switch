@@ -46,12 +46,6 @@ func startIdentityHoldProcess(t *testing.T) (uint32, <-chan struct{}) {
 
 func assertProcessSurvived(t *testing.T, pid uint32, exited <-chan struct{}) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		if !isAlive(pid) {
-			t.Fatalf("unverified PID %d was terminated", pid)
-		}
-		return
-	}
 	select {
 	case <-exited:
 		t.Fatalf("unverified PID %d was terminated", pid)
@@ -94,7 +88,6 @@ func TestStopTerminatesManagedProcessAndWaitsForExit(t *testing.T) {
 	if err := writePidFile(Proxy, info); err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
 	result, err := Stop(Proxy)
 	if err != nil || result.Running {
 		t.Fatalf("Stop(%+v) = %+v, %v", info, result, err)
@@ -103,9 +96,6 @@ func TestStopTerminatesManagedProcessAndWaitsForExit(t *testing.T) {
 	case <-exited:
 	case <-time.After(time.Second):
 		t.Fatalf("Stop returned before managed PID %d exited", pid)
-	}
-	if runtime.GOOS == "windows" && time.Since(started) >= time.Second {
-		t.Fatalf("Windows Stop waited %s for a force termination", time.Since(started))
 	}
 }
 
@@ -213,8 +203,8 @@ func TestStartRejectsHealthyUnmanagedListener(t *testing.T) {
 }
 
 func TestStartDoesNotTrustHealthServedByDifferentProcess(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
-		t.Skip("listener ownership is checked on Linux and Windows")
+	if runtime.GOOS != "linux" {
+		t.Skip("listener ownership is checked on Linux")
 	}
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)

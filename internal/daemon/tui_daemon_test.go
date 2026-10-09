@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// S4 daemon pid/log 与 isAlive/tasklist — configDir PI_SWITCH_CONFIG_DIR||~/.pi-switch → proxy.pid/webui.pid(JSON DaemonInfo{pid,host,port,startedAt}) + proxy.log/webui.log，isAlive: kill -0 / tasklist CSV第2列，checkHealth DialTimeout 500ms×2
+// S4 daemon pid/log 与 isAlive — configDir PI_SWITCH_CONFIG_DIR||~/.pi-switch → proxy.pid/webui.pid(JSON DaemonInfo{pid,host,port,startedAt}) + proxy.log/webui.log，isAlive: kill -0，checkHealth DialTimeout 500ms×2
 
 func TestTuiDaemon_S4_ConfigDirAndPidLog(t *testing.T) {
 	dir := t.TempDir()
@@ -62,7 +62,7 @@ func TestTuiDaemon_S4_ConfigDirAndPidLog(t *testing.T) {
 	}
 }
 
-func TestTuiDaemon_S4_IsAliveAndTasklist(t *testing.T) {
+func TestTuiDaemon_S4_IsAlive(t *testing.T) {
 	// current pid should be alive
 	pid := uint32(os.Getpid())
 	if !isAlive(pid) {
@@ -72,8 +72,7 @@ func TestTuiDaemon_S4_IsAliveAndTasklist(t *testing.T) {
 	if isAlive(999999) {
 		t.Fatalf("isAlive 999999 want false")
 	}
-	// tasklist CSV second column parsing on windows is hard to test on linux, but we can verify kill -0 path via isAlive logic
-	// Just ensure non-existent pid cleans up
+	// Ensure a non-existent PID cleans up its state.
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
 	info := DaemonInfo{Pid: 999999, Host: "127.0.0.1", Port: 43112, StartedAt: 1}
@@ -115,7 +114,7 @@ func TestTuiDaemon_S4_CheckHealthDialTimeout500ms2(t *testing.T) {
 	// we just ensure it returns false not true
 }
 
-// S5 daemon Status/Start/Stop — Status verifies identity and health; Start checks the target listener before and after launch; Stop uses Linux signals or Windows identity-checked termination and waits for exit.
+// S5 daemon Status/Start/Stop — Status verifies identity and health; Start checks the target listener before and after launch; Stop uses Unix signals and waits for exit.
 
 func TestTuiDaemon_S5_StatusCases(t *testing.T) {
 	dir := t.TempDir()

@@ -96,24 +96,6 @@ func isAlive(pid uint32) bool {
 	if pid == 0 {
 		return false
 	}
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH", "/FO", "CSV")
-		out, err := cmd.Output()
-		if err != nil {
-			return false
-		}
-		s := string(out)
-		for _, line := range strings.Split(s, "\n") {
-			parts := strings.Split(line, ",")
-			if len(parts) >= 2 {
-				p := strings.Trim(parts[1], "\" \r\n")
-				if p == strconv.FormatUint(uint64(pid), 10) {
-					return true
-				}
-			}
-		}
-		return false
-	}
 	cmd := exec.Command("kill", "-0", strconv.Itoa(int(pid)))
 	return cmd.Run() == nil
 }
@@ -226,9 +208,6 @@ func processIdentity(pid uint32) ProcessIdentity {
 	identity := ProcessIdentity{}
 	if runtime.GOOS == "darwin" {
 		return processIdentityDarwin(pid)
-	}
-	if runtime.GOOS == "windows" {
-		return processIdentityWindows(pid)
 	}
 	identity.Executable, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -346,21 +325,6 @@ func failedStart(cmd *exec.Cmd, exited <-chan struct{}, cause error) error {
 }
 
 func listeningPID(port uint16) (uint32, bool) {
-	if runtime.GOOS == "windows" {
-		// shortcut: Windows listener ownership uses the in-box NetTCPIP cmdlet; use IP Helper if a supported target no longer provides it.
-		command := fmt.Sprintf("$ErrorActionPreference = 'Stop'; Get-NetTCPConnection -State Listen -LocalPort %d -ErrorAction Stop | ForEach-Object { $_.OwningProcess }", port)
-		out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output()
-		if err != nil {
-			return 0, false
-		}
-		for _, line := range strings.Fields(string(out)) {
-			pid, err := strconv.ParseUint(line, 10, 32)
-			if err == nil && pid != 0 {
-				return uint32(pid), true
-			}
-		}
-		return 0, false
-	}
 	if runtime.GOOS != "linux" {
 		return 0, false
 	}
@@ -482,7 +446,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	if info := readPidFile(s); info != nil {
 		alive := isAlive(info.Pid)
 		if alive && managedProcess(*info) && managedHealth(*info, 2) {
-			if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+			if runtime.GOOS != "linux" {
 				msg := fmt.Sprintf("%s daemon already running (PID %d) on http://%s:%d", s.Label, info.Pid, info.Host, info.Port)
 				return DaemonResult{Running: true, Pid: &info.Pid, Host: &info.Host, Port: &info.Port, StartedAt: &info.StartedAt, Message: msg}, nil
 			}
@@ -551,7 +515,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		return DaemonResult{}, failedStart(cmd, exited, cause)
 	}
 
-	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+	if runtime.GOOS == "linux" {
 		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
 			removePidFile(s)
 			cause := fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
@@ -559,7 +523,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		}
 	}
 	healthy := waitForHealth(info, exited)
-	if healthy && (runtime.GOOS == "linux" || runtime.GOOS == "windows") {
+	if healthy && runtime.GOOS == "linux" {
 		if owner, known := listeningPID(info.Port); !known || owner != info.Pid {
 			removePidFile(s)
 			var cause error
@@ -576,11 +540,7 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		var cause error
 		if data, err := os.ReadFile(lp); err == nil {
 			if strings.Contains(strings.ToLower(string(data)), "address already in use") {
-				if runtime.GOOS == "windows" {
-					cause = fmt.Errorf("%w: address already in use on %s:%d; inspect the listener before retrying", ErrPortInUse, host, port)
-				} else {
-					cause = fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
-				}
+				cause = fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
 			}
 		}
 		if cause == nil {
@@ -622,13 +582,6 @@ func Stop(s Service) (DaemonResult, error) {
 		removePidFile(s)
 		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon; refusing to stop it and cleaned up state", info.Pid, s.Label)}, nil
 	}
-	if runtime.GOOS == "windows" {
-		if err := forceKillManagedProcess(s, *info, nil); err != nil {
-			return DaemonResult{}, err
-		}
-		removePidFile(s)
-		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force terminated", s.Label, info.Pid)}, nil
-	}
 	proc, _ := os.FindProcess(int(info.Pid))
 	if proc != nil {
 		_ = proc.Signal(os.Interrupt)
@@ -655,9 +608,6 @@ func Stop(s Service) (DaemonResult, error) {
 }
 
 func forceKillManagedProcess(s Service, info DaemonInfo, proc *os.Process) error {
-	if runtime.GOOS == "windows" {
-		return terminateWindowsProcess(info)
-	}
 	if !managedProcess(info) {
 		return fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
 	}
