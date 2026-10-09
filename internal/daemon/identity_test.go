@@ -188,6 +188,59 @@ func TestDaemonOperationLockRejectsConcurrentMutation(t *testing.T) {
 	if _, err := acquireLock(Proxy); !errors.Is(err, errOperationLocked) {
 		t.Fatalf("second operation error=%v, want lock conflict", err)
 	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestOperationLockRejectsInChild$")
+	cmd.Env = append(os.Environ(), "PI_SWITCH_TEST_LOCK_MUST_BLOCK=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("second process did not observe active lock: %v\n%s", err, output)
+	}
+}
+
+func TestOperationLockRejectsInChild(t *testing.T) {
+	if os.Getenv("PI_SWITCH_TEST_LOCK_MUST_BLOCK") != "1" {
+		return
+	}
+	if _, err := acquireLock(Proxy); !errors.Is(err, errOperationLocked) {
+		t.Fatalf("lock from another process error=%v, want lock conflict", err)
+	}
+}
+
+func TestDaemonOperationLockRecoversAfterHolderExits(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	first, err := acquireLock(Proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireLock(Proxy)
+	if err != nil {
+		t.Fatalf("acquire after holder exit: %v", err)
+	}
+	releaseLock(Proxy, second)
+	if _, err := os.Stat(lockPath(Proxy)); err != nil {
+		t.Fatalf("lock file should remain reusable: %v", err)
+	}
+}
+
+func TestOldLockReleaseDoesNotRemoveNewHolder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	old, err := acquireLock(Proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseLock(Proxy, old)
+	current, err := acquireLock(Proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseLock(Proxy, current)
+	releaseLock(Proxy, old)
+	if _, err := acquireLock(Proxy); !errors.Is(err, errOperationLocked) {
+		t.Fatalf("replacement holder lost its lock: %v", err)
+	}
 }
 
 func TestCurrentProcessIdentityHasStableFields(t *testing.T) {

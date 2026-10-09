@@ -200,31 +200,25 @@ func acquireLock(s Service) (*os.File, error) {
 	if err := os.MkdirAll(configDir(), 0755); err != nil {
 		return nil, err
 	}
-	path := lockPath(s)
-	for attempt := 0; attempt < 2; attempt++ {
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err == nil {
-			_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
-			return file, nil
-		}
-		if !os.IsExist(err) {
-			return nil, err
-		}
-		contents, readErr := os.ReadFile(path)
-		lockPID, parseErr := strconv.ParseUint(strings.TrimSpace(string(contents)), 10, 32)
-		if readErr == nil && parseErr == nil && isAlive(uint32(lockPID)) {
+	file, err := os.OpenFile(lockPath(s), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockOperationFile(file); err != nil {
+		_ = file.Close()
+		if errors.Is(err, errOperationLocked) {
 			return nil, errOperationLocked
 		}
-		_ = os.Remove(path)
+		return nil, fmt.Errorf("cannot lock daemon operation: %w", err)
 	}
-	return nil, errOperationLocked
+	return file, nil
 }
 
-func releaseLock(s Service, file *os.File) {
+func releaseLock(_ Service, file *os.File) {
 	if file != nil {
+		_ = unlockOperationFile(file)
 		_ = file.Close()
 	}
-	_ = os.Remove(lockPath(s))
 }
 
 func processIdentity(pid uint32) ProcessIdentity {
