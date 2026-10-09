@@ -15,7 +15,7 @@
 
 - [ ] 确定 MyGo 发布 tag/commit 并锁定，先评估是否能够用独立 desktop Go module 隔离 Go 1.27.1 与旧根模块 Go 1.24.2。
 - [ ] 分别建立最小 Native UI 窗口、WebView 加载 React、MyGo Bind/类型化 IPC 示例；记录资源和错误处理边界。
-- [ ] 实测 niri/Wayland + fcitx5 中文输入 + scale 2、Windows WebView2/IME，并探测 Linux GTK/AppIndicator 依赖。
+- [ ] 实测 Linux niri/Wayland + fcitx5 中文输入 + scale 2，并探测 Linux GTK/AppIndicator 依赖。
 - [ ] 记录冷/热启动与进程 RSS/CPU 基线；将工具链不兼容、输入法、托盘差异列为 Gate A 的明确阻断条件。
 
 ## 对应验收案例（需附可复现证据）
