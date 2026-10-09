@@ -1,49 +1,37 @@
 #!/usr/bin/env node
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { dirname, resolve, join } from "path";
 import { fileURLToPath } from "url";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(dir, "..");
 
-if (process.platform === "win32") {
-  console.error("Error: Windows is not supported by the pi-switch CLI distribution.");
+const archMap = { x64: "amd64", arm64: "arm64" };
+
+if (process.platform !== "linux" || !archMap[process.arch]) {
+  console.error(`Error: pi-switch CLI supports Linux amd64/arm64 only (got ${process.platform}/${process.arch}).`);
   process.exit(1);
 }
-
-const archMap = { x64: "amd64", arm64: "arm64", ia32: "386" };
 
 function resolveBin() {
   if (process.env.PI_SWITCH_GO_BIN && existsSync(process.env.PI_SWITCH_GO_BIN)) {
     return process.env.PI_SWITCH_GO_BIN;
   }
-  const goos = process.platform;
-  const goarch = archMap[process.arch] || process.arch;
   const candidates = [
-    join(dir, `pi-switch-${goos}-${goarch}`),
-    join(dir, `pi-switch-${process.platform}-${process.arch}`),
+    join(dir, `pi-switch-linux-${archMap[process.arch]}`),
     join(projectRoot, "pi-switch"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }
-  try {
-    const files = readdirSync(dir);
-    for (const f of files) {
-      if (f.startsWith("pi-switch-") && !f.endsWith(".js") && !f.endsWith(".map")) {
-        const full = join(dir, f);
-        if (existsSync(full)) return full;
-      }
-    }
-  } catch {}
   return null;
 }
 
 const bin = resolveBin();
 if (!bin) {
-  console.error(`Error: Go binary not found for ${process.platform}/${process.arch}.`);
-  console.error(`Expected: bin/pi-switch-${process.platform}-${archMap[process.arch] || process.arch}`);
+  console.error(`Error: Go binary not found for Linux/${process.arch}.`);
+  console.error(`Expected: bin/pi-switch-linux-${archMap[process.arch]}`);
   console.error(`Build with: npm run build:webui && npm run build:go:current`);
   console.error(`Or set PI_SWITCH_GO_BIN=/path/to/binary`);
   process.exit(1);

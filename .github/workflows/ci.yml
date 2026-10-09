@@ -78,6 +78,9 @@ jobs:
       - name: Deterministic functional smoke
         run: bash scripts/functional-check.sh bin/pi-switch
 
+      - name: Test CLI platform selection
+        run: node --test scripts/pi-switch.test.js
+
   release-preflight:
     needs: [verify, build]
     if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.verify.result == 'success' && needs.build.result == 'success' }}
@@ -109,6 +112,42 @@ jobs:
           fi
           echo "preflight accepted $RELEASE_TAG for $package_name@$version"
 
+  package-check:
+    needs: [build, verify]
+    runs-on: ubuntu-latest
+    name: package check / linux-only npm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build WebUI
+        run: npm run build:webui
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-linux-*
+          path: artifacts
+          merge-multiple: true
+          if-no-files-found: error
+
+      - name: Move binaries to bin
+        run: |
+          mkdir -p bin
+          mv artifacts/pi-switch-* bin/ 2>/dev/null || mv artifacts/* bin/ 2>/dev/null
+
+      - name: Validate npm package contents
+        run: node scripts/check-npm-package.mjs
+
   build:
     strategy:
       fail-fast: false
@@ -120,13 +159,6 @@ jobs:
           - goos: linux
             goarch: arm64
             os: ubuntu-latest
-          - goos: darwin
-            goarch: amd64
-            os: macos-latest
-          - goos: darwin
-            goarch: arm64
-            os: macos-latest
-
     runs-on: ${{ matrix.os }}
     name: build / ${{ matrix.goos }}-${{ matrix.goarch }}
     permissions:
@@ -164,7 +196,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build, verify, release-preflight]
+    needs: [build, verify, release-preflight, package-check]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -206,28 +238,7 @@ jobs:
           ls -lh bin/
 
       - name: Validate npm package contents
-        run: |
-          npm pack --dry-run --json > npm-pack.json
-          node <<'NODE'
-          const fs = require("fs");
-          const report = JSON.parse(fs.readFileSync("npm-pack.json", "utf8"));
-          const files = report.flatMap((entry) => entry.files || []).map((entry) => entry.path);
-          const required = [
-            "package.json",
-            "bin/pi-switch.js",
-            "bin/pi-switch-linux-amd64",
-            "bin/pi-switch-linux-arm64",
-            "bin/pi-switch-darwin-amd64",
-            "bin/pi-switch-darwin-arm64",
-          ];
-          const missing = required.filter((file) => !files.includes(file));
-          const forbidden = files.filter((file) => /(^|\/)(\.env|.*\.key$|.*secret.*|node_modules|\.git)(\/|$)/i.test(file));
-          if (missing.length || forbidden.length) {
-            console.error({ missing, forbidden });
-            process.exit(1);
-          }
-          console.log(`validated ${files.length} npm package files`);
-          NODE
+        run: node scripts/check-npm-package.mjs
 
       - name: Publish to npm
         run: npm publish --access public

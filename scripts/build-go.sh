@@ -4,6 +4,14 @@ set -euo pipefail
 OUT=${1:-bin/pi-switch}
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
+
+TARGET_OS=${GOOS:-$(go env GOOS)}
+TARGET_ARCH=${GOARCH:-$(go env GOARCH)}
+if [[ "$TARGET_OS" != linux || ( "$TARGET_ARCH" != amd64 && "$TARGET_ARCH" != arm64 ) ]]; then
+  echo "Unsupported build target: ${TARGET_OS}/${TARGET_ARCH} (supported: linux/amd64, linux/arm64)" >&2
+  exit 1
+fi
+
 mkdir -p "$(dirname "$OUT")"
 
 VER=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
@@ -18,7 +26,7 @@ if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
 else
   BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 fi
-TARGET="${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}"
+TARGET="${TARGET_OS}/${TARGET_ARCH}"
 LDFLAGS="-s -w"
 LDFLAGS+=" -X main.version=${VER}"
 LDFLAGS+=" -X main.buildTime=${BUILD_TIME}"
@@ -38,5 +46,5 @@ LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.BuildDirty=${DIRTY
 GO_MAXPROCS=${GO_MAXPROCS:-2}
 GO_BUILD_PARALLEL=${GO_BUILD_PARALLEL:-1}
 
-env GOOS="${GOOS:-$(go env GOOS)}" GOARCH="${GOARCH:-$(go env GOARCH)}" GOMAXPROCS="${GO_MAXPROCS}" \
+env GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" GOMAXPROCS="${GO_MAXPROCS}" \
   go build -p "${GO_BUILD_PARALLEL}" -ldflags "$LDFLAGS" -o "$OUT" ./cmd/pi-switch
