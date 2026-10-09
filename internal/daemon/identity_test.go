@@ -106,7 +106,7 @@ func TestStartClearsDeadLegacyPIDAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := Start(Proxy, "127.0.0.1", freePort(t))
-	if err == nil || strings.Contains(strings.ToLower(err.Error()), "identity") {
+	if err == nil || strings.Contains(strings.ToLower(err.Error()), "existing proxy pid") {
 		t.Fatalf("Start error=%v, want startup attempt after stale-state cleanup", err)
 	}
 	if _, err := os.Stat(pidPath(Proxy)); !os.IsNotExist(err) {

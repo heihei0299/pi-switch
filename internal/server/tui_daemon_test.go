@@ -64,14 +64,14 @@ func TestTuiDaemon_S6_PidSingleFile(t *testing.T) {
 	}
 }
 
-func TestTuiDaemon_S6_ProxyStartAlreadyRunning(t *testing.T) {
+func TestTuiDaemon_S6_ProxyStartRejectsLegacyPIDState(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
 	cfgPath := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(cfgPath, []byte(`{"version":2,"profiles":{},"settings":{"providerPrefix":"pi-switch","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110}}}`), 0644)
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", filepath.Join(dir, "requests.db"))
-	// Occupy port with listener and write pid file for already running
+	// An identity-less legacy PID must be surfaced for manual inspection, not trusted.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -84,21 +84,14 @@ func TestTuiDaemon_S6_ProxyStartAlreadyRunning(t *testing.T) {
 	b, _ := json.Marshal(info)
 	_ = os.WriteFile(filepath.Join(dir, "proxy.pid"), b, 0644)
 	r := NewMgmtRouter()
-	// POST /api/proxy/start with daemon true and same host/port should return already running (200 not 500)
+	// POST /api/proxy/start must not trust the live PID without identity metadata.
 	w := httptest.NewRecorder()
 	body := `{"daemon":true,"host":"127.0.0.1","port":` + portStr + `}`
 	req, _ := http.NewRequest("POST", "/api/proxy/start", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("POST /api/proxy/start already running want 200 got %d body %s", w.Code, w.Body.String())
-	}
-	var resp map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	// message should contain already running
-	bstr := strings.ToLower(w.Body.String())
-	if !strings.Contains(bstr, "already running") {
-		t.Fatalf("already running response missing 'already running': %s", w.Body.String())
+	if w.Code != 500 || !strings.Contains(strings.ToLower(w.Body.String()), "identity") {
+		t.Fatalf("POST /api/proxy/start legacy PID want identity warning, got %d body %s", w.Code, w.Body.String())
 	}
 	_ = port
 }
