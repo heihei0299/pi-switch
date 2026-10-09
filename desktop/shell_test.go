@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo"
+	"github.com/heihei0299/pi-switch/internal/config"
 )
 
 func TestStartsMinimized(t *testing.T) {
@@ -129,5 +130,34 @@ func TestComplexWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
 	app.onComplexWindowClose(quitEvent)
 	if quitEvent.DefaultPrevented() {
 		t.Fatal("explicit app quit should be allowed to close the complex preview")
+	}
+}
+
+func TestDesktopProxyAddressUsesConfigAndDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PI_SWITCH_CONFIG", path)
+
+	host, port, err := desktopProxyAddress()
+	if err != nil || host != "127.0.0.1" || port != 43112 {
+		t.Fatalf("default proxy address = %q:%d, %v", host, port, err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Settings.Proxy.Host = "127.0.0.2"
+	cfg.Settings.Proxy.Port = 43210
+	if err := config.SaveAtPath(cfg, path); err != nil {
+		t.Fatal(err)
+	}
+	host, port, err = desktopProxyAddress()
+	if err != nil || host != "127.0.0.2" || port != 43210 {
+		t.Fatalf("configured proxy address = %q:%d, %v", host, port, err)
+	}
+
+	cfg.Settings.Proxy.Port = 65536
+	if err := config.SaveAtPath(cfg, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := desktopProxyAddress(); err == nil {
+		t.Fatal("out-of-range proxy port was accepted")
 	}
 }

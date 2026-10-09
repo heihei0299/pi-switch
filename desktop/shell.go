@@ -11,13 +11,9 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
-)
-
-const (
-	proxyHost = "127.0.0.1"
-	proxyPort = 43112
 )
 
 type desktopShell struct {
@@ -89,17 +85,33 @@ func (a *desktopShell) proxyService() (daemon.Service, error) {
 	return service, nil
 }
 
+func desktopProxyAddress() (string, uint16, error) {
+	cfg, _, err := config.LoadConfigAtPath(config.ResolvePath())
+	if err != nil {
+		return "", 0, err
+	}
+	port := cfg.Settings.Proxy.Port
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("proxy port %d is outside the valid range", port)
+	}
+	return cfg.Settings.Proxy.Host, uint16(port), nil
+}
+
 func (a *desktopShell) startProxy() {
 	a.runProxyTask(func() (daemon.DaemonResult, error) {
 		status, err := daemon.Status(daemon.Proxy)
 		if err != nil || status.Running {
 			return status, err
 		}
+		host, port, err := desktopProxyAddress()
+		if err != nil {
+			return daemon.DaemonResult{}, err
+		}
 		service, err := a.proxyService()
 		if err != nil {
 			return daemon.DaemonResult{}, err
 		}
-		return daemon.Start(service, proxyHost, proxyPort)
+		return daemon.Start(service, host, port)
 	})
 }
 
