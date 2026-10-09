@@ -93,11 +93,12 @@ func lockPath(s Service) string {
 }
 
 func isAlive(pid uint32) bool {
-	if pid == 0 {
+	// Reject values that cannot fit the supported platforms' signed pid_t before converting to int.
+	if pid == 0 || pid > 2_147_483_647 {
 		return false
 	}
-	cmd := exec.Command("kill", "-0", strconv.Itoa(int(pid)))
-	return cmd.Run() == nil
+	err := syscall.Kill(int(pid), 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func checkHealth(host string, port uint16, attempts int) bool {

@@ -21,6 +21,30 @@ func TestIdentityHoldProcess(t *testing.T) {
 	}
 }
 
+func TestIsAlivePIDBoundsAndChildExit(t *testing.T) {
+	if isAlive(0) {
+		t.Fatal("PID 0 must not be considered alive")
+	}
+	if isAlive(^uint32(0)) {
+		t.Fatal("PID above signed pid_t range must not be considered alive")
+	}
+	if !isAlive(uint32(os.Getpid())) {
+		t.Fatal("current process must be considered alive")
+	}
+
+	child := exec.Command(os.Args[0], "-test.run=^TestIdentityHoldProcess$")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	childPID := uint32(child.Process.Pid)
+	if err := child.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if isAlive(childPID) {
+		t.Fatalf("reaped child PID %d must not be considered alive", childPID)
+	}
+}
+
 func startIdentityHoldProcess(t *testing.T) (uint32, <-chan struct{}) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestIdentityHoldProcess$")
