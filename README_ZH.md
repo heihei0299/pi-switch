@@ -2,7 +2,7 @@
 
 # pi-switch
 
-[![版本](https://img.shields.io/badge/version-20260912.1.1-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
+[![版本](https://img.shields.io/badge/version-20261009.0.0-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![平台](https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![许可证](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
