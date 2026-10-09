@@ -622,6 +622,13 @@ func Stop(s Service) (DaemonResult, error) {
 		removePidFile(s)
 		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon; refusing to stop it and cleaned up state", info.Pid, s.Label)}, nil
 	}
+	if runtime.GOOS == "windows" {
+		if err := forceKillManagedProcess(s, *info, nil); err != nil {
+			return DaemonResult{}, err
+		}
+		removePidFile(s)
+		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force terminated", s.Label, info.Pid)}, nil
+	}
 	proc, _ := os.FindProcess(int(info.Pid))
 	if proc != nil {
 		_ = proc.Signal(os.Interrupt)
@@ -629,7 +636,7 @@ func Stop(s Service) (DaemonResult, error) {
 			if managedProcess(*info) {
 				_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
 			}
-		} else if runtime.GOOS != "windows" {
+		} else {
 			_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
 		}
 	}
@@ -648,15 +655,17 @@ func Stop(s Service) (DaemonResult, error) {
 }
 
 func forceKillManagedProcess(s Service, info DaemonInfo, proc *os.Process) error {
+	if runtime.GOOS == "windows" {
+		return terminateWindowsProcess(info)
+	}
 	if !managedProcess(info) {
 		return fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
 	}
-	if proc != nil {
-		_ = proc.Kill()
+	if proc == nil {
+		return fmt.Errorf("cannot access PID %d; refusing to force-kill %s daemon", info.Pid, s.Label)
 	}
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/F", "/PID", strconv.Itoa(int(info.Pid))).Run()
-	} else if runtime.GOOS != "darwin" {
+	_ = proc.Kill()
+	if runtime.GOOS != "darwin" {
 		_ = exec.Command("kill", "-9", strconv.Itoa(int(info.Pid))).Run()
 	}
 	return nil

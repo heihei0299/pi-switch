@@ -94,14 +94,18 @@ func TestStopTerminatesManagedProcessAndWaitsForExit(t *testing.T) {
 	if err := writePidFile(Proxy, info); err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	result, err := Stop(Proxy)
 	if err != nil || result.Running {
 		t.Fatalf("Stop(%+v) = %+v, %v", info, result, err)
 	}
 	select {
 	case <-exited:
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatalf("Stop returned before managed PID %d exited", pid)
+	}
+	if runtime.GOOS == "windows" && time.Since(started) >= time.Second {
+		t.Fatalf("Windows Stop waited %s for a force termination", time.Since(started))
 	}
 }
 

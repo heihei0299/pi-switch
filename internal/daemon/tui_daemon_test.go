@@ -115,7 +115,7 @@ func TestTuiDaemon_S4_CheckHealthDialTimeout500ms2(t *testing.T) {
 	// we just ensure it returns false not true
 }
 
-// S5 daemon Status/Start/Stop — Status verifies identity and health; Start checks the target listener before and after launch; forced Stop rechecks process identity.
+// S5 daemon Status/Start/Stop — Status verifies identity and health; Start checks the target listener before and after launch; Stop uses Linux signals or Windows identity-checked termination and waits for exit.
 
 func TestTuiDaemon_S5_StatusCases(t *testing.T) {
 	dir := t.TempDir()
