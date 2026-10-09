@@ -156,8 +156,8 @@ jobs:
           EXPECTED_TARGET: ${{ matrix.platform }}
         run: |
           commit=$(git rev-parse --short=7 HEAD)
-          strings "$CLI_RESOURCE" | grep -Fxq "$commit"
-          strings "$CLI_RESOURCE" | grep -Fxq "$EXPECTED_TARGET"
+          strings "$CLI_RESOURCE" | grep -Fx "$commit" >/dev/null
+          strings "$CLI_RESOURCE" | grep -Fx "$EXPECTED_TARGET" >/dev/null
 
       - name: Record test build identity
         env:
