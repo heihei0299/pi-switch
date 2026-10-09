@@ -292,10 +292,8 @@ func processIdentityMatches(expected, actual ProcessIdentity) bool {
 }
 
 func managedProcess(info DaemonInfo) bool {
-	// Files written before identity metadata existed remain compatible except on macOS,
-	// where a PID-only record cannot be safely terminated.
-	if info.Executable == "" && info.StartToken == "" {
-		return runtime.GOOS != "darwin"
+	if info.Executable == "" || info.StartToken == "" {
+		return false
 	}
 	return processIdentityMatches(
 		ProcessIdentity{Executable: info.Executable, StartToken: info.StartToken},
@@ -444,11 +442,15 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	defer releaseLock(s, lock)
 
 	if info := readPidFile(s); info != nil {
-		if isAlive(info.Pid) && managedProcess(*info) && managedHealth(*info, 2) {
+		alive := isAlive(info.Pid)
+		if alive && managedProcess(*info) && managedHealth(*info, 2) {
 			msg := fmt.Sprintf("%s daemon already running (PID %d) on http://%s:%d", s.Label, info.Pid, info.Host, info.Port)
 			return DaemonResult{Running: true, Pid: &info.Pid, Host: &info.Host, Port: &info.Port, StartedAt: &info.StartedAt, Message: msg}, nil
 		}
 		removePidFile(s)
+		if alive && s.Subcommand == "proxy" && (info.Executable == "" || info.StartToken == "") {
+			return DaemonResult{}, fmt.Errorf("existing Proxy PID %d has no verifiable process identity; it was not stopped. Inspect it and stop it manually before starting another Proxy", info.Pid)
+		}
 	}
 	if host == "" {
 		host = "127.0.0.1"
@@ -559,7 +561,7 @@ func Stop(s Service) (DaemonResult, error) {
 	}
 	if !managedProcess(*info) {
 		removePidFile(s)
-		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon (unmanaged listener; cleaned up state)", info.Pid, s.Label)}, nil
+		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon; refusing to stop it and cleaned up state", info.Pid, s.Label)}, nil
 	}
 	proc, _ := os.FindProcess(int(info.Pid))
 	if proc != nil {

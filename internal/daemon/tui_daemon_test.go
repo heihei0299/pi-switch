@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -136,7 +138,8 @@ func TestTuiDaemon_S5_StatusCases(t *testing.T) {
 	}
 	// isAlive && !health -> rm stale (current pid but no listener on that port)
 	pid := uint32(os.Getpid())
-	info2 := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: 59998, StartedAt: uint64(time.Now().UnixMilli())}
+	identity := processIdentity(pid)
+	info2 := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: 59998, StartedAt: uint64(time.Now().UnixMilli()), Executable: identity.Executable, StartToken: identity.StartToken}
 	b, _ = json.Marshal(info2)
 	_ = os.WriteFile(filepath.Join(dir, "proxy.pid"), b, 0644)
 	res, _ = Status(Proxy)
@@ -150,15 +153,12 @@ func TestTuiDaemon_S5_StatusCases(t *testing.T) {
 		t.Fatalf("isAlive !health pid not removed")
 	}
 	// isAlive && health -> running + ss -tlnp>1 prompt (if linux and multiple listeners)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-	addr := ln.Addr().String()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
 	_, portStr, _ := net.SplitHostPort(addr)
 	port, _ := strconv.Atoi(portStr)
-	info3 := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: uint16(port), StartedAt: 1}
+	info3 := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: uint16(port), StartedAt: 1, Executable: identity.Executable, StartToken: identity.StartToken}
 	b, _ = json.Marshal(info3)
 	_ = os.WriteFile(filepath.Join(dir, "proxy.pid"), b, 0644)
 	res, _ = Status(Proxy)
@@ -175,16 +175,14 @@ func TestTuiDaemon_S5_StartAlreadyRunning(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
 	// Start should detect already running via isAlive+health
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-	addr := ln.Addr().String()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
 	_, portStr, _ := net.SplitHostPort(addr)
 	port, _ := strconv.Atoi(portStr)
 	pid := uint32(os.Getpid())
-	info := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: uint16(port), StartedAt: 1}
+	identity := processIdentity(pid)
+	info := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: uint16(port), StartedAt: 1, Executable: identity.Executable, StartToken: identity.StartToken}
 	b, _ := json.Marshal(info)
 	_ = os.WriteFile(filepath.Join(dir, "proxy.pid"), b, 0644)
 	res, err := Start(Proxy, "127.0.0.1", uint16(port))

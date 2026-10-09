@@ -7,11 +7,112 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestIdentityHoldProcess(t *testing.T) {
+	if os.Getenv("PI_SWITCH_TEST_HOLD_PROCESS") == "1" {
+		select {}
+	}
+}
+
+func startIdentityHoldProcess(t *testing.T) (uint32, <-chan struct{}) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestIdentityHoldProcess$")
+	cmd.Env = append(os.Environ(), "PI_SWITCH_TEST_HOLD_PROCESS=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-exited:
+		default:
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+	})
+	return uint32(cmd.Process.Pid), exited
+}
+
+func assertProcessSurvived(t *testing.T, pid uint32, exited <-chan struct{}) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if !isAlive(pid) {
+			t.Fatalf("unverified PID %d was terminated", pid)
+		}
+		return
+	}
+	select {
+	case <-exited:
+		t.Fatalf("unverified PID %d was terminated", pid)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestLegacyPIDStateIsNotManagedOrStopped(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	pid, exited := startIdentityHoldProcess(t)
+	info := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: 43112}
+	if managedProcess(info) {
+		t.Fatal("legacy PID without identity was trusted")
+	}
+	if err := writePidFile(Proxy, info); err != nil {
+		t.Fatal(err)
+	}
+	status, err := Status(Proxy)
+	if err != nil || status.Running {
+		t.Fatalf("Status(%+v) = %+v, %v", info, status, err)
+	}
+	assertProcessSurvived(t, pid, exited)
+	if err := writePidFile(Proxy, info); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := Stop(Proxy)
+	if err != nil || stopped.Running {
+		t.Fatalf("Stop(%+v) = %+v, %v", info, stopped, err)
+	}
+	assertProcessSurvived(t, pid, exited)
+}
+
+func TestStartPromptsForLiveLegacyProxyWithoutStoppingIt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	pid, exited := startIdentityHoldProcess(t)
+	if err := writePidFile(Proxy, DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: 43112}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Start(Proxy, "127.0.0.1", freePort(t))
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "identity") {
+		t.Fatalf("Start error=%v, want an identity warning", err)
+	}
+	assertProcessSurvived(t, pid, exited)
+}
+
+func TestStartClearsDeadLegacyPIDAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	if err := writePidFile(Proxy, DaemonInfo{Pid: ^uint32(0), Host: "127.0.0.1", Port: 43112}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Start(Proxy, "127.0.0.1", freePort(t))
+	if err == nil || strings.Contains(strings.ToLower(err.Error()), "identity") {
+		t.Fatalf("Start error=%v, want startup attempt after stale-state cleanup", err)
+	}
+	if _, err := os.Stat(pidPath(Proxy)); !os.IsNotExist(err) {
+		t.Fatalf("stale legacy PID file remains, stat err=%v", err)
+	}
+}
 
 func TestStatusRejectsReusedPIDIdentity(t *testing.T) {
 	dir := t.TempDir()
