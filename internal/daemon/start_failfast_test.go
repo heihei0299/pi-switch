@@ -121,6 +121,38 @@ func TestStart_ReturnsQuicklyWhenItsChildDiesOnStartup(t *testing.T) {
 	}
 }
 
+func TestStartWaitsUntilFailedChildHasExited(t *testing.T) {
+	dir := isolatedDaemonDir(t)
+	childPIDPath := filepath.Join(dir, "child.pid")
+	var childPID uint32
+	t.Cleanup(func() {
+		if childPID != 0 && isAlive(childPID) {
+			if proc, err := os.FindProcess(int(childPID)); err == nil {
+				_ = proc.Kill()
+			}
+		}
+	})
+	t.Setenv("PI_SWITCH_TEST_HOLD_DAEMON_CHILD", "1")
+	t.Setenv("PI_SWITCH_TEST_DAEMON_CHILD_PID", childPIDPath)
+
+	_, err := Start(Proxy, "127.0.0.1", freePort(t))
+	if err == nil {
+		t.Fatal("Start reported success although the child never served health")
+	}
+	data, err := os.ReadFile(childPIDPath)
+	if err != nil {
+		t.Fatalf("child did not reach its running fixture: %v", err)
+	}
+	pid, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
+	if err != nil {
+		t.Fatalf("child PID %q is invalid: %v", data, err)
+	}
+	childPID = uint32(pid)
+	if isAlive(childPID) {
+		t.Fatalf("Start returned before failed child PID %d exited", pid)
+	}
+}
+
 // F3: the port-in-use condition is a typed error, so callers stop matching text.
 // The condition is injected through the daemon log, which is what Start inspects —
 // the same fixture shape the server-level test already used.

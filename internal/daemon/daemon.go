@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -306,13 +307,60 @@ func waitForHealth(info DaemonInfo, exited <-chan struct{}) bool {
 		default:
 		}
 		if managedHealth(info, 1) {
-			return true
+			select {
+			case <-exited:
+				return false
+			default:
+				return true
+			}
 		}
 	}
 	return false
 }
 
+func terminateStartedChild(cmd *exec.Cmd, exited <-chan struct{}) error {
+	select {
+	case <-exited:
+		return nil
+	default:
+	}
+	killErr := cmd.Process.Kill()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-exited:
+		return nil
+	case <-timer.C:
+		if killErr != nil {
+			return fmt.Errorf("could not terminate startup child PID %d: %w; exit was not confirmed", cmd.Process.Pid, killErr)
+		}
+		return fmt.Errorf("termination was requested for startup child PID %d, but exit was not confirmed", cmd.Process.Pid)
+	}
+}
+
+func failedStart(cmd *exec.Cmd, exited <-chan struct{}, cause error) error {
+	if cleanupErr := terminateStartedChild(cmd, exited); cleanupErr != nil {
+		return fmt.Errorf("%w; startup child cleanup failed: %v", cause, cleanupErr)
+	}
+	return cause
+}
+
 func listeningPID(port uint16) (uint32, bool) {
+	if runtime.GOOS == "windows" {
+		// shortcut: Windows listener ownership uses the in-box NetTCPIP cmdlet; use IP Helper if a supported target no longer provides it.
+		command := fmt.Sprintf("$ErrorActionPreference = 'Stop'; Get-NetTCPConnection -State Listen -LocalPort %d -ErrorAction Stop | ForEach-Object { $_.OwningProcess }", port)
+		out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output()
+		if err != nil {
+			return 0, false
+		}
+		for _, line := range strings.Fields(string(out)) {
+			pid, err := strconv.ParseUint(line, 10, 32)
+			if err == nil && pid != 0 {
+				return uint32(pid), true
+			}
+		}
+		return 0, false
+	}
 	if runtime.GOOS != "linux" {
 		return 0, false
 	}
@@ -342,6 +390,21 @@ func listeningPID(port uint16) (uint32, bool) {
 	// /proc so a same-user managed child can still be distinguished from an
 	// unrelated listener.
 	return procNetListenerPID(port)
+}
+
+func checkPortAvailable(s Service, host string, port uint16) error {
+	address := net.JoinHostPort(host, strconv.Itoa(int(port)))
+	listener, err := net.Listen("tcp", address)
+	if err == nil {
+		return listener.Close()
+	}
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		return fmt.Errorf("cannot verify that %s is available: %w", address, err)
+	}
+	if owner, known := listeningPID(port); known {
+		return fmt.Errorf("%w: unmanaged listener owns %s (PID %d); refusing to start %s", ErrPortInUse, address, owner, s.Label)
+	}
+	return fmt.Errorf("%w: %s is occupied by an unverified listener; refusing to start %s", ErrPortInUse, address, s.Label)
 }
 
 func procNetListenerPID(port uint16) (uint32, bool) {
@@ -419,8 +482,14 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	if info := readPidFile(s); info != nil {
 		alive := isAlive(info.Pid)
 		if alive && managedProcess(*info) && managedHealth(*info, 2) {
-			msg := fmt.Sprintf("%s daemon already running (PID %d) on http://%s:%d", s.Label, info.Pid, info.Host, info.Port)
-			return DaemonResult{Running: true, Pid: &info.Pid, Host: &info.Host, Port: &info.Port, StartedAt: &info.StartedAt, Message: msg}, nil
+			if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+				msg := fmt.Sprintf("%s daemon already running (PID %d) on http://%s:%d", s.Label, info.Pid, info.Host, info.Port)
+				return DaemonResult{Running: true, Pid: &info.Pid, Host: &info.Host, Port: &info.Port, StartedAt: &info.StartedAt, Message: msg}, nil
+			}
+			if owner, known := listeningPID(info.Port); known && owner == info.Pid {
+				msg := fmt.Sprintf("%s daemon already running (PID %d) on http://%s:%d", s.Label, info.Pid, info.Host, info.Port)
+				return DaemonResult{Running: true, Pid: &info.Pid, Host: &info.Host, Port: &info.Port, StartedAt: &info.StartedAt, Message: msg}, nil
+			}
 		}
 		removePidFile(s)
 		if alive && s.Subcommand == "proxy" && (info.Executable == "" || info.StartToken == "") {
@@ -436,6 +505,9 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 		} else {
 			port = 43112
 		}
+	}
+	if err := checkPortAvailable(s, host, port); err != nil {
+		return DaemonResult{}, err
 	}
 	_ = os.MkdirAll(configDir(), 0755)
 	lp := logPath(s)
@@ -470,46 +542,57 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	now := uint64(time.Now().UnixMilli())
 	identity := processIdentity(pid)
 	if identity.Executable == "" || identity.StartToken == "" {
-		_ = cmd.Process.Kill()
-		<-exited
-		return DaemonResult{}, fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
+		cause := fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
+		return DaemonResult{}, failedStart(cmd, exited, cause)
 	}
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now, Executable: identity.Executable, StartToken: identity.StartToken, State: "starting"}
 	if err := writePidFile(s, info); err != nil {
-		_ = cmd.Process.Kill()
-		return DaemonResult{}, fmt.Errorf("cannot write daemon state: %w", err)
+		cause := fmt.Errorf("cannot write daemon state: %w", err)
+		return DaemonResult{}, failedStart(cmd, exited, cause)
 	}
 
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
 			removePidFile(s)
-			_ = cmd.Process.Kill()
-			return DaemonResult{}, fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
+			cause := fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
+			return DaemonResult{}, failedStart(cmd, exited, cause)
 		}
 	}
 	healthy := waitForHealth(info, exited)
-	if healthy && runtime.GOOS == "linux" {
-		if owner, known := listeningPID(info.Port); known && owner != info.Pid {
+	if healthy && (runtime.GOOS == "linux" || runtime.GOOS == "windows") {
+		if owner, known := listeningPID(info.Port); !known || owner != info.Pid {
 			removePidFile(s)
-			_ = cmd.Process.Kill()
-			return DaemonResult{}, fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
+			var cause error
+			if known {
+				cause = fmt.Errorf("%w: unmanaged listener owns %s:%d (PID %d); %s daemon was not registered", ErrPortInUse, host, port, owner, s.Label)
+			} else {
+				cause = fmt.Errorf("%w: listener on %s:%d has an unverified owner; %s daemon was not registered", ErrPortInUse, host, port, s.Label)
+			}
+			return DaemonResult{}, failedStart(cmd, exited, cause)
 		}
 	}
 	if !healthy {
 		removePidFile(s)
-		_ = cmd.Process.Kill()
+		var cause error
 		if data, err := os.ReadFile(lp); err == nil {
 			if strings.Contains(strings.ToLower(string(data)), "address already in use") {
-				return DaemonResult{}, fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
+				if runtime.GOOS == "windows" {
+					cause = fmt.Errorf("%w: address already in use on %s:%d; inspect the listener before retrying", ErrPortInUse, host, port)
+				} else {
+					cause = fmt.Errorf("%w — use ss -tlnp to locate (address already in use on %s:%d)", ErrPortInUse, host, port)
+				}
 			}
 		}
-		return DaemonResult{}, fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
+		if cause == nil {
+			cause = fmt.Errorf("%s daemon started but failed health check on http://%s:%d. Check %s for errors.", s.Label, host, port, lp)
+		}
+		return DaemonResult{}, failedStart(cmd, exited, cause)
 	}
 	info.State = "running"
 	if err := writePidFile(s, info); err != nil {
-		_ = cmd.Process.Kill()
 		removePidFile(s)
-		return DaemonResult{}, fmt.Errorf("cannot finalize daemon state: %w", err)
+		cause := fmt.Errorf("cannot finalize daemon state: %w", err)
+		return DaemonResult{}, failedStart(cmd, exited, cause)
 	}
 	// Process.Release is deliberately NOT called: it is documented as the alternative
 	// to Wait, and the Wait goroutine above now owns the child. Measured both orders —
@@ -557,8 +640,16 @@ func Stop(s Service) (DaemonResult, error) {
 			return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)}, nil
 		}
 	}
-	if runtime.GOOS == "darwin" && !managedProcess(*info) {
-		return DaemonResult{}, fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
+	if err := forceKillManagedProcess(s, *info, proc); err != nil {
+		return DaemonResult{}, err
+	}
+	removePidFile(s)
+	return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force killed", s.Label, info.Pid)}, nil
+}
+
+func forceKillManagedProcess(s Service, info DaemonInfo, proc *os.Process) error {
+	if !managedProcess(info) {
+		return fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
 	}
 	if proc != nil {
 		_ = proc.Kill()
@@ -568,8 +659,7 @@ func Stop(s Service) (DaemonResult, error) {
 	} else if runtime.GOOS != "darwin" {
 		_ = exec.Command("kill", "-9", strconv.Itoa(int(info.Pid))).Run()
 	}
-	removePidFile(s)
-	return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force killed", s.Label, info.Pid)}, nil
+	return nil
 }
 
 func Status(s Service) (DaemonResult, error) {

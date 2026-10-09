@@ -85,6 +85,26 @@ func TestLegacyPIDStateIsNotManagedOrStopped(t *testing.T) {
 	assertProcessSurvived(t, pid, exited)
 }
 
+func TestStopTerminatesManagedProcessAndWaitsForExit(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	pid, exited := startIdentityHoldProcess(t)
+	identity := processIdentity(pid)
+	info := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: 43112, Executable: identity.Executable, StartToken: identity.StartToken}
+	if err := writePidFile(Proxy, info); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Stop(Proxy)
+	if err != nil || result.Running {
+		t.Fatalf("Stop(%+v) = %+v, %v", info, result, err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Stop returned before managed PID %d exited", pid)
+	}
+}
+
 func TestStartPromptsForLiveLegacyProxyWithoutStoppingIt(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
@@ -95,6 +115,20 @@ func TestStartPromptsForLiveLegacyProxyWithoutStoppingIt(t *testing.T) {
 	_, err := Start(Proxy, "127.0.0.1", freePort(t))
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "identity") {
 		t.Fatalf("Start error=%v, want an identity warning", err)
+	}
+	assertProcessSurvived(t, pid, exited)
+}
+
+func TestForceKillRefusesChangedProcessIdentity(t *testing.T) {
+	pid, exited := startIdentityHoldProcess(t)
+	identity := processIdentity(pid)
+	proc, err := os.FindProcess(int(pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := DaemonInfo{Pid: pid, Executable: identity.Executable, StartToken: identity.StartToken + "-reused"}
+	if err := forceKillManagedProcess(Proxy, info, proc); err == nil || !strings.Contains(strings.ToLower(err.Error()), "identity changed") {
+		t.Fatalf("force kill error=%v, want identity-change refusal", err)
 	}
 	assertProcessSurvived(t, pid, exited)
 }
@@ -154,9 +188,6 @@ func TestStatusRejectsReusedPIDIdentity(t *testing.T) {
 }
 
 func TestStartRejectsHealthyUnmanagedListener(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("listener ownership assertion uses the Linux /proc adapter")
-	}
 	dir := t.TempDir()
 	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
 	listener := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -169,11 +200,61 @@ func TestStartRejectsHealthyUnmanagedListener(t *testing.T) {
 		port = port*10 + uint16(r-'0')
 	}
 	_, err := Start(Proxy, "127.0.0.1", port)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unmanaged listener") {
+	if !errors.Is(err, ErrPortInUse) || !strings.Contains(strings.ToLower(err.Error()), "unmanaged listener") {
 		t.Fatalf("healthy unmanaged listener error=%v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "proxy.pid")); !os.IsNotExist(statErr) {
 		t.Fatalf("unmanaged start must not leave pid state, stat err=%v", statErr)
+	}
+}
+
+func TestStartDoesNotTrustHealthServedByDifferentProcess(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("listener ownership is checked on Linux and Windows")
+	}
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	pid, exited := startIdentityHoldProcess(t)
+	identity := processIdentity(pid)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var port uint16
+	for _, digit := range portText {
+		port = port*10 + uint16(digit-'0')
+	}
+	info := DaemonInfo{Pid: pid, Host: "127.0.0.1", Port: port, Executable: identity.Executable, StartToken: identity.StartToken}
+	if err := writePidFile(Proxy, info); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(Proxy, info.Host, info.Port); !errors.Is(err, ErrPortInUse) {
+		t.Fatalf("Start accepted another process's health response: %v", err)
+	}
+	assertProcessSurvived(t, pid, exited)
+}
+
+func TestWaitForHealthRejectsChildExitDuringSuccessfulProbe(t *testing.T) {
+	exited := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(exited)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var port uint16
+	for _, digit := range portText {
+		port = port*10 + uint16(digit-'0')
+	}
+	identity := processIdentity(uint32(os.Getpid()))
+	info := DaemonInfo{Host: "127.0.0.1", Port: port, Executable: identity.Executable, StartToken: identity.StartToken}
+	if waitForHealth(info, exited) {
+		t.Fatal("health response after child exit was reported as successful startup")
 	}
 }
 

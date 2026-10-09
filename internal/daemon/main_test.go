@@ -20,6 +20,15 @@ import (
 // startup (port taken, bad argument, lock held).
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && (os.Args[1] == "proxy" || os.Args[1] == "webui") && os.Args[2] == "start" {
+		if os.Getenv("PI_SWITCH_TEST_HOLD_DAEMON_CHILD") == "1" {
+			if path := os.Getenv("PI_SWITCH_TEST_DAEMON_CHILD_PID"); path != "" {
+				if err := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(2)
+				}
+			}
+			select {}
+		}
 		fmt.Fprintln(os.Stderr, "simulated daemon child: exiting immediately so the parent observes a startup failure")
 		os.Exit(1)
 	}

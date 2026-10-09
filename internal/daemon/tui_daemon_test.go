@@ -115,7 +115,7 @@ func TestTuiDaemon_S4_CheckHealthDialTimeout500ms2(t *testing.T) {
 	// we just ensure it returns false not true
 }
 
-// S5 daemon Status/Start/Stop — Status: nil→not running / !isAlive→rm stale / isAlive&&!health→rm stale / isAlive&&health→running+ss -tlnp>1 提示；Start: isAlive&&health→already running 否则 127.0.0.1:43112/43110 → exec.Command→*.log→Release→health 15×200ms, EADDRINUSE→500 port already in use；Stop: Kill→20×100ms poll→rm→超时 kill -9/taskkill /F
+// S5 daemon Status/Start/Stop — Status verifies identity and health; Start checks the target listener before and after launch; forced Stop rechecks process identity.
 
 func TestTuiDaemon_S5_StatusCases(t *testing.T) {
 	dir := t.TempDir()
