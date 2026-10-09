@@ -46,6 +46,9 @@ jobs:
         working-directory: desktop
         run: bun install --frozen-lockfile
 
+      - name: Build WebUI for Go embed
+        run: npm --prefix webui run build
+
       - name: Test and vet desktop module
         working-directory: desktop
         run: |
