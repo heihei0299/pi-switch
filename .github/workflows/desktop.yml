@@ -4,7 +4,7 @@ on:
   push:
     branches: [mygo]
   pull_request:
-    branches: [mygo]
+    branches: [mygo, main]
   workflow_dispatch:
 
 permissions:
@@ -61,6 +61,21 @@ jobs:
 
       - name: Scan tracked source for secrets
         run: bash scripts/check-secrets.sh
+
+  windows-daemon:
+    runs-on: windows-latest
+    name: verify daemon on Windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Test shared daemon service
+        run: go test ./internal/daemon
 
   package:
     needs: verify
