@@ -236,7 +236,11 @@ func (a *desktopShell) start() {
 		AutoHideMenuBar: true,
 		URL:             a.uiURL,
 	})
-	a.window.OnClose(a.onWindowClose)
+	a.window.OnClose(func(e *mygo.CloseEvent) {
+		if a.onWindowClose(e) {
+			mygo.App.Quit()
+		}
+	})
 	a.refreshProxy()
 }
 
@@ -528,14 +532,18 @@ func (a *desktopShell) switchProfile(name string) {
 	}()
 }
 
-func (a *desktopShell) onWindowClose(e *mygo.CloseEvent) {
+func (a *desktopShell) onWindowClose(e *mygo.CloseEvent) bool {
 	if a.exiting {
-		return
+		return false
+	}
+	if a.tray == nil {
+		return true
 	}
 	e.PreventDefault()
 	if a.window != nil {
 		a.window.Hide()
 	}
+	return false
 }
 
 func (a *desktopShell) view(c *ui.Context) {

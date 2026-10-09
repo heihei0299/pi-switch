@@ -70,17 +70,22 @@ func TestMenusKeepActionsReachable(t *testing.T) {
 	}
 }
 
-func TestWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
+func TestWindowCloseHidesWithTrayAndRequestsQuitWithoutTray(t *testing.T) {
 	app := &desktopShell{}
 	closeEvent := &mygo.CloseEvent{}
-	app.onWindowClose(closeEvent)
-	if !closeEvent.DefaultPrevented() {
-		t.Fatal("closing the window should hide it rather than quit")
+	if !app.onWindowClose(closeEvent) || closeEvent.DefaultPrevented() {
+		t.Fatal("closing without a tray should request app quit")
 	}
+
+	app.tray = &mygo.Tray{}
+	trayCloseEvent := &mygo.CloseEvent{}
+	if app.onWindowClose(trayCloseEvent) || !trayCloseEvent.DefaultPrevented() {
+		t.Fatal("closing with a tray should hide the window")
+	}
+
 	app.exiting = true
 	quitEvent := &mygo.CloseEvent{}
-	app.onWindowClose(quitEvent)
-	if quitEvent.DefaultPrevented() {
+	if app.onWindowClose(quitEvent) || quitEvent.DefaultPrevented() {
 		t.Fatal("explicit app quit should be allowed to close the window")
 	}
 }
