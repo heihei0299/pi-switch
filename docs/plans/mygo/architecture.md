@@ -78,7 +78,7 @@ Pi ── HTTP :43112 ──> 独立 Proxy Router ──> translator / limit ─
 | Arch Linux + niri / Wayland | 窗口/关闭/焦点、fractional/整数 scale、3200×2000 scale 2、中文 fcitx5、复制粘贴、键盘导航、托盘、深浅色 | Wayland 全局快捷键需 portal/桌面支持；不可依赖全局坐标定位 |
 | 其他 Linux 桌面（GNOME/KDE 或 X11） | WebKitGTK 4.1/4.0 fallback、GTK、字体渲染、桌面菜单、启动器、依赖缺失报错 | Linux MyGo Tray 需要 libayatana-appindicator3 且只支持菜单，不保证 tray click |
 | Windows 10/11（amd64） | WebView2 环境、窗口与托盘、单实例、关闭保活、升级/卸载、IME、高 DPI | 系统组件缺失需可诊断，不假定打包自带浏览器 |
-| macOS（arm64，可能加 amd64） | WKWebView、托盘、菜单、通知、签名/公证、睡眠恢复 | 分发签名/公证缺少凭据时标记阻断，不伪称可正式分发 |
+| macOS | 不支持桌面构建；不要求 GUI、打包、签名或进程管理验收 | 不影响现有 CLI/npm 平台支持 |
 
 - 用真实物理桌面或 CI GUI runner 证明图形功能；“交叉编译成功”**不等于**“窗口、托盘、输入法能用”。
 - 提前记录动态库清单、构建可用目标与加载失败提示。Linux tray 不可用时窗口和应用菜单必须仍可操作，不能让应用启动失败。

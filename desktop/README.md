@@ -1,14 +1,14 @@
 # MyGo desktop shell — test distribution only
 
-This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a supported or public desktop release. WP-05/06 native views are previews; the React WebView remains the real management UI. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
+This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Supported desktop targets are Linux and Windows; macOS desktop builds are not supported. WP-05/06 native views are previews; the React WebView remains the real management UI. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
 
-The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. Windows requires the WebView2 runtime. macOS test builds are not Developer ID signed/notarized, and Windows builds have no publisher signature; neither should be installed or redistributed as a release.
+The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. Windows requires the WebView2 runtime. Windows builds have no publisher signature and are test artifacts only. macOS GUI, packaging, signing, and process-management acceptance are not required; the existing CLI/npm macOS targets are unaffected.
 
 No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes; Debian package-manager transactions, system rollback, daemon lifecycle, and real-user data migration remain unverified. The existing CLI/npm package and its six-target build workflow are unchanged.
 
 ## Build
 
-The [Desktop CI workflow](../.github/workflows/desktop.yml) builds Linux, Windows, and macOS test artifacts from a clean checkout, bundles the matching CLI, and retains the outputs as Actions artifacts for seven days. It does not publish them.
+The [Desktop CI workflow](../.github/workflows/desktop.yml) builds four test targets from a clean checkout: Linux amd64/arm64 and Windows amd64/arm64. It bundles the matching CLI and retains outputs as Actions artifacts for seven days; it does not publish them.
 
 A local `mygo build` writes `webui/dist`, `desktop/dist`, `desktop/build`, and a CLI binary under `desktop/resources`; use a disposable worktree rather than overwriting existing generated files. The build requires the locked desktop Bun dependencies and the WebUI npm dependencies. MyGo's `buildCommand` builds the embedded WebUI and desktop frontend.
 

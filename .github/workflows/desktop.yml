@@ -92,18 +92,6 @@ jobs:
             platform: windows/arm64
             cli: pi-switch.exe
             needs_nsis: true
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-            platform: darwin/amd64
-            cli: pi-switch
-            needs_nsis: false
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            platform: darwin/arm64
-            cli: pi-switch
-            needs_nsis: false
 
     runs-on: ${{ matrix.os }}
     name: package test / ${{ matrix.platform }}
