@@ -233,26 +233,7 @@ func processIdentity(pid uint32) ProcessIdentity {
 		return processIdentityDarwin(pid)
 	}
 	if runtime.GOOS == "windows" {
-		if pid == uint32(os.Getpid()) {
-			identity.Executable, _ = os.Executable()
-		}
-		if out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH").Output(); err == nil {
-			line := strings.TrimSpace(strings.Split(string(out), "\n")[0])
-			parts := strings.Split(line, ",")
-			if len(parts) > 0 {
-				identity.Executable = strings.Trim(parts[0], "\"")
-			}
-		}
-		// PowerShell exposes the creation time even on systems where WMIC is
-		// absent. Keep a PID fallback only for minimal Windows images.
-		command := fmt.Sprintf("(Get-Process -Id %d).StartTime.ToFileTimeUtc()", pid)
-		if out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", command).Output(); err == nil {
-			identity.StartToken = strings.TrimSpace(string(out))
-		}
-		if identity.StartToken == "" {
-			identity.StartToken = fmt.Sprintf("pid:%d", pid)
-		}
-		return identity
+		return processIdentityWindows(pid)
 	}
 	identity.Executable, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -494,8 +475,9 @@ func Start(s Service, host string, port uint16) (DaemonResult, error) {
 	pid := uint32(cmd.Process.Pid)
 	now := uint64(time.Now().UnixMilli())
 	identity := processIdentity(pid)
-	if runtime.GOOS == "darwin" && (identity.Executable == "" || identity.StartToken == "") {
+	if identity.Executable == "" || identity.StartToken == "" {
 		_ = cmd.Process.Kill()
+		<-exited
 		return DaemonResult{}, fmt.Errorf("cannot verify %s daemon process identity; refusing to register it", s.Label)
 	}
 	info := DaemonInfo{Pid: pid, Host: host, Port: port, StartedAt: now, Executable: identity.Executable, StartToken: identity.StartToken, State: "starting"}

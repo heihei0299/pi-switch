@@ -191,12 +191,22 @@ func TestDaemonOperationLockRejectsConcurrentMutation(t *testing.T) {
 }
 
 func TestCurrentProcessIdentityHasStableFields(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("process start token adapters are covered by platform CI")
-	}
-	identity := processIdentity(uint32(os.Getpid()))
+	pid := uint32(os.Getpid())
+	identity := processIdentity(pid)
 	if identity.Executable == "" || identity.StartToken == "" {
 		t.Fatalf("current process identity incomplete: %+v", identity)
+	}
+	if strings.HasPrefix(identity.StartToken, "pid:") {
+		t.Fatalf("PID alone is not a stable process identity: %+v", identity)
+	}
+	if !processIdentityMatches(identity, processIdentity(pid)) {
+		t.Fatalf("current process identity changed between reads: %+v", identity)
+	}
+}
+
+func TestProcessIdentityUnavailableForInvalidPID(t *testing.T) {
+	if identity := processIdentity(0); identity.Executable != "" || identity.StartToken != "" {
+		t.Fatalf("invalid PID should not yield a process identity: %+v", identity)
 	}
 }
 
