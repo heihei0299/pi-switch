@@ -140,12 +140,8 @@ func TestStartPromptsForLiveLegacyProxyWithoutStoppingIt(t *testing.T) {
 func TestForceKillRefusesChangedProcessIdentity(t *testing.T) {
 	pid, exited := startIdentityHoldProcess(t)
 	identity := processIdentity(pid)
-	proc, err := os.FindProcess(int(pid))
-	if err != nil {
-		t.Fatal(err)
-	}
 	info := DaemonInfo{Pid: pid, Executable: identity.Executable, StartToken: identity.StartToken + "-reused"}
-	if err := forceKillManagedProcess(Proxy, info, proc); err == nil || !strings.Contains(strings.ToLower(err.Error()), "identity changed") {
+	if _, err := forceKillManagedProcess(Proxy, info); err == nil || !strings.Contains(strings.ToLower(err.Error()), "identity changed") {
 		t.Fatalf("force kill error=%v, want identity-change refusal", err)
 	}
 	assertProcessSurvived(t, pid, exited)

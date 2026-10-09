@@ -583,16 +583,16 @@ func Stop(s Service) (DaemonResult, error) {
 		removePidFile(s)
 		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon; refusing to stop it and cleaned up state", info.Pid, s.Label)}, nil
 	}
-	proc, _ := os.FindProcess(int(info.Pid))
-	if proc != nil {
-		_ = proc.Signal(os.Interrupt)
-		if runtime.GOOS == "darwin" {
-			if managedProcess(*info) {
-				_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
-			}
-		} else {
-			_ = exec.Command("kill", strconv.Itoa(int(info.Pid))).Run()
+	proc, err := os.FindProcess(int(info.Pid))
+	if err != nil {
+		return DaemonResult{}, fmt.Errorf("cannot access managed %s PID %d: %w", s.Label, info.Pid, err)
+	}
+	if err := proc.Signal(os.Interrupt); err != nil {
+		if !isAlive(info.Pid) {
+			removePidFile(s)
+			return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)}, nil
 		}
+		return DaemonResult{}, fmt.Errorf("failed to request stop of %s PID %d: %w", s.Label, info.Pid, err)
 	}
 	for i := 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -601,25 +601,20 @@ func Stop(s Service) (DaemonResult, error) {
 			return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)}, nil
 		}
 	}
-	if err := forceKillManagedProcess(s, *info, proc); err != nil {
+	forced, err := forceKillManagedProcess(s, *info)
+	if err != nil {
 		return DaemonResult{}, err
 	}
 	removePidFile(s)
-	return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) force killed", s.Label, info.Pid)}, nil
+	message := fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)
+	if forced {
+		message = fmt.Sprintf("%s daemon (PID %d) force killed", s.Label, info.Pid)
+	}
+	return DaemonResult{Running: false, Pid: &info.Pid, Message: message}, nil
 }
 
-func forceKillManagedProcess(s Service, info DaemonInfo, proc *os.Process) error {
-	if !managedProcess(info) {
-		return fmt.Errorf("PID %d identity changed; refusing to force-kill %s daemon", info.Pid, s.Label)
-	}
-	if proc == nil {
-		return fmt.Errorf("cannot access PID %d; refusing to force-kill %s daemon", info.Pid, s.Label)
-	}
-	_ = proc.Kill()
-	if runtime.GOOS != "darwin" {
-		_ = exec.Command("kill", "-9", strconv.Itoa(int(info.Pid))).Run()
-	}
-	return nil
+func forceKillManagedProcess(s Service, info DaemonInfo) (bool, error) {
+	return forceKillProcess(s, info)
 }
 
 func Status(s Service) (DaemonResult, error) {
