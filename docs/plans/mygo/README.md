@@ -10,7 +10,7 @@
 
 ### 0.1 项目目标
 
-1. 为 pi-switch 增加 Linux、Windows 桌面入口：独立窗口、单实例、托盘菜单、系统通知、安装包和受控退出。macOS 不属于桌面支持范围；现有 CLI/npm 支持不变。
+1. 为 pi-switch 增加 Linux amd64/arm64 桌面入口：独立窗口、单实例、托盘菜单、系统通知、安装包和受控退出。Windows 与 macOS 不属于桌面支持范围；现有 CLI/npm 支持不变。
 2. 保留已存在且经验证的 **Go 业务核心**，不重写 Proxy/Responses/Chat/Anthropic 转换、Gateway 发布、模型元数据、Token/费用、SQLite 统计、会话匹配、配置持久化。
 3. **CLI / TUI / Headless Proxy 在没有图形环境时仍可独立运行**；桌面应用绝不能成为 Pi 模型调用的必要依赖。
 4. 首先实现“桌面端与现有 WebUI 功能等价”；其后通过独立的原生 UI 技术验收决定是否把 React/Vite/WebView 全部替换为 MyGo ui。**完全原生是有条件的后续目标，不是未经验证的前提**。

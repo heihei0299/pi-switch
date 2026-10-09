@@ -6,7 +6,7 @@
 
 ## 工作范围（保留原计划）
 
-- 桌面构建和 CLI/npm 分发分离：版本与 release 身份可追溯，桌面安装包/依赖说明完整；Linux、Windows 构建及实机安装验收。macOS 不属于桌面支持范围，现有 CLI/npm 目标不变。
+- 桌面构建和 CLI/npm 分发分离：版本与 release 身份可追溯，桌面安装包/依赖说明完整；Linux amd64/arm64 构建及实机安装验收。Windows 和 macOS 不属于桌面支持范围；macOS CLI/npm 目标不变。
 - 不破坏现有 .github/workflows/ci.yml 的 CLI 6 目标矩阵；桌面另加 build/test matrix，并确保桌面失败不会误发 npm。
 - 更新用户说明、开发手册、已知限制、安全边界与升级回滚步骤。正式签名与公证由受控凭据完成，缺少时明确仅内部/测试版本。
 - **验收 Gate D**：AT-14～AT-18；旧版和新版的配置/请求记录均可验证保留，禁用或卸载桌面不会破坏 CLI/Proxy。
@@ -14,15 +14,15 @@
 ## 可逐项执行的任务
 
 - [ ] 保持原有 CLI/npm 发布矩阵；建立与 CLI 发布相互隔离的桌面编译、安装包、GUI smoke 与更新渠道。
-- [ ] 打包 Linux 系统依赖与缺失诊断、Windows WebView2 检查；固定 MyGo 依赖。
+- [ ] 打包 Linux 系统依赖与缺失诊断；固定 MyGo 依赖。
 - [ ] 在洁净机器执行安装、重装、升级、卸载、旧 CLI 回退及 daemon 留存检查；核对 config/models.json/requests.db。
 - [ ] 确保 source commit 与二进制身份一致，secret scan 和打包内容无凭据；没签名/公证时只标记测试分发。
 
 ## 当前进展（2026-10-08）
 
-- 新增独立 Desktop CI：为 Linux、Windows 四个架构组合打包短期 Actions test artifact，构建后检查 CLI resource 内嵌的 commit/target 并生成对应身份清单；不改现有 CLI/npm workflow，也不发布 Release/npm。已在隔离 worktree 成功构建 Linux amd64 `.deb`/tarball/app。
+- 独立 Desktop CI 最初为 Linux/Windows 四个目标打包短期 Actions test artifact；2026-10-09 退役 Windows 后仅保留 Linux amd64/arm64。CI 检查 CLI resource 内嵌的 commit/target 并生成对应身份清单，不发布 Release/npm。已在隔离 worktree 成功构建 Linux amd64 `.deb`/tarball/app。
 - Linux amd64 打包 job 现在会从隔离 `HOME` 对生成的 tarball 执行安装、覆盖式重装和卸载 smoke；还验证含绝对 symlink 的恶意归档会被拒绝，不会覆盖现有安装或写出 staging，并验证模拟 config/models/requests 数据及用户同名命令保留。
-- 保持 spike app ID；Linux 安装依赖由 MyGo 声明 GTK 3/WebKitGTK，AppIndicator 可缺省；Windows 无发行者签名，不得当作正式发行物。macOS 无需签名或公证验收。
+- 保持 spike app ID；Linux 安装依赖由 MyGo 声明 GTK 3/WebKitGTK，AppIndicator 可缺省。
 - Linux tarball `install.sh` 已在临时 HOME 验证安装、重装替换、卸载、config/models/requests 数据保留，以及与应用同名的用户命令不会被覆盖或卸载；此外在临时源码副本构建 `0.1.1` 包，并用其 installer 将隔离 HOME 中的 `0.1.0` 包升级，确认新版二进制替换、旧文件移除、用户数据保留。该测试没有发布版本，也未验证真实用户数据迁移；Debian 系统级安装/回滚、GitHub workflow 和跨平台 GUI 仍未验收，Gate B/D 未通过。验证结果见[本 WP 记录](../../test-reports/mygo-wp-07-distribution-2026-10-08.md)。
 - 现有 Linux amd64 `.deb` 的 ar/control/data 归档结构、包名/版本/架构、GTK/WebKitGTK 依赖和安装载荷已静态检查；未安装 `dpkg`/`dpkg-deb`，不代表系统级安装或升级验证。
 
@@ -32,7 +32,7 @@
 | --- | --- | --- |
 | AT-01 | CI + CLI | 原有 Go、WebUI、Playwright、smoke、跨平台构建通过；记录并单独关闭继承的 README 测试失败 |
 | AT-10 | 安全测试 | 外部 URL/普通浏览器不能调用私有 MyGo Bind；本机管理 API 的回环/非回环鉴权合同保留，拒绝恶意 origin 与未授权写入；Key 不进入日志/状态快照/错误弹窗 |
-| AT-12 | Windows 实机 | Windows 10/11 WebView2/IME/高 DPI/单实例；每个受支持目标都运行可交互 GUI smoke，缺设备标记 block，不拿交叉编译充数。macOS 不属于桌面支持范围 |
+| AT-12 | 已退役 | Windows 桌面支持已移除；不再作为 Gate 或发布验收目标。Linux 桌面目标为 amd64/arm64 |
 | AT-13 | Linux 降级 | libayatana-appindicator3 缺失、无 system tray、WebKitGTK 缺失/版本不匹配、Wayland portal 不支持快捷键：应用不死锁，可找到替代入口，错误可读；托盘仅菜单模式 |
 | AT-14 | 统计基准 | 同一硬件、同一配置、冷/热启动各 5 次；测窗口可交互耗时、空闲 60 s 的 CPU/RSS、典型 100/1000 项页面滚动；提交原始数据与对照，Gate B 前批准阈值，不凭单次测量声称性能提升 |
 | AT-16 | 安装与回滚 | 干净系统安装、旧版本升级、备份/恢复、卸载桌面、恢复旧 CLI；config/models.json/requests.db 未丢失、Key 未泄露、daemon 不遗留异常进程 |

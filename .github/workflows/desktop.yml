@@ -62,54 +62,15 @@ jobs:
       - name: Scan tracked source for secrets
         run: bash scripts/check-secrets.sh
 
-  windows-daemon:
-    runs-on: windows-latest
-    name: verify daemon on Windows
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Test shared daemon service
-        run: go test ./internal/daemon
-
   package:
     needs: verify
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            platform: linux/amd64
-            cli: pi-switch
-            needs_nsis: false
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            platform: linux/arm64
-            cli: pi-switch
-            needs_nsis: false
-          - os: ubuntu-latest
-            goos: windows
-            goarch: amd64
-            platform: windows/amd64
-            cli: pi-switch.exe
-            needs_nsis: true
-          - os: ubuntu-latest
-            goos: windows
-            goarch: arm64
-            platform: windows/arm64
-            cli: pi-switch.exe
-            needs_nsis: true
+        goarch: [amd64, arm64]
 
-    runs-on: ${{ matrix.os }}
-    name: package test / ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    name: package test / linux-${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -131,10 +92,6 @@ jobs:
         with:
           bun-version: "1.4.0"
 
-      - name: Install NSIS for Windows installer
-        if: matrix.needs_nsis
-        run: sudo apt-get update && sudo apt-get install -y nsis
-
       - name: Install WebUI dependencies
         run: npm ci --prefix webui
 
@@ -148,15 +105,15 @@ jobs:
 
       - name: Build matching CLI resource
         env:
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-        run: bash scripts/build-go.sh "desktop/resources/${{ matrix.cli }}"
+        run: bash scripts/build-go.sh desktop/resources/pi-switch
 
       - name: Verify bundled CLI commit and target identity
         shell: bash
         env:
-          CLI_RESOURCE: desktop/resources/${{ matrix.cli }}
-          EXPECTED_TARGET: ${{ matrix.platform }}
+          CLI_RESOURCE: desktop/resources/pi-switch
+          EXPECTED_TARGET: linux/${{ matrix.goarch }}
         run: |
           commit=$(git rev-parse --short=7 HEAD)
           strings "$CLI_RESOURCE" | grep -Fx "$commit" >/dev/null
@@ -164,17 +121,17 @@ jobs:
 
       - name: Record test build identity
         env:
-          DESKTOP_PLATFORM: ${{ matrix.platform }}
+          DESKTOP_PLATFORM: linux/${{ matrix.goarch }}
         run: |
           printf '{"commit":"%s","platform":"%s","distribution":"internal-test-only","releaseSigning":"not-configured","notarized":false}\n' \
             "$GITHUB_SHA" "$DESKTOP_PLATFORM" > desktop/resources/build-identity.json
 
       - name: Build desktop installer/package
         working-directory: desktop
-        run: ./node_modules/.bin/mygo build -platform "${{ matrix.platform }}" -skip-build-command -skip-notarize
+        run: ./node_modules/.bin/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
 
       - name: Smoke-test Linux installer in an isolated HOME
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        if: matrix.goarch == 'amd64'
         working-directory: desktop
         run: |
           installer=$(find build/linux-amd64 -maxdepth 1 -name install.sh -print -quit)
@@ -192,7 +149,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-test-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: desktop-test-linux-${{ matrix.goarch }}
           path: desktop/build/**
           if-no-files-found: error
           retention-days: 7

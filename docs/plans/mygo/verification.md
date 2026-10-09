@@ -37,7 +37,7 @@ export PI_SWITCH_MODELS=/tmp/pi-switch-mygo-test/models.json
 
 准备合并 `main` 时，通过现有 `.github/workflows/ci.yml` 跑完整 Go/WebUI 测试、构建及安全扫描，再人工检查供应商、Gateway 显式发布、Proxy、Stats 主流程。CI 中独立桌面模块的测试和实际 GUI 检查按本次变更补充；普通 `mygo` push 不会自动触发原工作流，需要显式运行或在 PR 上验证。
 
-Linux/Windows 的实际 GUI 与安装测试放到对应平台的发布准备阶段；macOS 不属于桌面支持范围，不要求 GUI、打包、签名或进程管理验收。
+Linux amd64/arm64 的实际 GUI 与安装测试放到发布准备阶段；Windows 和 macOS 不属于桌面支持范围，不要求桌面 GUI、打包、签名或进程管理验收。macOS CLI/npm 验证不受影响。
 
 ## 结果记录
 
