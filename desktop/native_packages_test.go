@@ -55,7 +55,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if err := tester.Click("Packages"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("No packages installed.") {
+	if !tester.HasText("No packages registered.") {
 		t.Fatalf("initial package state = %q", tester.Texts())
 	}
 	if _, err := os.Stat(server.PiSwitchDBPath()); !os.IsNotExist(err) {
@@ -83,16 +83,16 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	tester.Type("npm:manual")
-	if err := tester.Click("Install package"); err != nil {
+	if err := tester.Click("Register package"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("Uninstall manual") {
+	if !tester.HasText("Remove registration for manual") {
 		t.Fatalf("manual package missing from list: %q", tester.Texts())
 	}
-	if err := tester.Click("Uninstall manual"); err != nil {
+	if err := tester.Click("Remove registration for manual"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("Uninstall package?") {
+	if !tester.HasText("Remove package registration?") {
 		t.Fatalf("uninstall confirmation missing: %q", tester.Texts())
 	}
 	if err := tester.Click("Cancel"); err != nil {
@@ -101,13 +101,13 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if _, err := server.GetInstalledPackage("npm:manual"); err != nil {
 		t.Fatalf("canceling uninstall removed package: %v", err)
 	}
-	if err := tester.Click("Uninstall manual"); err != nil {
+	if err := tester.Click("Remove registration for manual"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tester.Click("Confirm uninstall"); err != nil {
+	if err := tester.Click("Remove registration"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("Uninstalled package manual") {
+	if !tester.HasText("Removed registration for manual") {
 		t.Fatalf("uninstall result missing: %q", tester.Texts())
 	}
 	if _, err := server.GetInstalledPackage("npm:manual"); err != nil {
@@ -115,7 +115,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	}
 	remaining, err := loadNativePackages()
 	if err != nil || len(remaining) != 1 || remaining[0].id != "npm:demo-pi" {
-		t.Fatalf("remaining installed packages = %+v, %v", remaining, err)
+		t.Fatalf("remaining registered packages = %+v, %v", remaining, err)
 	}
 	if strings.Contains(strings.Join(tester.Texts(), " "), "package_json") {
 		t.Fatal("native package list exposed raw package manifest")

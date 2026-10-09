@@ -722,20 +722,20 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 	})
 	ui.Row(c).Gap(8).Children(func() {
 		ui.TextInput(c, &a.packageSpec).Label("Package spec").Width(440)
-		if ui.PrimaryButton(c, "Install package").Disabled(a.packagesLoading || a.runPackageTask == nil || strings.TrimSpace(a.packageSpec) == "").Clicked() && a.runPackageTask != nil {
+		if ui.PrimaryButton(c, "Register package").Disabled(a.packagesLoading || a.runPackageTask == nil || strings.TrimSpace(a.packageSpec) == "").Clicked() && a.runPackageTask != nil {
 			spec := strings.TrimSpace(a.packageSpec)
 			a.runPackageTask(func() (string, error) {
 				if err := server.AddInstalledPackage(spec, true); err != nil {
 					return "", err
 				}
-				return "Package added to pi-switch", nil
+				return "Package registered with pi-switch", nil
 			})
 		}
 	})
 	if !a.packagesLoaded && !a.packagesLoading && a.runPackageTask == nil {
 		ui.Text(c, "Package service is unavailable.").TextColor(c.Theme().TextMuted)
 	} else if a.packagesLoaded && len(a.packages) == 0 {
-		ui.Text(c, "No packages installed.").TextColor(c.Theme().TextMuted)
+		ui.Text(c, "No packages registered.").TextColor(c.Theme().TextMuted)
 	} else if len(a.packages) > 0 {
 		a.packageList.Key = func(i int) any { return a.packages[i].id }
 		a.packageList.Label = func(i int) string { return nativePackageDisplayName(a.packages[i]) }
@@ -767,23 +767,23 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 						return "Disabled package " + name, nil
 					})
 				}
-				if ui.Button(c, "Uninstall "+name).Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() {
+				if ui.Button(c, "Remove registration for "+name).Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() {
 					a.packageDeleteID = pkg.id
 					a.packageDeleteName = name
 					a.packageDeleteConfirm = true
 				}
 			})
-		}).Label("Installed packages").Height(280)
+		}).Label("Registered packages").Height(280)
 	}
-	if ui.AlertDialog(c, &a.packageDeleteConfirm, "Uninstall package?",
+	if ui.AlertDialog(c, &a.packageDeleteConfirm, "Remove package registration?",
 		"Remove "+a.packageDeleteName+" from the pi-switch package registry?",
-		"Cancel", "Confirm uninstall") == 1 && a.runPackageTask != nil {
+		"Cancel", "Remove registration") == 1 && a.runPackageTask != nil {
 		id, name := a.packageDeleteID, a.packageDeleteName
 		a.runPackageTask(func() (string, error) {
 			if err := server.DeleteInstalledPackage(id); err != nil {
 				return "", err
 			}
-			return "Uninstalled package " + name, nil
+			return "Removed registration for " + name, nil
 		})
 	}
 }

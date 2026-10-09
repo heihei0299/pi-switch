@@ -289,7 +289,7 @@ func TestNativeComplexGatewayAndPackagesSections(t *testing.T) {
 	if err := tester.Click("Packages"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Packages · local package registry", "Import from Pi Agent", "Install package", "Package service is unavailable."} {
+	for _, want := range []string{"Packages · local package registry", "Import from Pi Agent", "Register package", "Package service is unavailable."} {
 		if !tester.HasText(want) {
 			t.Fatalf("native package section is missing %q: %q", want, tester.Texts())
 		}
