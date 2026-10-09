@@ -36,6 +36,7 @@ type desktopShell struct {
 	selectedProfile      int
 	profileSwitching     bool
 	profileSwitchMessage string
+	tasks                desktopTasks
 }
 
 func startsMinimized(args []string) bool {
@@ -131,16 +132,28 @@ func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
 	if a.busy || a.exiting || a.window == nil {
 		return
 	}
+	ctx, token, ok := a.tasks.begin("proxy")
+	if !ok {
+		return
+	}
 	a.busy = true
 	a.window.Invalidate()
 	window := a.window
 	go func() {
 		result, err := run()
+		if ctx.Err() != nil {
+			return
+		}
 		message := result.Message
 		if err != nil {
 			message = err.Error()
 		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("proxy", token) {
+				a.tasks.finish("proxy", token)
+				return
+			}
+			defer a.tasks.finish("proxy", token)
 			a.busy = false
 			a.proxyMessage = message
 			if a.nativeWindow != nil {
@@ -308,17 +321,29 @@ func (a *desktopShell) runNativePackageTask(task func() (string, error)) {
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("packages")
+	if !ok {
+		return
+	}
 	preview.packagesLoading = true
 	preview.packagesError = ""
 	window.Invalidate()
 	go func() {
 		message, err := task()
+		if ctx.Err() != nil {
+			return
+		}
 		var packages []nativePackage
 		var listErr error
 		if err == nil {
 			packages, listErr = loadNativePackages()
 		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("packages", token) {
+				a.tasks.finish("packages", token)
+				return
+			}
+			defer a.tasks.finish("packages", token)
 			preview.packagesLoading = false
 			preview.packagesLoaded = true
 			if err != nil {
@@ -342,12 +367,24 @@ func (a *desktopShell) refreshNativeGatewayPreview(selections []gateway.GatewayS
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("gateway")
+	if !ok {
+		return
+	}
 	preview.gatewayLoading = true
 	preview.gatewayError = ""
 	window.Invalidate()
 	go func() {
 		loaded, err := loadNativeGatewayPreviewForSelection(selections)
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("gateway", token) {
+				a.tasks.finish("gateway", token)
+				return
+			}
+			defer a.tasks.finish("gateway", token)
 			preview.gatewayLoading = false
 			if err != nil {
 				preview.gatewayError = err.Error()
@@ -367,12 +404,24 @@ func (a *desktopShell) publishNativeGatewaySelection(selections []gateway.Gatewa
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("gateway")
+	if !ok {
+		return
+	}
 	preview.gatewayPublishing = true
 	preview.gatewayPublishMessage = ""
 	window.Invalidate()
 	go func() {
 		loaded, err := publishNativeGatewaySelection(selections)
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("gateway", token) {
+				a.tasks.finish("gateway", token)
+				return
+			}
+			defer a.tasks.finish("gateway", token)
 			preview.gatewayPublishing = false
 			if err != nil {
 				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
@@ -392,13 +441,25 @@ func (a *desktopShell) publishNativeGatewayDraft(raw string) {
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("gateway")
+	if !ok {
+		return
+	}
 	preview.gatewayPublishing = true
 	preview.gatewayPublishMessage = ""
 	preview.jsonStatus = "Publishing Gateway draft…"
 	window.Invalidate()
 	go func() {
 		loaded, err := publishNativeGatewayDraft(raw)
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("gateway", token) {
+				a.tasks.finish("gateway", token)
+				return
+			}
+			defer a.tasks.finish("gateway", token)
 			preview.gatewayPublishing = false
 			if err != nil {
 				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
@@ -421,12 +482,24 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("stats")
+	if !ok {
+		return
+	}
 	preview.statsLoading = true
 	preview.statsError = ""
 	window.Invalidate()
 	go func() {
 		loaded, err := loadNativeStats(requestPage, conversationPage, 10, filters)
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("stats", token) {
+				a.tasks.finish("stats", token)
+				return
+			}
+			defer a.tasks.finish("stats", token)
 			preview.statsLoading = false
 			if err != nil {
 				preview.statsError = err.Error()
@@ -446,13 +519,25 @@ func (a *desktopShell) refreshNativeConversationRequests(id string, page int) {
 	}
 	preview := a.complexPreview
 	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("conversation")
+	if !ok {
+		return
+	}
 	preview.conversationRequests = nativeConversationPage{id: id, page: page}
 	preview.conversationRequestsLoading = true
 	preview.conversationRequestsError = ""
 	window.Invalidate()
 	go func() {
 		loaded, err := loadNativeConversationPage(id, page, 10)
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("conversation", token) {
+				a.tasks.finish("conversation", token)
+				return
+			}
+			defer a.tasks.finish("conversation", token)
 			preview.conversationRequestsLoading = false
 			if err != nil {
 				preview.conversationRequestsError = err.Error()
@@ -479,11 +564,24 @@ func (a *desktopShell) refreshNativeOverview() {
 		return
 	}
 	a.overviewBusy = true
+	ctx, token, ok := a.tasks.begin("overview")
+	if !ok {
+		a.overviewBusy = false
+		return
+	}
 	a.nativeWindow.Invalidate()
 	window := a.nativeWindow
 	go func() {
 		overview, err := loadNativeOverview()
+		if ctx.Err() != nil {
+			return
+		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("overview", token) {
+				a.tasks.finish("overview", token)
+				return
+			}
+			defer a.tasks.finish("overview", token)
 			a.updateNativeOverview(overview, err)
 		})
 	}()
@@ -505,17 +603,30 @@ func (a *desktopShell) switchProfile(name string) {
 		return
 	}
 	a.profileSwitching = true
+	ctx, token, ok := a.tasks.begin("overview")
+	if !ok {
+		a.profileSwitching = false
+		return
+	}
 	a.profileSwitchMessage = "Switching profile…"
 	window := a.nativeWindow
 	window.Invalidate()
 	go func() {
 		err := setNativeCurrentProfile(name)
+		if ctx.Err() != nil {
+			return
+		}
 		var overview nativeOverview
 		var overviewErr error
 		if err == nil {
 			overview, overviewErr = loadNativeOverview()
 		}
 		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("overview", token) {
+				a.tasks.finish("overview", token)
+				return
+			}
+			defer a.tasks.finish("overview", token)
 			a.profileSwitching = false
 			if err != nil {
 				a.profileSwitchMessage = "Switch failed: " + err.Error()

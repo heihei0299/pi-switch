@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/server"
+	"github.com/heihei0299/pi-switch/internal/packages"
 )
 
 func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
@@ -49,7 +49,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 		preview.packagesLoaded = true
 	}
 	tester := ui.NewTester(preview.view, 900, 1000)
-	if _, err := os.Stat(server.PiSwitchDBPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(packages.PiSwitchDBPath()); !os.IsNotExist(err) {
 		t.Fatalf("opening the native prototype created package DB: %v", err)
 	}
 	if err := tester.Click("Packages"); err != nil {
@@ -58,7 +58,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if !tester.HasText("No packages registered.") {
 		t.Fatalf("initial package state = %q", tester.Texts())
 	}
-	if _, err := os.Stat(server.PiSwitchDBPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(packages.PiSwitchDBPath()); !os.IsNotExist(err) {
 		t.Fatalf("listing packages created package DB: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if !tester.HasText("Enable demo-pi") {
 		t.Fatalf("package toggle did not update UI: %q", tester.Texts())
 	}
-	imported, err := server.GetInstalledPackage("npm:demo-pi")
+	imported, err := packages.GetInstalledPackage("npm:demo-pi")
 	if err != nil || imported["enabled"] != false {
 		t.Fatalf("shared package toggle state = %#v, %v", imported, err)
 	}
@@ -98,7 +98,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if err := tester.Click("Cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.GetInstalledPackage("npm:manual"); err != nil {
+	if _, err := packages.GetInstalledPackage("npm:manual"); err != nil {
 		t.Fatalf("canceling uninstall removed package: %v", err)
 	}
 	if err := tester.Click("Remove registration for manual"); err != nil {
@@ -110,7 +110,7 @@ func TestNativePackagesPageUsesSharedPackageServices(t *testing.T) {
 	if !tester.HasText("Removed registration for manual") {
 		t.Fatalf("uninstall result missing: %q", tester.Texts())
 	}
-	if _, err := server.GetInstalledPackage("npm:manual"); err != nil {
+	if _, err := packages.GetInstalledPackage("npm:manual"); err != nil {
 		t.Fatalf("uninstall removed package metadata instead of soft-uninstalling it: %v", err)
 	}
 	remaining, err := loadNativePackages()

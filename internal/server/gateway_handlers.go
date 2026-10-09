@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/catalog"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/gateway"
@@ -112,7 +113,7 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generate
 // buildGeneratedGatewayPlan is the shared generated flow: the gateway package
 // builds, enriches and plans from one proposal.
 func buildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	return gateway.BuildEnrichedGeneratedPlan(cfg, current)
+	return application.BuildGeneratedGatewayPlan(cfg, current)
 }
 
 // buildDraftGatewayPlan builds the canonical plan for a user draft. The draft is
@@ -120,8 +121,7 @@ func buildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]int
 // explicitly reach BuildDraftPlan unchanged — and the plan's derived views match
 // what is published.
 func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	summary := gateway.EnrichDraftModels(cfg, draft)
-	return gateway.BuildDraftPlan(cfg, current, draft), summary
+	return application.BuildDraftGatewayPlan(cfg, current, draft)
 }
 
 // PublishedAuthCaveat reports the authentication caveat for the providers a plan

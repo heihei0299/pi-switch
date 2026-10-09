@@ -24,7 +24,10 @@ func main() {
 	}
 	mygo.App.SetMenu(shell.applicationMenu())
 	mygo.App.OnSecondInstance(func(_ []string, _ string) { shell.showWindow() })
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { shell.exiting = true })
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+		shell.exiting = true
+		shell.tasks.close()
+	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		if shell.tray != nil {
 			shell.tray.Destroy()

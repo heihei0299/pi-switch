@@ -14,9 +14,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/gateway"
-	"github.com/heihei0299/pi-switch/internal/server"
+	"github.com/heihei0299/pi-switch/internal/packages"
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
 )
@@ -189,28 +190,17 @@ func loadNativeGatewaySelectionPlan(selections []gateway.GatewaySelection) (nati
 	if err != nil {
 		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
 	}
-	generated, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
-	selected := selections
-	if selected == nil {
-		selected = make([]gateway.GatewaySelection, 0)
-		for _, group := range generated.Groups {
-			for _, model := range group.Models {
-				if model.Status == "published" {
-					selected = append(selected, gateway.GatewaySelection{Supplier: group.Supplier, Channel: group.Channel, Model: model.ID})
-				}
-			}
-		}
+	selectedPlan, err := application.BuildSelectedGatewayPlan(cfg, current, selections)
+	if err != nil {
+		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
 	}
+	selected := selectedPlan.Selected
 	selectedSet := make(map[gateway.GatewaySelection]bool, len(selected))
 	for _, selection := range selected {
 		selectedSet[selection] = true
 	}
-	proposed, err := gateway.BuildSelectedGatewayEntry(cfg, selected)
-	if err != nil {
-		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
-	}
-	gateway.EnrichDraftModels(cfg, proposed)
-	plan := gateway.BuildDraftPlan(cfg, current, proposed)
+	generated := selectedPlan.Generated
+	plan := selectedPlan.Plan
 	preview := nativeGatewayPreview{
 		currentProviders:   gatewayProviderNames(plan.Current),
 		proposedProviders:  gatewayProviderNames(plan.Proposed),
@@ -248,7 +238,7 @@ func publishNativeGatewaySelection(selections []gateway.GatewaySelection) (nativ
 	if plan.PendingCount == 0 {
 		return nativeGatewayPreview{}, fmt.Errorf("gateway has no changes to publish")
 	}
-	if err := gateway.PublishPlan(plan); err != nil {
+	if err := application.PublishGatewayPlan(plan); err != nil {
 		return nativeGatewayPreview{}, err
 	}
 	return loadNativeGatewayPreviewForSelection(selections)
@@ -332,7 +322,7 @@ func loadNativeStats(requestPage, conversationPage, limit int, filters nativeSta
 	} else if err != nil {
 		return nativeStatsPage{}, fmt.Errorf("inspect request history: %w", err)
 	}
-	service, err := server.OpenStatsService()
+	service, err := statsservice.OpenManagementService()
 	if err != nil {
 		return nativeStatsPage{}, err
 	}
@@ -451,7 +441,7 @@ func loadNativeConversationPage(id string, page, limit int) (nativeConversationP
 	} else if err != nil {
 		return nativeConversationPage{}, fmt.Errorf("inspect request history: %w", err)
 	}
-	service, err := server.OpenStatsService()
+	service, err := statsservice.OpenManagementService()
 	if err != nil {
 		return nativeConversationPage{}, err
 	}
@@ -515,12 +505,12 @@ func newNativeComplexPreview() *nativeComplexPreview {
 }
 
 func loadNativePackages() ([]nativePackage, error) {
-	if _, err := os.Stat(server.PiSwitchDBPath()); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(packages.PiSwitchDBPath()); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	rows, err := server.ListInstalledPackages()
+	rows, err := packages.ListInstalledPackages()
 	if err != nil {
 		return nil, err
 	}
@@ -595,8 +585,8 @@ func nativeGatewayDraftPlan(raw string) (gateway.CanonicalGatewayPlan, error) {
 	if err != nil {
 		return gateway.CanonicalGatewayPlan{}, err
 	}
-	gateway.EnrichDraftModels(cfg, draft)
-	return gateway.BuildDraftPlan(cfg, current, draft), nil
+	plan, _ := application.BuildDraftGatewayPlan(cfg, current, draft)
+	return plan, nil
 }
 
 func nativeJSONSyntaxErrorOffset(raw string) (int, bool) {
@@ -666,7 +656,7 @@ func publishNativeGatewayDraft(raw string) (nativeGatewayPreview, error) {
 	if plan.PendingCount == 0 {
 		return nativeGatewayPreview{}, fmt.Errorf("gateway draft has no changes to publish")
 	}
-	if err := gateway.PublishPlan(plan); err != nil {
+	if err := application.PublishGatewayPlan(plan); err != nil {
 		return nativeGatewayPreview{}, err
 	}
 	return loadNativeGatewayPreview()
@@ -712,7 +702,7 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 		}
 		if ui.Button(c, "Import from Pi Agent").Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() && a.runPackageTask != nil {
 			a.runPackageTask(func() (string, error) {
-				result, err := server.ImportPiPackages()
+				result, err := packages.ImportPiPackages()
 				if err != nil {
 					return "", err
 				}
@@ -725,7 +715,7 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 		if ui.PrimaryButton(c, "Register package").Disabled(a.packagesLoading || a.runPackageTask == nil || strings.TrimSpace(a.packageSpec) == "").Clicked() && a.runPackageTask != nil {
 			spec := strings.TrimSpace(a.packageSpec)
 			a.runPackageTask(func() (string, error) {
-				if err := server.AddInstalledPackage(spec, true); err != nil {
+				if err := packages.AddInstalledPackage(spec, true); err != nil {
 					return "", err
 				}
 				return "Package registered with pi-switch", nil
@@ -757,7 +747,7 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 				if ui.Button(c, label).Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() && a.runPackageTask != nil {
 					id := pkg.id
 					a.runPackageTask(func() (string, error) {
-						enabled, err := server.ToggleInstalledPackage(id)
+						enabled, err := packages.ToggleInstalledPackage(id)
 						if err != nil {
 							return "", err
 						}
@@ -780,7 +770,7 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 		"Cancel", "Remove registration") == 1 && a.runPackageTask != nil {
 		id, name := a.packageDeleteID, a.packageDeleteName
 		a.runPackageTask(func() (string, error) {
-			if err := server.DeleteInstalledPackage(id); err != nil {
+			if err := packages.DeleteInstalledPackage(id); err != nil {
 				return "", err
 			}
 			return "Removed registration for " + name, nil

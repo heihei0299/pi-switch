@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/heihei0299/pi-switch/internal/conversation"
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
 )
@@ -109,26 +108,13 @@ func statsPageLimit(c *gin.Context, max int) (page, limit int) {
 }
 
 func newStatsService(db *sql.DB) (statsservice.Service, error) {
-	cfg, err := loadConfig()
-	if err != nil {
-		return statsservice.Service{}, err
-	}
-	source := cfg.Settings.ConversationSource
-	return statsservice.Service{
-		DB:         db,
-		Source:     conversation.Source(source),
-		Candidates: conversationCandidates(sessionScanCandidates(source)),
-	}, nil
+	return statsservice.NewManagementService(db)
 }
 
 // OpenStatsService returns the management stats service with the configured
 // conversation source and the same cached session candidates as the API.
 func OpenStatsService() (statsservice.Service, error) {
-	db, err := store.GetDB()
-	if err != nil {
-		return statsservice.Service{}, err
-	}
-	return newStatsService(db)
+	return statsservice.OpenManagementService()
 }
 
 // --- stats handler with window filtering ---
