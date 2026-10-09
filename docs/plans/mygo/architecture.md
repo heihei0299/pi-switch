@@ -73,7 +73,7 @@ Pi ── HTTP :43112 ──> 独立 Proxy Router ──> translator / limit ─
 
 ### 2.2 平台疑点验证
 
-桌面支持目标为 Linux amd64/arm64；Windows 和 macOS 不属于桌面支持范围，macOS CLI/npm 支持不变。
+新版本桌面与 CLI/npm 支持目标为 Linux amd64/arm64；Windows 和 macOS 已退役，不再构建或分发新版本。
 
 | 平台 | 必测项 | 明确限制 / 回退 |
 | --- | --- | --- |

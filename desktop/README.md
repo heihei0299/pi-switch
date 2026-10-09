@@ -2,9 +2,9 @@
 
 This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Supported desktop targets are Linux amd64 and arm64; Windows and macOS desktop builds are not supported. WP-05/06 native views are previews; the React WebView remains the real management UI. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
 
-The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. macOS desktop builds are not supported; the existing CLI/npm macOS targets are unaffected.
+The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. New CLI/npm versions support Linux amd64 and arm64 only; macOS and Windows are retired for new versions.
 
-No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes; Debian package-manager transactions, system rollback, daemon lifecycle, and real-user data migration remain unverified. The existing CLI/npm package and its six-target build workflow are unchanged.
+No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes; Debian package-manager transactions, system rollback, daemon lifecycle, and real-user data migration remain unverified. New CLI/npm packages contain only Linux amd64 and arm64 binaries; historical release artifacts are unchanged.
 
 ## Build
 

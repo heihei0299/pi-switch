@@ -37,7 +37,7 @@
 | AT-01 | CI + CLI | 原有 Go、WebUI、Playwright、smoke、跨平台构建通过；记录并单独关闭继承的 README 测试失败 |
 | AT-15 | GUI 回归 | Home、Profiles、Proxy、Gateway、Stats/Conversations、Packages、Settings/Backups/Doctor 逐屏核对：空态、读写、保存、错误、草稿/JSON 编辑、键盘、长列表、主题 |
 | AT-16 | 安装与回滚 | 干净系统安装、旧版本升级、备份/恢复、卸载桌面、恢复旧 CLI；config/models.json/requests.db 未丢失、Key 未泄露、daemon 不遗留异常进程 |
-| AT-18 | CI/发布隔离 | main 的原六目标 CLI build 不退化；desktop 分离构建并在相应平台跑可执行 smoke；tag/npm 发布条件不被 desktop PR 误触发 |
+| AT-18 | CI/发布隔离 | Root CI 只构建 Linux amd64/arm64；desktop 分离构建并运行 Linux smoke；tag/npm 发布条件不被 desktop PR 误触发 |
 
 ## 完成条件
 

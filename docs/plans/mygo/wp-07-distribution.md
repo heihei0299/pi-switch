@@ -6,14 +6,14 @@
 
 ## 工作范围（保留原计划）
 
-- 桌面构建和 CLI/npm 分发分离：版本与 release 身份可追溯，桌面安装包/依赖说明完整；Linux amd64/arm64 构建及实机安装验收。Windows 和 macOS 不属于桌面支持范围；macOS CLI/npm 目标不变。
-- 保留 .github/workflows/ci.yml 的 Linux/macOS CLI 四目标矩阵；桌面另加 build/test matrix，并确保桌面失败不会误发 npm。
+- 桌面构建和 CLI/npm 分发分离：版本与 release 身份可追溯，桌面安装包/依赖说明完整；新版本仅支持 Linux amd64/arm64。Windows 和 macOS 已从新版本桌面与 CLI/npm 支持范围退役。
+- `.github/workflows/ci.yml` 的 CLI 构建矩阵仅保留 Linux amd64/arm64；桌面仍由独立 Linux build/test matrix 验证，桌面失败不得误发 npm。
 - 更新用户说明、开发手册、已知限制、安全边界与升级回滚步骤。正式签名与公证由受控凭据完成，缺少时明确仅内部/测试版本。
 - **验收 Gate D**：AT-14～AT-18；旧版和新版的配置/请求记录均可验证保留，禁用或卸载桌面不会破坏 CLI/Proxy。
 
 ## 可逐项执行的任务
 
-- [ ] 保持原有 CLI/npm 发布矩阵；建立与 CLI 发布相互隔离的桌面编译、安装包、GUI smoke 与更新渠道。
+- [ ] 新版本 CLI/npm 只打包 Linux amd64/arm64；建立与 CLI 发布相互隔离的桌面编译、安装包、GUI smoke 与更新渠道。
 - [ ] 打包 Linux 系统依赖与缺失诊断；固定 MyGo 依赖。
 - [ ] 在洁净机器执行安装、重装、升级、卸载、旧 CLI 回退及 daemon 留存检查；核对 config/models.json/requests.db。
 - [ ] 确保 source commit 与二进制身份一致，secret scan 和打包内容无凭据；没签名/公证时只标记测试分发。
@@ -30,14 +30,14 @@
 
 | ID | 验证方式 | 必须观察到的结果 |
 | --- | --- | --- |
-| AT-01 | CI + CLI | 原有 Go、WebUI、Playwright、smoke、跨平台构建通过；记录并单独关闭继承的 README 测试失败 |
+| AT-01 | CI + CLI | Go、WebUI、Playwright、smoke 与 Linux amd64/arm64 构建通过；记录并单独关闭继承的 README 测试失败 |
 | AT-10 | 安全测试 | 外部 URL/普通浏览器不能调用私有 MyGo Bind；本机管理 API 的回环/非回环鉴权合同保留，拒绝恶意 origin 与未授权写入；Key 不进入日志/状态快照/错误弹窗 |
 | AT-12 | 已退役 | Windows 桌面支持已移除；不再作为 Gate 或发布验收目标。Linux 桌面目标为 amd64/arm64 |
 | AT-13 | Linux 降级 | libayatana-appindicator3 缺失、无 system tray、WebKitGTK 缺失/版本不匹配、Wayland portal 不支持快捷键：应用不死锁，可找到替代入口，错误可读；托盘仅菜单模式 |
 | AT-14 | 统计基准 | 同一硬件、同一配置、冷/热启动各 5 次；测窗口可交互耗时、空闲 60 s 的 CPU/RSS、典型 100/1000 项页面滚动；提交原始数据与对照，Gate B 前批准阈值，不凭单次测量声称性能提升 |
 | AT-16 | 安装与回滚 | 干净系统安装、旧版本升级、备份/恢复、卸载桌面、恢复旧 CLI；config/models.json/requests.db 未丢失、Key 未泄露、daemon 不遗留异常进程 |
 | AT-17 | 依赖与秘密 | 固定依赖/锁文件、依赖许可证、敏感信息扫描、打包内容检查、构建身份与 commit 可追溯；未经签名的发行物明确标注不可正式分发 |
-| AT-18 | CI/发布隔离 | main 的 Linux/macOS 四目标 CLI build 不退化；desktop 分离构建并在相应平台跑可执行 smoke；tag/npm 发布条件不被 desktop PR 误触发 |
+| AT-18 | CI/发布隔离 | Root CI 只构建 Linux amd64/arm64；desktop 由独立 Linux workflow 构建并运行 smoke；tag/npm 发布须通过包内容校验且不得被 desktop PR 误触发 |
 
 ## 完成条件
 

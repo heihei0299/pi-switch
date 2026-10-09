@@ -3,7 +3,7 @@
 # pi-switch
 
 [![Version](https://img.shields.io/badge/version-20260912.1.1-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
@@ -64,7 +64,7 @@ npm run build
 node bin/pi-switch.js webui start --daemon
 ~~~
 
-Current CLI binaries support macOS and Linux. Historical releases are unchanged; see [releases](https://github.com/heihei0299/pi-switch/releases) for available downloads.
+New CLI/npm versions support Linux amd64 and arm64 only. macOS and Windows are unsupported; historical releases are unchanged. See [releases](https://github.com/heihei0299/pi-switch/releases) for available downloads.
 
 ## Quick start
 

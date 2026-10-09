@@ -3,7 +3,7 @@
 # pi-switch
 
 [![版本](https://img.shields.io/badge/version-20260912.1.1-blue.svg)](https://github.com/heihei0299/pi-switch/releases)
-[![平台](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
+[![平台](https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64-lightgrey.svg)](https://github.com/heihei0299/pi-switch/releases)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![许可证](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
@@ -64,7 +64,7 @@ npm run build
 node bin/pi-switch.js webui start --daemon
 ~~~
 
-当前 CLI 二进制支持 macOS 和 Linux；历史版本保持不变。可在 [Releases](https://github.com/heihei0299/pi-switch/releases) 查看可下载版本。
+新版本 CLI/npm 仅支持 Linux amd64 和 arm64；macOS、Windows 不再支持，历史版本保持不变。可在 [Releases](https://github.com/heihei0299/pi-switch/releases) 查看可下载版本。
 
 ## 快速开始
 
