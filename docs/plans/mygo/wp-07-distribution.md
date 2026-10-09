@@ -7,7 +7,7 @@
 ## 工作范围（保留原计划）
 
 - 桌面构建和 CLI/npm 分发分离：版本与 release 身份可追溯，桌面安装包/依赖说明完整；Linux amd64/arm64 构建及实机安装验收。Windows 和 macOS 不属于桌面支持范围；macOS CLI/npm 目标不变。
-- 不破坏现有 .github/workflows/ci.yml 的 CLI 6 目标矩阵；桌面另加 build/test matrix，并确保桌面失败不会误发 npm。
+- 保留 .github/workflows/ci.yml 的 Linux/macOS CLI 四目标矩阵；桌面另加 build/test matrix，并确保桌面失败不会误发 npm。
 - 更新用户说明、开发手册、已知限制、安全边界与升级回滚步骤。正式签名与公证由受控凭据完成，缺少时明确仅内部/测试版本。
 - **验收 Gate D**：AT-14～AT-18；旧版和新版的配置/请求记录均可验证保留，禁用或卸载桌面不会破坏 CLI/Proxy。
 
@@ -37,7 +37,7 @@
 | AT-14 | 统计基准 | 同一硬件、同一配置、冷/热启动各 5 次；测窗口可交互耗时、空闲 60 s 的 CPU/RSS、典型 100/1000 项页面滚动；提交原始数据与对照，Gate B 前批准阈值，不凭单次测量声称性能提升 |
 | AT-16 | 安装与回滚 | 干净系统安装、旧版本升级、备份/恢复、卸载桌面、恢复旧 CLI；config/models.json/requests.db 未丢失、Key 未泄露、daemon 不遗留异常进程 |
 | AT-17 | 依赖与秘密 | 固定依赖/锁文件、依赖许可证、敏感信息扫描、打包内容检查、构建身份与 commit 可追溯；未经签名的发行物明确标注不可正式分发 |
-| AT-18 | CI/发布隔离 | main 的原六目标 CLI build 不退化；desktop 分离构建并在相应平台跑可执行 smoke；tag/npm 发布条件不被 desktop PR 误触发 |
+| AT-18 | CI/发布隔离 | main 的 Linux/macOS 四目标 CLI build 不退化；desktop 分离构建并在相应平台跑可执行 smoke；tag/npm 发布条件不被 desktop PR 误触发 |
 
 ## 完成条件
 

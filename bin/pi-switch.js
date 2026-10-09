@@ -7,20 +7,23 @@ import { fileURLToPath } from "url";
 const dir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(dir, "..");
 
-const platformMap = { darwin: "darwin", linux: "linux", win32: "windows" };
+if (process.platform === "win32") {
+  console.error("Error: Windows is not supported by the pi-switch CLI distribution.");
+  process.exit(1);
+}
+
 const archMap = { x64: "amd64", arm64: "arm64", ia32: "386" };
 
 function resolveBin() {
   if (process.env.PI_SWITCH_GO_BIN && existsSync(process.env.PI_SWITCH_GO_BIN)) {
     return process.env.PI_SWITCH_GO_BIN;
   }
-  const goos = platformMap[process.platform] || process.platform;
+  const goos = process.platform;
   const goarch = archMap[process.arch] || process.arch;
-  const ext = goos === "windows" ? ".exe" : "";
   const candidates = [
-    join(dir, `pi-switch-${goos}-${goarch}${ext}`),
-    join(dir, `pi-switch-${process.platform}-${process.arch}${ext}`),
-    join(projectRoot, `pi-switch${ext}`),
+    join(dir, `pi-switch-${goos}-${goarch}`),
+    join(dir, `pi-switch-${process.platform}-${process.arch}`),
+    join(projectRoot, "pi-switch"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -40,7 +43,7 @@ function resolveBin() {
 const bin = resolveBin();
 if (!bin) {
   console.error(`Error: Go binary not found for ${process.platform}/${process.arch}.`);
-  console.error(`Expected: bin/pi-switch-${platformMap[process.platform]||process.platform}-${archMap[process.arch]||process.arch}${(platformMap[process.platform]==='windows' || process.platform==='win32') ? '.exe' : ''}`);
+  console.error(`Expected: bin/pi-switch-${process.platform}-${archMap[process.arch] || process.arch}`);
   console.error(`Build with: npm run build:webui && npm run build:go:current`);
   console.error(`Or set PI_SWITCH_GO_BIN=/path/to/binary`);
   process.exit(1);

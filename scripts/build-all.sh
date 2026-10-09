@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Cross-compile matrix linux/darwin/windows x amd64/arm64 (pure Go, -s -w)
-# Output: bin/pi-switch-<goos>-<goarch>[.exe]
+# Cross-compile Linux and macOS for amd64/arm64 (pure Go, -s -w)
+# Output: bin/pi-switch-<goos>-<goarch>
 
 if [ ! -d "webui/dist" ] || [ -z "$(ls -A webui/dist 2>/dev/null)" ]; then
   echo "Building webui..."
@@ -9,11 +9,9 @@ if [ ! -d "webui/dist" ] || [ -z "$(ls -A webui/dist 2>/dev/null)" ]; then
 fi
 
 mkdir -p bin
-for GOOS in linux darwin windows; do
+for GOOS in linux darwin; do
   for GOARCH in amd64 arm64; do
-    EXT=""
-    if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-    OUT="bin/pi-switch-${GOOS}-${GOARCH}${EXT}"
+    OUT="bin/pi-switch-${GOOS}-${GOARCH}"
     echo "Building $OUT ..."
     GOOS=$GOOS GOARCH=$GOARCH bash scripts/build-go.sh "$OUT"
   done
