@@ -119,21 +119,29 @@ jobs:
         working-directory: desktop
         run: go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
 
-      - name: Build previous-commit desktop package for rollback smoke
-        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+      - name: Build previous-source desktop package for rollback smoke
+        if: github.event_name == 'push'
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
-          PREVIOUS_SHA: ${{ github.event.before }}
         run: |
+          source_commit=$(git log -1 --format=%H "$GITHUB_SHA" -- ':(glob)**/*.go' ':(exclude,glob)**/*_test.go')
+          test -n "$source_commit"
+          rollback_sha=$(git rev-parse "${source_commit}^")
+          if git diff --quiet "$rollback_sha" "$GITHUB_SHA" -- ':(glob)**/*.go' ':(exclude,glob)**/*_test.go'; then
+            echo "rollback baseline has no production Go source delta" >&2
+            exit 1
+          fi
+          echo "Building rollback baseline $rollback_sha (parent of latest production Go source commit $source_commit)"
+          echo "ROLLBACK_SHA=$rollback_sha" >> "$GITHUB_ENV"
           previous="$RUNNER_TEMP/pi-switch-previous"
-          git worktree add --detach "$previous" "$PREVIOUS_SHA"
+          git worktree add --detach "$previous" "$rollback_sha"
           npm ci --prefix "$previous/webui"
           npm --prefix "$previous/webui" run build
           (
             cd "$previous"
             GOOS=linux GOARCH="$DESKTOP_ARCH" bash scripts/build-go.sh desktop/resources/pi-switch
             printf '{"commit":"%s","platform":"linux/%s","distribution":"internal-test-only","releaseSigning":"not-configured","notarized":false}\n' \
-              "$PREVIOUS_SHA" "$DESKTOP_ARCH" > desktop/resources/build-identity.json
+              "$rollback_sha" "$DESKTOP_ARCH" > desktop/resources/build-identity.json
             cd desktop
             go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/$DESKTOP_ARCH" -skip-build-command -skip-notarize
           )
@@ -141,12 +149,11 @@ jobs:
       - name: Test Debian package install/reinstall/real-binary rollback/remove/purge
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
-          PREVIOUS_SHA: ${{ github.event.before }}
         run: |
           deb=$(find "desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
           args=("$deb")
-          if [[ "$GITHUB_EVENT_NAME" == push && -n "$PREVIOUS_SHA" && "$PREVIOUS_SHA" != 0000000000000000000000000000000000000000 ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == push && -n "${ROLLBACK_SHA:-}" ]]; then
             previous_deb=$(find "$RUNNER_TEMP/pi-switch-previous/desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
             test -n "$previous_deb"
             args+=("$previous_deb")
