@@ -1,5 +1,3 @@
-# MyGo 桌面迁移计划（索引迁移）
+# MyGo 桌面迁移规范
 
-此文档已按**一个工作包一个文件**拆分。请从 [docs/plans/mygo/README.md](./mygo/README.md) 查看完整目录、WP-00～WP-08 及验收标准。
-
-原有的完整功能、安全、平台和回滚要求已拆分到新目录；此路径仅保留导航，避免旧链接失效。
+迁移目标与约束以 [MyGo Native GUI SPEC](./mygo/SPEC-MYGO-NATIVE-GUI-001.md) 为准。执行计划、工作包、Tickets、进度和验收文档不在此处维护。
