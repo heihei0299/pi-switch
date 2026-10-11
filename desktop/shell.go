@@ -471,6 +471,13 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 				a.tasks.finish("stats", token)
 				return
 			}
+			nextRequestPage, nextConversationPage, filtersChanged := nativeStatsPagesForLatestFilters(requestPage, conversationPage, filters, preview.statsFilters)
+			if filtersChanged {
+				preview.statsLoading = false
+				a.tasks.finish("stats", token)
+				a.refreshNativeStats(nextRequestPage, nextConversationPage, preview.statsFilters)
+				return
+			}
 			defer a.tasks.finish("stats", token)
 			preview.statsLoading = false
 			if err != nil {

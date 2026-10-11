@@ -114,6 +114,18 @@ type nativeStatsFilters struct {
 	conversationTo    time.Time
 }
 
+func nativeStatsPagesForLatestFilters(requestPage, conversationPage int, loaded, selected nativeStatsFilters) (int, int, bool) {
+	requestChanged := loaded.requestRange != selected.requestRange || !loaded.requestFrom.Equal(selected.requestFrom) || !loaded.requestTo.Equal(selected.requestTo)
+	conversationChanged := loaded.conversationRange != selected.conversationRange || !loaded.conversationFrom.Equal(selected.conversationFrom) || !loaded.conversationTo.Equal(selected.conversationTo)
+	if requestChanged {
+		requestPage = 0
+	}
+	if conversationChanged {
+		conversationPage = 0
+	}
+	return requestPage, conversationPage, requestChanged || conversationChanged
+}
+
 func nativeStatsRefreshInterval(tier int) time.Duration {
 	switch tier {
 	case 1:
