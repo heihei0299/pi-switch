@@ -1,5 +1,9 @@
 # WP-06 Native complex progress — initial and follow-up 2026-10-08
 
+## Current formal GUI gate status (2026-10-11 update)
+
+**Task 2 real-GUI acceptance: PENDING (not run in this continuation; not PASS).** Wayland/IME, tray, display scaling, and controlled Proxy lifecycle acceptance remain pending. The existing Ubuntu/Xvfb interaction rows below are preserved as historical supplemental evidence and do not satisfy the formal GUI gate.
+
 **Status: IN PROGRESS / Gate C NOT PASSED.** Complex native screens are opt-in prototypes. Gateway previews real config/models without writing and has separate explicit-confirmation publish actions for selected models and validated JSON drafts; Stats uses the same configured service as the management API. Existing React/WebView pages remain authoritative and available.
 
 ## Component assessment

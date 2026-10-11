@@ -3,8 +3,8 @@
 ## 状态
 
 - **代码实施：完成于当前工作树；T03 整体验收：未通过 / BLOCK。**
-- 用户明确要求跳过实机验收并直接进入 T03。本轮没有连接 `10.10.10.244`，没有启动 GUI 或触碰测试主机；实机 GUI 验收按要求跳过，不能记作 PASS。
-- 阶段 0 的 Root CI 与 Desktop CI 已在已提交 HEAD 上通过（详见下表），但 T02 实机 GUI 门禁仍 BLOCK，Task 1/2 的 GUI 门禁仍未完成。Task 2 与 T03 的真实 GUI 验收按用户要求均为 SKIPPED/BLOCK；没有将其标记为 PASS。此次授权只跳过实机验收，不替代这些门禁，不表示 React/WebView 可以退役。
+- 此前曾要求跳过实机验收；按最新指示，T03 正式 GUI/Wayland/IME/托盘/缩放/受控 Proxy 生命周期验收为 **PENDING**（本轮未运行，不是 PASS）。当前机器未运行 GUI，也未连接测试主机。
+- 阶段 0 的 Root CI 与 Desktop CI 已在已提交 HEAD 上通过（详见下表），但 T02、任务 1/2 与 T03 的正式 GUI 门禁均为 **PENDING**（本轮未运行，不是 PASS）。用户授权门禁待定时继续 T05 范围审计，不代表通过或豁免，也不表示 React/WebView 可以退役。
 - 任务 2（Stats/Sessions/Packages）与 T03 默认入口/统一导航已按顺序分别提交；原有 unrelated staged/unstaged/untracked 改动未混入。
 
 ## 本轮改动
@@ -28,7 +28,7 @@
 | `git diff --check` | PASS |
 | Root CI run `38121054078` | PASS；`workflow_dispatch`，HEAD `ae3b9ef934a6fc6cf8909c254f66b2fe7c13415d`，Root CI、Linux amd64/arm64 builds、npm package check 全部成功 |
 | Desktop CI run `38120018023` | PASS；HEAD 同为 `ae3b9ef934a6fc6cf8909c254f66b2fe7c13415d`，Desktop module、Linux amd64/arm64 package builds 成功；amd64 installer smoke PASS，arm64 smoke 按 workflow 条件 SKIP |
-| 实机 GUI / Wayland / IME / tray 完整流程 | **按用户要求跳过；未验证，不是 PASS** |
+| 实机 GUI / Wayland / IME / tray / 缩放 / 受控 Proxy 完整流程 | **PENDING（本轮未运行，不是 PASS）** |
 
 以上远程 Actions 针对已提交 HEAD，不包含本报告的 dirty worktree 修改；T03 当前改动由本地 Desktop 测试/vet/build 验证，尚无对应远程 CI run。
 
@@ -38,7 +38,7 @@
 
 ## 独立提交验证（2026-10-11）
 
-Task 2 先提交 `b3f5244`，随后提交 T03；T03 代码在以 Task 2 commit 为基线的隔离源码树中复验：`go -C desktop test ./...`、`go -C desktop vet ./...`、`go -C desktop build` 与 `TestNativeStandardNavigationAndEmptyStates` 均 PASS，提交 diff check PASS。真实 GUI 验收仍为 **SKIPPED/BLOCK**，没有进行 GUI 操作或将验收记为 PASS。
+Task 2 先提交 `b3f5244`，随后提交 T03；T03 代码在以 Task 2 commit 为基线的隔离源码树中复验：`go -C desktop test ./...`、`go -C desktop vet ./...`、`go -C desktop build` 与 `TestNativeStandardNavigationAndEmptyStates` 均 PASS，提交 diff check PASS。真实 GUI 验收仍为 **PENDING**（未运行，不是 PASS），没有进行 GUI 操作。
 
 ## T05 退役前仍存在的旧 UI 消费者
 
@@ -50,4 +50,4 @@ Task 2 先提交 `b3f5244`，随后提交 T03；T03 代码在以 Task 2 commit �
 
 ## 未验证与风险
 
-`--web` 的参数分流和 URL 构造由单元测试覆盖，但没有实机启动旧 WebView。当前 Native 默认入口的真实 Wayland/IME/托盘行为、T02 及 Task 1/2 实际验收门禁仍未通过或未验证；因此 T03 的实施不构成正式桌面发布资格，也不授权 T05 清理旧 UI。
+`--web` 的参数分流和 URL 构造由单元测试覆盖，但没有实机启动旧 WebView。当前 Native 默认入口的真实 GUI/Wayland/IME/托盘/缩放/受控 Proxy 生命周期及 T02、任务 1/2、T03 正式验收均为 PENDING（未运行，不是 PASS）；因此 T03 的实施不构成正式桌面发布资格，也不授权删除旧 UI。
