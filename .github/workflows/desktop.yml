@@ -125,6 +125,21 @@ jobs:
           test -n "$deb"
           bash desktop/scripts/test-deb-package-lifecycle.sh "$deb"
 
+      - name: Smoke-test packaged arm64 Native window under Xvfb (not GUI gate)
+        if: matrix.goarch == 'arm64'
+        env:
+          DESKTOP_ARCH: ${{ matrix.goarch }}
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb xauth x11-utils
+          deb=$(find "desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$deb"
+          sudo apt-get install -y --no-install-recommends "./$deb"
+          bash desktop/scripts/test-native-window-xvfb.sh \
+            /opt/pi-switch-mygo-spike/pi-switch-mygo-spike \
+            "$RUNNER_TEMP/pi-switch-native-window.log"
+          sudo apt-get purge -y pi-switch-mygo-spike
+          test ! -e /opt/pi-switch-mygo-spike/pi-switch-mygo-spike
+
       - name: Run bundled CLI on native arm64
         if: matrix.goarch == 'arm64'
         env:
