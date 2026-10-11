@@ -76,12 +76,30 @@ user_home="$work_dir/user-home"
 mkdir -p "$user_home/.pi-switch" "$user_home/.pi/agent/sessions"
 printf '{"sentinel":"preserve"}\n' >"$user_home/.pi-switch/config.json"
 printf '{"sentinel":"preserve"}\n' >"$user_home/.pi-switch/models.json"
-printf 'test database sentinel\n' >"$user_home/.pi-switch/requests.db"
+python3 - "$user_home/.pi-switch/requests.db" <<'PY'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+try:
+    db.execute("CREATE TABLE requests (request_id TEXT PRIMARY KEY, input_tokens INTEGER, output_tokens INTEGER)")
+    db.execute("INSERT INTO requests VALUES ('sentinel', 100, 20)")
+    db.commit()
+finally:
+    db.close()
+PY
 printf '{"type":"session","id":"sentinel"}\n' >"$user_home/.pi/agent/sessions/session.jsonl"
 assert_user_data() {
   grep -qx '{"sentinel":"preserve"}' "$user_home/.pi-switch/config.json"
   grep -qx '{"sentinel":"preserve"}' "$user_home/.pi-switch/models.json"
-  grep -qx 'test database sentinel' "$user_home/.pi-switch/requests.db"
+  python3 - "$user_home/.pi-switch/requests.db" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert db.execute("SELECT request_id, input_tokens, output_tokens FROM requests").fetchall() == [("sentinel", 100, 20)]
+PY
   grep -qx '{"type":"session","id":"sentinel"}' "$user_home/.pi/agent/sessions/session.jsonl"
 }
 assert_version() {
