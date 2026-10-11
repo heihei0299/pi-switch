@@ -51,12 +51,19 @@ func TestMgmtAPIRouterPreservesRoutesAndAuth(t *testing.T) {
 		t.Fatalf("API/health routes differ from legacy router:\nAPI: %v\nlegacy: %v", apiRoutes, legacyRoutes)
 	}
 
-	denied := getAPI(api, "/api/config", nil)
-	if denied.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated API request = %d, want 401", denied.Code)
-	}
-	served := getAPI(api, "/api/config", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)})
-	if served.Code != http.StatusOK {
-		t.Fatalf("authenticated API request = %d, want 200", served.Code)
+	for _, tc := range []struct {
+		name   string
+		router *gin.Engine
+	}{{"API-only", api}, {"Desktop fallback", legacy}} {
+		t.Run(tc.name, func(t *testing.T) {
+			denied := getAPI(tc.router, "/api/config", nil)
+			if denied.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated API request = %d, want 401", denied.Code)
+			}
+			served := getAPI(tc.router, "/api/config", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)})
+			if served.Code != http.StatusOK {
+				t.Fatalf("authenticated API request = %d, want 200", served.Code)
+			}
+		})
 	}
 }
