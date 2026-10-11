@@ -11,7 +11,8 @@
 | 目标 | 入口 | 继续阅读 |
 |---|---|---|
 | CLI 命令分发 | `cmd/pi-switch/main.go:main` | `handleProxy`、`handleWebUI`、`handleGatewayCLI` |
-| WebUI 管理 API | `internal/server/server.go:NewMgmtRouter` | `profile_handlers.go`、`settings_handlers.go`、`stats_handlers.go`、`package_handlers.go`、`gateway_handlers.go` |
+| CLI 管理 API | `cmd/pi-switch/main.go:startWebUI` → `internal/server/server.go:NewMgmtAPIRouterWithAuth` | `profile_handlers.go`、`settings_handlers.go`、`stats_handlers.go`、`package_handlers.go`、`gateway_handlers.go` |
+| Desktop `--web` 回退 | `desktop/management.go:registerManagementUI` → `internal/server/server.go:NewMgmtRouter` | `webui/embed.go:FS`、legacy static routes |
 | Proxy 请求入口 | `internal/server/server.go:NewProxyRouter` | `proxy_handlers.go:handleChatCompletions`、`handleStream` |
 | 供应商/渠道/模型 | `internal/config/config.go:PiSwitchConfig` | `ProviderProfile`、`Upstream`、`ModelEntry` |
 | Gateway 预览与发布 | `internal/gateway/gateway.go:BuildGeneratedPlan` / `BuildDraftPlan` | `BuildEnrichedGeneratedPlan`、`PublishPlan` |
@@ -22,20 +23,21 @@
 | 请求落库与统计 | `internal/store/`、`internal/stats/` | `logRequest`、Stats service |
 | 模型目录 enrich | `internal/catalog/catalog.go` | `Ensure`、`FillMissing` / `FillOverwrite` |
 | daemon 生命周期 | `internal/daemon/daemon.go` | PID、lock、health |
-| 前端调用边界 | `webui/src/api.ts:api` | `apiSchema.ts`、React components |
-| WebUI 嵌入 | `webui/embed.go:FS` | `webui/dist`、`internal/server` static routes |
+| 前端调用边界 | `webui/src/api.ts:api` | `apiSchema.ts`、React components；仅 Desktop `--web` 回退使用 |
+| Desktop WebUI 嵌入 | `webui/embed.go:FS` | `webui/dist`、`desktop/management.go` |
 
 ## 2. 总体拓扑
 
 ```mermaid
 flowchart TB
     Pi["Pi 客户端"] --> Proxy["Proxy API :43112"]
-    Browser["浏览器"] --> WebUI["React WebUI"]
-    WebUI --> Mgmt["Management API :43110"]
     CLI["CLI"] --> Main["cmd/pi-switch/main.go"]
     TUI["TUI"] --> Main
     Main --> Proxy
-    Main --> Mgmt
+    Main --> MgmtHTTP["CLI API-only router :43110"]
+    MgmtHTTP --> Mgmt["Management API handlers (/api/*)"]
+    Desktop["Desktop --web fallback"] --> WebUI["React WebUI via pi-switch-ui://"]
+    WebUI --> Mgmt
 
     subgraph GoCore["Go 共享核心"]
         Config["config"]
@@ -277,7 +279,11 @@ PUT  /api/models/gateway
      校验并原子发布 proposed
 ```
 
-## 5. WebUI 调用链
+## 5. 管理 API 与保留的 WebUI 回退
+
+CLI 的 `pi-switch webui start` 使用 API-only router：`/api/*` 与认证行为保持不变，`/` 返回 WebUI 退役说明（HTTP 410），不提供浏览器静态资源。MyGo Desktop 的 Native 界面是主入口；显式 `--web` 回退仍通过 `pi-switch-ui://` 注册 legacy router，供回退 WebView 使用。
+
+WebUI 前端调用链（仅 Desktop `--web` 回退）：
 
 ```text
 React component
@@ -286,16 +292,15 @@ React component
 webui/src/api.ts
       │  fetch /api/*
       ▼
-webui/src/apiSchema.ts
-      │  decode contract
+webui/src/apiSchema.ts       decode contract
       ▼
-internal/server/server.go        kernel：NewMgmtRouter 注册 /api/*
+internal/server/server.go   NewMgmtRouter：/api/* 与 legacy static routes
       │
       ▼
 config / gateway / store / piagent
 ```
 
-WebUI 生产资源由 Vite 构建到 `webui/dist`，再由 `webui/embed.go` 嵌入 Go 二进制：
+`webui/dist` 由 Vite 构建，并由 Desktop 包通过 `webui/embed.go` 保留给 `--web` 回退；生产 CLI `bin/pi-switch` 不嵌入这些前端资源。
 
 ```text
 webui/src
@@ -307,10 +312,7 @@ Vite build
 webui/dist
    │
    ▼
-//go:embed dist
-   │
-   ▼
-bin/pi-switch
+webui/embed.go:FS → desktop/management.go → pi-switch-ui://
 ```
 
 ## 6. 核心持久化位置
