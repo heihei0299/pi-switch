@@ -85,6 +85,8 @@ The management API remains available under `/api/*`; `/` displays the WebUI reti
 3. Start the proxy from **Proxy**, or run <code>pi-switch proxy start --daemon</code>.
 4. In Pi, select <code>pi-switch-res</code> for Responses models or <code>pi-switch-chat</code> for Chat models, then choose an exposed model.
 
+Stopping a managed daemon verifies its process identity with a Linux pidfd. If pidfds are unavailable or blocked, `stop` fails closed instead of signaling a possibly reused PID.
+
 The management API binds to loopback by default. Binding to a non-loopback address requires a password; see the [security guide](./WEBUI_GUIDE.md#security).
 
 ## Common questions

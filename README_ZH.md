@@ -83,6 +83,8 @@ pi-switch webui start --daemon
 3. 在 **Proxy** 中启动代理，或运行 <code>pi-switch proxy start --daemon</code>。
 4. 在 Pi 中，Responses 模型选择 <code>pi-switch-res</code>，Chat 模型选择 <code>pi-switch-chat</code>，然后选择已暴露的模型。
 
+停止受管后台进程时会用 Linux pidfd 校验并固定进程身份；若 pidfd 不可用或被安全策略拦截，`stop` 会安全拒绝，而不会按可能已复用的 PID 发送信号。
+
 管理 API 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[安全说明](./WEBUI_GUIDE.md#security)。
 
 ## 常见问题
