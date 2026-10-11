@@ -34,6 +34,11 @@ version=$("$binary" --version)
 info=$("$binary" --build-info)
 node -e 'const info=JSON.parse(process.argv[1]); const version=process.argv[2]; if (!info.version || info.version !== version || !info.commit || !info.target || !info.buildTime) { console.error(info); process.exit(1); }' "$info" "$version"
 "$binary" config path >/dev/null
+cat >"$PI_SWITCH_CONFIG" <<'JSON'
+{"version":1,"profiles":{},"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"injectOpenCodeAttribution":true}}
+JSON
+chmod 0600 "$PI_SWITCH_CONFIG"
+legacy_config_hash=$(sha256sum "$PI_SWITCH_CONFIG" | cut -d' ' -f1)
 printf '%s\n' '{"ts":"2026-08-03T12:00:00Z","provider":"legacy-smoke","model":"compat-model","ok":true,"status":200,"promptTokens":13,"completionTokens":7,"cachedTokens":0,"reasoningTokens":0,"costTotal":0.002}' >"$workdir/requests.log"
 legacy_log_hash=$(sha256sum "$workdir/requests.log" | cut -d' ' -f1)
 
@@ -53,6 +58,29 @@ if [ "$ready" != true ]; then
   echo "functional check: management API did not start" >&2
   exit 1
 fi
+curl -fsS "http://127.0.0.1:$port/api/config" >"$workdir/legacy-config-response.json"
+node - "$workdir/legacy-config-response.json" "$workdir/migrated-config.json" <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const response = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+assert.equal(response.config.version, 2);
+assert.equal(response.config.settings.conversationSource, 'proxy');
+assert.equal(Object.hasOwn(response.config.settings, 'injectOpenCodeAttribution'), false);
+assert.equal(response.config.settings.proxy.port, 43112);
+fs.writeFileSync(process.argv[3], JSON.stringify(response.config));
+NODE
+test "$(sha256sum "$PI_SWITCH_CONFIG" | cut -d' ' -f1)" = "$legacy_config_hash"
+curl -fsS -X PUT -H 'Content-Type: application/json' --data-binary "@$workdir/migrated-config.json" "http://127.0.0.1:$port/api/config" >/dev/null
+node - "$PI_SWITCH_CONFIG" <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+assert.equal(config.version, 2);
+assert.equal(config.settings.conversationSource, 'proxy');
+assert.equal(Object.hasOwn(config.settings, 'injectOpenCodeAttribution'), false);
+assert.equal(config.settings.proxy.port, 43112);
+NODE
+test "$(stat -c '%a' "$PI_SWITCH_CONFIG")" = 600
 root_status=$(curl -sS -o "$workdir/root" -w '%{http_code}' "http://127.0.0.1:$port/")
 test "$root_status" = 410
 curl -fsS "http://127.0.0.1:$port/api/buildInfo" >"$workdir/build-info.json"
@@ -141,4 +169,4 @@ if "$binary" proxy status >"$workdir/proxy-stopped-status.log" 2>&1; then
   exit 1
 fi
 proxy_started=false
-printf 'functional smoke passed for %s (%s; API-only router, legacy SQLite import, and managed headless Proxy lifecycle)\n' "$binary" "$version"
+printf 'functional smoke passed for %s (%s; API-only router, legacy config/SQLite migration, and managed headless Proxy lifecycle)\n' "$binary" "$version"
