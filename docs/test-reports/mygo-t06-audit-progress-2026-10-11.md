@@ -40,13 +40,13 @@
 | 项目 | 状态 | 证据与边界 |
 | --- | --- | --- |
 | Native 与 HTTP 适配器边界 | PASS（静态检查） | `desktop/native_*.go`、`desktop/shell.go` 未导入 `internal/server` 或 `webui`；唯一旧 UI 消费者是保留的 `desktop/management.go` 回退注册器。 |
-| Stats 自定义日期异步一致性 | PASS（自动化） | 新测试覆盖加载时无法打开日期控件、已打开日历在加载期间修改后重跑最新筛选，以及只重置受影响分页。红测曾复现“加载期间旧日历仍可改日期”。 |
+| Stats 自定义日期异步一致性 | PASS（自动化与主代理自审） | MyGo v0.3.3 的 `Window.Update` 将回调投递到 UI 主线程；`refreshNativeStats` 在该回调内校验窗口与 task token、读取最新筛选并重跑，只重置发生变化的范围分页。测试覆盖加载时日期控件禁用、已打开日历的日期变更及分页计算；未直接驱动 shell 的异步 worker 集成路径。红测曾复现“加载期间旧日历仍可改日期”。 |
 | 配置、备份、Gateway、Proxy 身份 | PASS（自动化范围） | Root/Desktop 全套测试通过；现有用例覆盖旧配置迁移、备份/恢复、Gateway 冲突与并发发布保护、旧 SQLite 行/unknown 保留及 daemon 身份核验。测试通过不替代真实用户数据迁移。 |
 | Pi session 兼容 | PASS（自动化范围） | 新增旧格式与当前格式 JSONL 文件摘要读取测试；只读扫描，不写 session 文件。 |
 | Root CI | PASS | run `38163109346`，精确提交 `30c6cc3`；Go vet/test、WebUI typecheck/test/responsive、secret scan、双架构 build、API/legacy-config/legacy-SQLite-schema/legacy-log/managed-Proxy functional smoke、npm package check 成功。Release preflight 与 publish 跳过。 |
 | Desktop CI | PASS | run `38163090704`，精确提交 `30c6cc3`；Desktop test/vet、amd64 与 native arm64 打包、arm64 Xvfb Native window smoke、双架构 archive smoke 及 API/legacy-config/SQLite/log/managed-Proxy functional smoke 成功。最新 run `38169863342` 对精确提交 `a4be70b` 成功；动态基线仅考虑 Desktop 生产 Go 文件，双架构包生命周期检查有效 SQLite 行/完整性和四类用户数据文件 `0600` 模式，arm64 另启动降级后的 Native 窗口。runner 为 Ubuntu 24.04 amd64 与 native arm64。 |
-| T06 主代理自审：规范/架构/安全 | PASS（仅主代理 Review，非独立审查） | 审查 `8f560d4..a4be70b` 的 `.github/workflows/desktop.yml`、`desktop/scripts/test-deb-package-lifecycle.sh`、`scripts/functional-check.sh`。未增依赖或改生产业务边界；包测试拒绝在非 GitHub runner 执行，数据写入临时 HOME，私有 fixture 保持 0600；Xvfb 步骤明确不是 GUI gate。发现并修复“全仓 Go 文件提交可误选不链接进桌面程序的源码作为回滚基线”的测试可信度问题，`a4be70b` 现限定 Desktop 生产 Go 文件并验证其源码差异。 |
-| T06 主代理自审：Ticket/功能验收 | PASS（仅主代理 Review，非独立审查；只针对可自动化子范围） | 回滚包由动态源码基线生成；CI 核对实际可执行文件 SHA、包版本、dpkg 校验、SQLite 行/完整性与文件模式，arm64 降级旧包可启动并显示窗口。此证据仍不覆盖实际用户数据库迁移、旧版 GUI 交互等价或正式 Wayland/IME/托盘/缩放/Proxy GUI gate；这些保持未验证/PENDING。 |
+| T06 主代理自审：规范/架构/安全 | PASS（仅主代理 Review，非独立审查） | 审查 `8f560d4..a4be70b` 的 CI/包生命周期脚本，并复核 `fedf99e`、`31e06b8` 的 Stats 异步状态路径。`Window.Update` 文档与实现均确认回调异步投递至 UI 主线程；筛选读取/状态修改在该回调内，且受窗口销毁检查与 task token 校验保护。未发现此路径的数据竞争或过期结果覆盖；测试未直接驱动 shell 异步 worker，作为覆盖边界保留。未增依赖或改生产业务边界；包测试拒绝在非 GitHub runner 执行，数据写入临时 HOME，私有 fixture 保持 0600；Xvfb 步骤明确不是 GUI gate。发现并修复“全仓 Go 文件提交可误选不链接进桌面程序的源码作为回滚基线”的测试可信度问题，`a4be70b` 现限定 Desktop 生产 Go 文件并验证其源码差异。 |
+| T06 主代理自审：Ticket/功能验收 | PASS（仅主代理 Review，非独立审查；只针对可自动化子范围） | 回滚包由动态源码基线生成；CI 核对实际可执行文件 SHA、包版本、dpkg 校验、SQLite 行/完整性与文件模式，arm64 降级旧包可启动并显示窗口。Stats 自动化验证覆盖控件状态与筛选页码决策，不直接验证真实异步窗口重载。证据仍不覆盖实际用户数据库迁移、旧版 GUI 交互等价或正式 Wayland/IME/托盘/缩放/Proxy GUI gate；这些保持未验证/PENDING。 |
 | 本地 Desktop 回归 | PASS | `GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=0 go -C desktop test -count=1 -mod=readonly ./...`、`go -C desktop vet -mod=readonly ./...` 和 Stats 定向回归测试通过。 |
 | Secret scan | PASS（tracked source） | `scripts/check-secrets.sh` 本地与 CI 均通过；该扫描器范围是 Git 跟踪文件。 |
 | Native arm64 CLI runtime | PASS（不含 GUI） | Desktop CI run `38158277964` 的 `package test / linux-arm64` 在 Ubuntu 24.04 arm64 runner 上验证 `uname -m=aarch64`，实际运行 Native 构建出的 `pi-switch --version` 与 `--build-info`，并核对 `linux/arm64` 和 commit；同一 job 的 managed Proxy smoke 与 tarball install/reinstall/uninstall smoke 通过。没有启动 Desktop GUI，不能替代 Wayland/IME 或 GUI 进程验收。 |
