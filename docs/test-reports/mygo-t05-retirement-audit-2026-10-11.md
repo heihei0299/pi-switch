@@ -3,7 +3,7 @@
 ## 状态与边界
 
 - 本文先记录 T05 初始的非破坏性范围审计；后续实施与验证见“实施进度更新”。
-- T02、任务 2（Stats/Sessions/Packages）及 T03 的正式实机 GUI/Wayland/IME/托盘/缩放/受控 Proxy 生命周期验收：**PENDING（本轮未运行，不是 PASS）**。历史 Ubuntu/Xvfb 分项记录不替代正式门禁。
+- T02、任务 2（Stats/Sessions/Packages）及 T03 的正式 Arch+niri/Wayland/IME/托盘/硬件缩放/受控 Proxy 生命周期验收：**PENDING（未通过，不是 PASS）**。本轮仅补充 Ubuntu/Xvfb smoke；历史 Xvfb 分项记录不替代正式门禁。
 - 用户授权在这些门禁待定时继续 T05 审计；这不等于验收通过、发布就绪或授权移除兼容表面。
 - `mygo-t02-native-standard-2026-10-10.md` 已有未提交改动。本次先审阅其 diff；既有历史段落与 Xvfb 结果均保留，只增加当前门禁状态说明。
 
@@ -13,7 +13,8 @@
 - API-only 与 legacy router 的 `/api/*`、health 路由清单及认证回归一致；Proxy `/v1/*` 和 `pi-switch tui` 未改。
 - npm 继续分发 Linux CLI。API/UI 路由分离后，npm `files` 不再单独包含 `webui/dist/`；Go `embed.FS` 与 Desktop `--web` fallback 仍保留，因此根/ Desktop 构建目前仍需生成 `webui/dist`。
 - `scripts/check-npm-package.mjs` 现在拒绝把任何 `webui/` 资源装入 npm 包。隔离 fixture 正向检查通过（6 个包文件），把 `webui/dist/` 重新加入清单的负向检查按预期失败。
-- 当前 HEAD 的 Root CI `38139006638` 与 Desktop CI `38138695294` 在本次包清单变更前均成功；包清单变更后的 fixture 检查通过，仍需对新提交运行 Root CI。
+- 包清单提交 `47ffa91` 的 Root CI `38140186739` 与 Desktop CI `38140179179` 均成功；Root CI 覆盖 Linux amd64/arm64 构建及 Linux-only npm package check。
+- 隔离 npm fixture 检查通过（应为 6 个文件；重新把 `webui/dist/` 加回清单时负向检查失败）。本地工作树的 `npm pack` 因 ignored `bin/` 中残留的 Darwin/Windows 旧构建而列出 11 个文件；本地 package verifier 据此拒绝这 4 个非 Linux 二进制。没有删除或覆盖这些 ignored 文件；干净 CI 的 Linux-only package check 已成功。
 - 基于当前 HEAD `1a9cd9c` 的 Ubuntu 24.04/Xvfb/Openbox 补充 GUI smoke：Native 窗口可见，导航访问 Profiles、Providers、Proxy、Gateway、JSON Editor、Stats & Sessions、Packages、Settings、Backups、Doctor 未退出；Profiles 搜索可输入并过滤；Doctor 报告配置有效。隔离证据位于 `/home/gui-test/pi-switch-gui/sandbox/runs/plan-1a9cd9c-20261011-3UNgyT/`，页面截图在 `screenshots/page-*.png`。它不是 Arch+niri/Wayland 验收。
 - Xvfb 主机日志显示托盘因缺少/不支持 `libayatana-appindicator3` 不可用；IME、Wayland 与硬件缩放也未验证。正式 T02/任务 2/T03 GUI 门禁继续为 **PENDING（未运行/未通过，不是 PASS）**。
 - 同一隔离环境中的 CLI smoke：`GET /` 为 410、`GET /api/config` 为 200、`/assets/*` 与未知 API 路径为 404；测试服务和本轮 GUI 均已关闭，只保留隔离证据目录。此前已有无法核验身份的服务及 GUI 进程未触碰。
@@ -41,4 +42,4 @@
 
 ## 剩余工作与边界
 
-继续按计划验证 Native 正式 GUI 门禁并盘点尚存 build graph。正式门禁未通过前，不删除 Desktop `--web` / custom protocol；未单独授权发布前不发布 npm/GitHub Release。npm 文件清单的本次变更仅作本地提交，仍需包检查和 Root CI 证明。
+继续按计划验证 Native 正式 GUI 门禁并盘点尚存 build graph。正式门禁未通过前，不删除 Desktop `--web` / custom protocol；未单独授权发布前不发布 npm/GitHub Release。npm 文件清单变更已提交并推送，CI 验证通过；这不代表发布已发生。
