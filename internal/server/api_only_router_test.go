@@ -56,14 +56,38 @@ func TestMgmtAPIRouterPreservesRoutesAndAuth(t *testing.T) {
 		router *gin.Engine
 	}{{"API-only", api}, {"Desktop fallback", legacy}} {
 		t.Run(tc.name, func(t *testing.T) {
-			denied := getAPI(tc.router, "/api/config", nil)
-			if denied.Code != http.StatusUnauthorized {
-				t.Fatalf("unauthenticated API request = %d, want 401", denied.Code)
+			for _, credentials := range []struct {
+				name   string
+				header map[string]string
+				want   int
+			}{
+				{"missing", nil, http.StatusUnauthorized},
+				{"wrong", map[string]string{"Authorization": basicAuthHeader("admin", "wrong")}, http.StatusUnauthorized},
+				{"correct", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)}, http.StatusOK},
+			} {
+				t.Run(credentials.name, func(t *testing.T) {
+					response := getAPI(tc.router, "/api/config", credentials.header)
+					if response.Code != credentials.want {
+						t.Fatalf("API request = %d, want %d", response.Code, credentials.want)
+					}
+				})
 			}
-			served := getAPI(tc.router, "/api/config", map[string]string{"Authorization": basicAuthHeader("admin", testPassword)})
-			if served.Code != http.StatusOK {
-				t.Fatalf("authenticated API request = %d, want 200", served.Code)
+			if health := getAPI(tc.router, "/healthz", nil); health.Code != http.StatusOK {
+				t.Fatalf("unauthenticated health probe = %d, want 200", health.Code)
 			}
 		})
 	}
+
+	t.Run("loopback remains open", func(t *testing.T) {
+		loopback := NewMgmtAPIRouterWithAuth(MgmtAuthOptions{BindHost: "127.0.0.1"})
+		if response := getAPI(loopback, "/api/config", nil); response.Code != http.StatusOK {
+			t.Fatalf("unauthenticated loopback API = %d, want 200", response.Code)
+		}
+	})
+	t.Run("exposed bind fails closed", func(t *testing.T) {
+		exposed := NewMgmtAPIRouterWithAuth(MgmtAuthOptions{BindHost: "0.0.0.0"})
+		if response := getAPI(exposed, "/api/config", nil); response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated exposed API = %d, want 401", response.Code)
+		}
+	})
 }
