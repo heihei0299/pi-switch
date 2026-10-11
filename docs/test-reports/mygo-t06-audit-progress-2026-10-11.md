@@ -27,16 +27,17 @@
 | Stats 自定义日期异步一致性 | PASS（自动化） | 新测试覆盖加载时无法打开日期控件、已打开日历在加载期间修改后重跑最新筛选，以及只重置受影响分页。红测曾复现“加载期间旧日历仍可改日期”。 |
 | 配置、备份、Gateway、Proxy 身份 | PASS（自动化范围） | Root/Desktop 全套测试通过；现有用例覆盖旧配置迁移、备份/恢复、Gateway 冲突与并发发布保护、旧 SQLite 行/unknown 保留及 daemon 身份核验。测试通过不替代真实用户数据迁移。 |
 | Pi session 兼容 | PASS（自动化范围） | 新增旧格式与当前格式 JSONL 文件摘要读取测试；只读扫描，不写 session 文件。 |
-| Root CI | PASS | run `38152915216`，精确提交 `31e06b8`；Go vet/test、WebUI 检查、secret scan、双架构 CLI build、functional smoke、npm package check 成功。Release preflight 与 publish 跳过。 |
-| Desktop CI | PASS | run `38152875287`，精确提交 `31e06b8`；Desktop test/vet、双架构打包、amd64 与 arm64 archive 安装/覆盖/卸载 smoke 成功。 |
+| Root CI | PASS | run `38153441383`，精确提交 `1f876e1`；Go vet/test、WebUI 检查、secret scan、双架构 CLI build、functional smoke、npm package check 成功。Release preflight 与 publish 跳过。 |
+| Desktop CI | PASS | run `38153416434`，精确提交 `1f876e1`；Desktop test/vet、双架构打包、amd64 与 arm64 archive 安装/覆盖/卸载 smoke 成功。amd64 `.deb` artifact 的 build identity 与该 SHA 一致。 |
 | 本地 Desktop 回归 | PASS | `GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=0 go -C desktop test -count=1 -mod=readonly ./...`、`go -C desktop vet -mod=readonly ./...` 和 Stats 定向回归测试通过。 |
 | Secret scan | PASS（tracked source） | `scripts/check-secrets.sh` 本地与 CI 均通过；该扫描器范围是 Git 跟踪文件。 |
-| Linux 分发边界 | 已记录，仍有限制 | Desktop 仍是短期 CI test artifact，不是公开发行；CI installer smoke 只检查归档安装/覆盖/卸载和数据保留，不执行打包程序。Debian 包管理器事务、真实 arm64 二进制运行、真实用户迁移仍未验证。 |
+| Debian `.deb` 生命周期 | PASS（隔离范围） | 从精确 HEAD `1f876e1` 的 Desktop CI run `38153416434` 下载 amd64 artifact；包 SHA-256 `a5f474587f9b015ffa126fe06b15b578d285180bd92ac64a5a49792554b83ae1`，内嵌 build identity 与 HEAD 一致。在 Ubuntu 24.04 测试容器的 rootless user/mount namespace 中，以独立 `dpkg --root` 完成 install、reinstall、`dpkg --verify`、remove、purge；确认宿主 dpkg 数据库无该包。因隔离 root 没有 GTK/WebKitGTK，测试显式使用 `--force-depends`；未安装宿主依赖、未启动 GUI，不能替代系统级安装/依赖解析/回滚验收。 |
+| Linux 分发边界 | 已记录，仍有限制 | Desktop 仍是短期 CI test artifact，不是公开发行；CI tarball smoke 只检查归档安装/覆盖/卸载和数据保留，不执行打包程序。系统级 Debian 包安装/回滚、真实 arm64 二进制运行、真实用户迁移仍未验证。 |
 | 正式 GUI 门禁 | **PENDING（未运行，不是 PASS）** | Arch+niri/Wayland、fcitx5/IME、焦点与键盘、硬件缩放、托盘降级、受控 Proxy 生命周期尚无正式验收证据。Ubuntu/Xvfb/Openbox smoke 不替代这些门禁。 |
 
 ## 未关闭项与停止边界
 
 1. 正式 GUI 门禁仍为 **PENDING**，不能写成 PASS 或据此宣称发布就绪。
 2. 按用户兼容决策保留 Desktop `--web` / `pi-switch-ui://` fallback；不得在正式 GUI 门禁通过且弃用说明发布前删除。故 T05 尚未完全关闭。
-3. Debian 包管理器安装/回滚、arm64 实际运行、真实用户数据升级/迁移与卸载后数据检查仍待验证。
+3. 系统级 Debian 包依赖解析/安装回滚、arm64 实际运行、真实用户数据升级/迁移与卸载后数据检查仍待验证。
 4. 本报告是进度审计，不是最终 T06 结论；T06 验收与最终发布门禁继续开放。本阶段未 merge、未创建新 tag、未发布 Desktop，也未修改真实用户数据；此前的 `v20261011.0.0` 是 CLI/npm 发布，不是 Desktop 发布。
