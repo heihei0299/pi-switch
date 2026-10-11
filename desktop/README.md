@@ -10,21 +10,28 @@ No automatic-update channel is configured. Linux tarball install/reinstall/unins
 
 The [Desktop CI workflow](../.github/workflows/desktop.yml) builds Linux amd64 and arm64 test targets from a clean checkout. It bundles the matching CLI and retains outputs as Actions artifacts for seven days; it does not publish them.
 
-A local `mygo build` writes `webui/dist`, `desktop/dist`, `desktop/build`, and a CLI binary under `desktop/resources`; use a disposable worktree rather than overwriting existing generated files. The build requires the locked desktop Bun dependencies and the WebUI npm dependencies. MyGo's `buildCommand` builds the embedded WebUI and desktop frontend.
+Build the shared WebUI first, then run MyGo from `desktop`; the Go module pins the MyGo CLI version, so no desktop npm/Bun toolchain is needed:
+
+```bash
+npm ci --prefix webui
+npm --prefix webui run build
+go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo build -skip-notarize
+```
+
+The WebUI build remains necessary because the Go server package embeds it for the retained `--web` rollback. The Native window itself has no MyGo web frontend; MyGo writes only `desktop/build` (plus its normal temporary build files), not `desktop/dist`. Build in a disposable worktree if generated outputs must be isolated.
 
 For development without touching real data, use a CLI from this checkout and fresh temporary paths. Keep the same isolated environment for both the desktop app and CLI invocation:
 
 ```bash
 data_dir=$(mktemp -d /tmp/pi-switch-mygo.XXXXXX)
 mkdir -p "$data_dir/config" "$data_dir/xdg"
-cd desktop
 PI_SWITCH_CLI_PATH=/path/to/pi-switch \
 PI_SWITCH_CONFIG_DIR="$data_dir/config" \
 PI_SWITCH_CONFIG="$data_dir/config/config.json" \
 PI_SWITCH_DB="$data_dir/config/requests.db" \
 PI_SWITCH_MODELS="$data_dir/models.json" \
 XDG_CONFIG_HOME="$data_dir/xdg" \
-bun run dev
+go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo dev
 ```
 
 Do not point test builds at real user paths. The desktop workflow is configured to validate compilation, UI tests, and the Linux tarball install/reinstall/uninstall lifecycle in an isolated `HOME`; remote Actions execution, interactive GUI, real IME/high-DPI, Debian package-manager install/rollback, daemon lifecycle, and Linux desktop GUI smoke tests remain unverified.
@@ -33,7 +40,7 @@ Do not point test builds at real user paths. The desktop workflow is configured 
 
 The default launch creates a MyGo widget window without registering the legacy management router/protocol or creating a React WebView window. Start with `--web` only to use the old WebView rollback. Exit any previous desktop instance normally first: a second invocation is forwarded to the existing process. File/tray show, second-instance activation, and hide/quit operate on that one primary window. `--start-minimized` still requires a working tray; without one, the window stays visible.
 
-With the existing Go module/build caches and Linux runtime dependencies present, the Go entry below does not run the React/Bun frontend build. It deliberately disables dependency downloads; if dependencies are missing, stop rather than install them without approval. The binary still links the transitional server/WebUI package, whose package initialization fingerprints embedded assets; this is not removal of WebView/React build or runtime dependencies.
+With the existing Go module/build caches and Linux runtime dependencies present, the Go entry below does not build a MyGo web frontend. The desktop Go module still links the transitional server package and its `webui/dist` embed for the explicit `--web` rollback, so build the shared WebUI before running it. It deliberately disables dependency downloads; if Go dependencies are missing, stop rather than install them without approval.
 
 Run from the repository root in a real Linux GUI session. Replace the CLI path with an existing, platform-matched CLI from this checkout, and leave the isolated directory intact for evidence/recovery:
 

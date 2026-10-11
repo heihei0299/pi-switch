@@ -1,0 +1,12 @@
+{
+  "name": "pi-switch MyGo Spike",
+  "identifier": "com.heihei0299.piswitch.mygo-spike",
+  "version": "0.1.0",
+  "main": ".",
+  "out": "build",
+  "linux": {
+    "command": "pi-switch-mygo-spike",
+    "comment": "Development-only pi-switch desktop preview",
+    "categories": ["Utility"]
+  }
+}

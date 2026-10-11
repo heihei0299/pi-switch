@@ -35,16 +35,8 @@ jobs:
             desktop/go.sum
             go.sum
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.0"
-
       - name: Install WebUI dependencies
         run: npm ci --prefix webui
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
 
       - name: Build WebUI for Go embed
         run: npm --prefix webui run build
@@ -54,7 +46,7 @@ jobs:
         run: |
           CGO_ENABLED=0 go test -mod=readonly ./...
           CGO_ENABLED=0 go vet -mod=readonly ./...
-          ./node_modules/.bin/mygo vet .
+          go run -mod=readonly github.com/egoist/mygo/cmd/mygo vet .
 
       - name: Test shared daemon service
         run: go test ./internal/daemon
@@ -88,20 +80,11 @@ jobs:
             desktop/go.sum
             go.sum
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.0"
-
       - name: Install WebUI dependencies
         run: npm ci --prefix webui
 
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-
-      - name: Build embedded frontends
-        working-directory: desktop
-        run: npm --prefix ../webui run build && bun run build:web
+      - name: Build WebUI for the retained Go embed
+        run: npm --prefix webui run build
 
       - name: Build matching CLI resource
         env:
@@ -128,7 +111,7 @@ jobs:
 
       - name: Build desktop installer/package
         working-directory: desktop
-        run: ./node_modules/.bin/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
+        run: go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
 
       - name: Smoke-test Linux installer in an isolated HOME
         if: matrix.goarch == 'amd64'
