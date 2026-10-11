@@ -113,12 +113,12 @@ jobs:
         working-directory: desktop
         run: go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
 
-      - name: Smoke-test Linux installer in an isolated HOME
-        if: matrix.goarch == 'amd64'
+      - name: Smoke-test Linux installer archive in an isolated HOME
         working-directory: desktop
         run: |
-          installer=$(find build/linux-amd64 -maxdepth 1 -name install.sh -print -quit)
-          archive=$(find build/linux-amd64 -maxdepth 1 -name 'pi-switch-mygo-spike-*-linux-amd64.tar.gz' -print -quit)
+          package_dir="build/linux-${{ matrix.goarch }}"
+          installer=$(find "$package_dir" -maxdepth 1 -name install.sh -print -quit)
+          archive=$(find "$package_dir" -maxdepth 1 -name "pi-switch-mygo-spike-*-linux-${{ matrix.goarch }}.tar.gz" -print -quit)
           test -n "$installer" && test -n "$archive"
           bash scripts/test-linux-installer.sh "$installer" "$archive"
 
