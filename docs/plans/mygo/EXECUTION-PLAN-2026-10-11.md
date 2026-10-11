@@ -153,7 +153,7 @@ gh workflow run ci.yml --ref mygo
 
 **当前执行状态（2026-10-11）**：T02、任务 2 与 T03 的正式 Arch+niri/Wayland/IME/托盘/硬件缩放/受控 Proxy 生命周期验收仍为 **PENDING**（不是 PASS）。本轮只在 Ubuntu 24.04/Xvfb/Openbox 做了补充 GUI smoke，托盘能力不可用，不能替代正式门禁。用户明确授权在门禁待定时继续按计划推进；这不豁免验收条件，也不表示发布就绪。
 
-**已完成的 T05 子范围（HEAD `1fc2c56`）**：CLI `webui` 入口已 API-only，根路径显示退役说明；npm Linux CLI 保留，单独的 `webui/dist/` 已从 npm `files` 移除，包检查会拒绝重新加入。Desktop Native 不再配置 MyGo `frontendDist`，仅用于占位 HTML 的 Vite/TypeScript/npm/Bun 构建链已移除，Desktop CI 改用 `desktop/go.mod` 固定的 MyGo Go CLI。Production CLI 也不再链接 `webui` 包或 React 文件，`/api/buildInfo` 所需兼容 metadata 由构建脚本注入；Desktop `--web` fallback 仍显式注入 embed。React、Desktop Go embed 与 fallback 仍保留，因此 T05 尚未完成。
+**已完成的 T05 子范围（HEAD `1fc2c56`）**：CLI `webui` 入口已 API-only，根路径显示退役说明；npm Linux CLI 保留，单独的 `webui/dist/` 已从 npm `files` 移除，包检查会拒绝重新加入。Desktop Native 不再配置 MyGo `frontendDist`，仅用于占位 HTML 的 Vite/TypeScript/npm/Bun 构建链已移除，Desktop CI 改用 `desktop/go.mod` 固定的 MyGo Go CLI。Production CLI 也不再链接 `webui` 包或 React 文件，干净 source archive 在没有 `webui/dist` 时仍可构建；正式 Root CI 继续构建 WebUI 以执行前端验证并注入 `/api/buildInfo` 兼容 metadata。Desktop `--web` fallback 显式注入 embed，Desktop CI 仍构建 `webui/dist`。React、Desktop Go embed 与 fallback 仍保留，因此 T05 尚未完成。
 
 Root CI `38143769439` 与 Desktop CI `38143737004` 均在精确提交 `1fc2c5641a5b50c0eadf1b75849ae2c722287522` 成功。Root CI 覆盖 Go/WebUI checks、双架构 CLI build、functional/API smoke 与 npm package check；Desktop CI 覆盖 Go/MyGo vet、双架构 package build，amd64 installer smoke 通过、arm64 installer smoke 按条件跳过。Release preflight/publish 均跳过。此前 `47ffa91` 的 npm/API 子范围与 `6096da3` 的 Desktop Vite 清理 CI 结果仍有效。
 
