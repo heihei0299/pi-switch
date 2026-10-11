@@ -159,6 +159,11 @@ jobs:
           }
           NODE
 
+      - name: Smoke-test bundled CLI management API and headless Proxy
+        env:
+          DESKTOP_ARCH: ${{ matrix.goarch }}
+        run: bash scripts/functional-check.sh "desktop/build/linux-${DESKTOP_ARCH}/pi-switch"
+
       - name: Smoke-test Linux installer archive in an isolated HOME
         working-directory: desktop
         run: |

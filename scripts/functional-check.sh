@@ -8,7 +8,11 @@ if [ ! -x "$binary" ]; then
 fi
 workdir=$(mktemp -d)
 server_pid=
+proxy_started=false
 cleanup() {
+  if [ "$proxy_started" = true ]; then
+    "$binary" proxy stop >/dev/null 2>&1 || true
+  fi
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -16,8 +20,15 @@ cleanup() {
   rm -rf "$workdir"
 }
 trap cleanup EXIT
+export HOME="$workdir/home"
+export XDG_CONFIG_HOME="$workdir/xdg/config"
+export XDG_DATA_HOME="$workdir/xdg/data"
+export PI_AGENT_ROOT="$workdir/agent"
+export PI_AGENT_SETTINGS="$workdir/agent/settings.json"
+export PI_SWITCH_CONFIG_DIR="$workdir/config-dir"
 export PI_SWITCH_CONFIG="$workdir/config.json"
 export PI_SWITCH_DB="$workdir/requests.db"
+export PI_SWITCH_MODELS="$workdir/models.json"
 
 version=$("$binary" --version)
 info=$("$binary" --build-info)
@@ -63,4 +74,50 @@ test "$assets_status" = 404
 kill "$server_pid"
 wait "$server_pid" 2>/dev/null || true
 server_pid=
-printf 'functional smoke passed for %s (%s; API-only WebUI router)\n' "$binary" "$version"
+
+proxy_port=$(node -e 'const net=require("node:net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
+if ! "$binary" proxy start --daemon --host 127.0.0.1 --port "$proxy_port" >"$workdir/proxy-start.log" 2>&1; then
+  cat "$workdir/proxy-start.log" >&2
+  echo "functional check: managed Proxy did not start" >&2
+  exit 1
+fi
+proxy_started=true
+if ! "$binary" proxy status >"$workdir/proxy-status.log" 2>&1; then
+  cat "$workdir/proxy-status.log" >&2
+  echo "functional check: managed Proxy status did not verify" >&2
+  exit 1
+fi
+proxy_ready=false
+for _ in $(seq 1 50); do
+  if curl -fsS -o /dev/null "http://127.0.0.1:$proxy_port/healthz" 2>/dev/null; then
+    proxy_ready=true
+    break
+  fi
+  sleep 0.1
+done
+if [ "$proxy_ready" != true ]; then
+  cat "$workdir/config-dir/proxy.log" >&2
+  echo "functional check: managed Proxy health endpoint did not become ready" >&2
+  exit 1
+fi
+"$binary" proxy stop >"$workdir/proxy-stop.log" 2>&1
+proxy_stopped=false
+for _ in $(seq 1 50); do
+  if ! curl -fsS -o /dev/null "http://127.0.0.1:$proxy_port/healthz" 2>/dev/null; then
+    proxy_stopped=true
+    break
+  fi
+  sleep 0.1
+done
+if [ "$proxy_stopped" != true ] || [ -e "$PI_SWITCH_CONFIG_DIR/proxy.pid" ]; then
+  cat "$workdir/proxy-stop.log" >&2
+  echo "functional check: managed Proxy listener remained after stop" >&2
+  exit 1
+fi
+if "$binary" proxy status >"$workdir/proxy-stopped-status.log" 2>&1; then
+  cat "$workdir/proxy-stopped-status.log" >&2
+  echo "functional check: stopped Proxy still reports running" >&2
+  exit 1
+fi
+proxy_started=false
+printf 'functional smoke passed for %s (%s; API-only router and managed headless Proxy lifecycle)\n' "$binary" "$version"
