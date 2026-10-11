@@ -617,16 +617,13 @@ func Stop(s Service) (DaemonResult, error) {
 		removePidFile(s)
 		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d identity does not match managed %s daemon; refusing to stop it and cleaned up state", info.Pid, s.Label)}, nil
 	}
-	proc, err := os.FindProcess(int(info.Pid))
+	sent, err := signalManagedProcess(s, *info)
 	if err != nil {
-		return DaemonResult{}, fmt.Errorf("cannot access managed %s PID %d: %w", s.Label, info.Pid, err)
+		return DaemonResult{}, err
 	}
-	if err := proc.Signal(os.Interrupt); err != nil {
-		if !isAlive(info.Pid) {
-			removePidFile(s)
-			return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("%s daemon (PID %d) stopped", s.Label, info.Pid)}, nil
-		}
-		return DaemonResult{}, fmt.Errorf("failed to request stop of %s PID %d: %w", s.Label, info.Pid, err)
+	if !sent {
+		removePidFileIfPID(s, info.Pid)
+		return DaemonResult{Running: false, Pid: &info.Pid, Message: fmt.Sprintf("PID %d exited or changed identity; refusing to stop it and cleaned up state", info.Pid)}, nil
 	}
 	for i := 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)

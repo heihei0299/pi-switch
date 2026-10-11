@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/daemon"
+	"golang.org/x/sys/unix"
 )
 
 // known-gaps/02(a): POST /api/proxy/start with an empty body — no `daemon`, no
@@ -66,5 +69,32 @@ func TestProxyStartError_ClassifiesByKindNotByWording(t *testing.T) {
 	plain := proxyStartError(errors.New("boom"))
 	if _, ok := plain["message"]; ok {
 		t.Fatalf("an unrelated failure gained the port-in-use shape: %v", plain)
+	}
+}
+
+func TestProxyStopReturnsErrorWhenDaemonOperationIsLocked(t *testing.T) {
+	configPath := isolateConfig(t)
+	dir := filepath.Dir(configPath)
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	lock, err := os.OpenFile(filepath.Join(dir, daemon.Proxy.PidFile+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+
+	w := callMgmt(NewMgmtRouter(), http.MethodPost, "/api/proxy/stop", `{}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("POST /api/proxy/stop with a locked daemon = %d (%s), want 500", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error: %v (%s)", err, w.Body.String())
+	}
+	if body["error"] != "unable to stop Proxy" || body["running"] != nil {
+		t.Fatalf("stop failure body = %s, want an error without a running claim", w.Body.String())
 	}
 }

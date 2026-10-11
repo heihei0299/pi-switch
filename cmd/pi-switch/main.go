@@ -261,8 +261,9 @@ func handleProxy(args []string) {
 		}
 		startProxy(host, port)
 	case "stop":
-		res, _ := daemon.Stop(daemon.Proxy)
-		fmt.Println(res.Message)
+		if stopDaemon(daemon.Proxy) != 0 {
+			os.Exit(1)
+		}
 	case "status":
 		res, _ := daemon.Status(daemon.Proxy)
 		fmt.Println(res.Message)
@@ -303,8 +304,9 @@ func handleWebUI(args []string) {
 		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43110)
 		startWebUIMode(host, port, isDaemon)
 	case "stop":
-		res, _ := daemon.Stop(daemon.WebUI)
-		fmt.Println(res.Message)
+		if stopDaemon(daemon.WebUI) != 0 {
+			os.Exit(1)
+		}
 	case "status":
 		res, _ := daemon.Status(daemon.WebUI)
 		fmt.Println(res.Message)
@@ -315,6 +317,16 @@ func handleWebUI(args []string) {
 		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43110)
 		startWebUIMode(host, port, isDaemon)
 	}
+}
+
+func stopDaemon(service daemon.Service) int {
+	res, err := daemon.Stop(service)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println(res.Message)
+	return 0
 }
 
 // providerAddFlags carries the knobs `provider add` accepts. Values are taken

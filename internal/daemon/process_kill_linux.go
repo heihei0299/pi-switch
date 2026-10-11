@@ -10,6 +10,32 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func signalManagedProcess(s Service, info DaemonInfo) (bool, error) {
+	// A pidfd keeps the identity check and graceful signal bound to the same process.
+	pidfd, err := unix.PidfdOpen(int(info.Pid), 0)
+	if errors.Is(err, unix.ESRCH) {
+		return false, nil
+	}
+	if errors.Is(err, unix.ENOSYS) {
+		return false, fmt.Errorf("safe process signaling is unavailable: pidfd_open is unsupported: %w", err)
+	}
+	if err != nil {
+		return false, fmt.Errorf("cannot safely signal %s PID %d (pidfd required): %w", s.Label, info.Pid, err)
+	}
+	defer unix.Close(pidfd)
+
+	if !managedProcess(info) {
+		return false, nil
+	}
+	if err := unix.PidfdSendSignal(pidfd, unix.SIGINT, nil, 0); err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to request stop of %s PID %d: %w", s.Label, info.Pid, err)
+	}
+	return true, nil
+}
+
 func forceKillProcess(s Service, info DaemonInfo) (bool, error) {
 	pidfd, err := unix.PidfdOpen(int(info.Pid), 0)
 	if errors.Is(err, unix.ESRCH) {

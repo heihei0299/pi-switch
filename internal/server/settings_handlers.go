@@ -147,7 +147,11 @@ func handleProxyStart(c *gin.Context) {
 	c.JSON(501, notImplemented("in-process proxy start (pass daemon:true, or host and port, to start the daemon)"))
 }
 func handleProxyStop(c *gin.Context) {
-	res, _ := daemon.Stop(daemon.Proxy)
+	res, err := daemon.Stop(daemon.Proxy)
+	if err != nil {
+		c.JSON(500, managementError("unable to stop Proxy"))
+		return
+	}
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid})
 }
 func handlePutFailover(c *gin.Context) {

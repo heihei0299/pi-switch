@@ -177,3 +177,15 @@ func TestForceKillWithPIDFDRefusesChangedIdentity(t *testing.T) {
 	}
 	assertProcessSurvived(t, pid, exited)
 }
+
+func TestSignalManagedProcessRefusesChangedIdentity(t *testing.T) {
+	pid, exited, _ := startStopSignalProcess(t, false)
+	identity := processIdentity(pid)
+	info := DaemonInfo{Pid: pid, Executable: identity.Executable, StartToken: identity.StartToken + "-changed"}
+
+	sent, err := signalManagedProcess(Proxy, info)
+	if err != nil || sent {
+		t.Fatalf("signalManagedProcess() = (%v, %v), want no signal and no process error", sent, err)
+	}
+	assertProcessSurvived(t, pid, exited)
+}

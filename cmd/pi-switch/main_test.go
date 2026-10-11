@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/server"
+	"golang.org/x/sys/unix"
 )
 
 // The bind address reaches the auth guard through flag parsing, so the flag
@@ -38,6 +40,25 @@ func TestParseHostPort_FlagPath(t *testing.T) {
 					tc.args, host, port, daemon, tc.wantHost, tc.wantPort, tc.wantDae)
 			}
 		})
+	}
+}
+
+func TestStopDaemonReportsOperationLockFailure(t *testing.T) {
+	isolateCLI(t)
+	dir := os.Getenv("PI_SWITCH_CONFIG_DIR")
+	lock, err := os.OpenFile(filepath.Join(dir, daemon.Proxy.PidFile+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+
+	code, out, errOut := runCLIStreams(t, func() int { return stopDaemon(daemon.Proxy) })
+	if code == 0 || out != "" || !strings.Contains(errOut, "already in progress") {
+		t.Fatalf("stop CLI = code %d, stdout %q, stderr %q; want failure on stderr", code, out, errOut)
 	}
 }
 
