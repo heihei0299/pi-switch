@@ -34,7 +34,7 @@ XDG_CONFIG_HOME="$data_dir/xdg" \
 go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo dev
 ```
 
-Do not point test builds at real user paths. The desktop workflow is configured to validate compilation, UI tests, and the Linux tarball install/reinstall/uninstall lifecycle in an isolated `HOME`; remote Actions execution, interactive GUI, real IME/high-DPI, Debian package-manager install/rollback, daemon lifecycle, and Linux desktop GUI smoke tests remain unverified.
+Do not point test builds at real user paths. Desktop CI run `38149366162` passed on commit `7dfefd8`: linux-amd64 and linux-arm64 packages built, and the amd64 tarball install/reinstall/uninstall smoke passed in an isolated `HOME`; the arm64 installer smoke was skipped. A separate Ubuntu 24.04 Xvfb/Openbox smoke confirmed window visibility and basic Tab input only. Formal Arch+niri/Wayland, real IME/high-DPI, tray, managed-Proxy GUI lifecycle, Debian package-manager install/rollback, and real-user data migration remain unverified.
 
 ## Native default and legacy rollback (T03)
 
