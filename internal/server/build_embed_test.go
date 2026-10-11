@@ -56,7 +56,7 @@ func TestBuildEmbed_07_S2_GET_assets_immutable(t *testing.T) {
 		// fallback to known hash when built
 		assetName = "index-CbRnp9x6.js"
 		// if still not embedded, skip? but spec expects file exists after build
-		if _, err := webUIFS.ReadFile("dist/assets/" + assetName); err != nil {
+		if _, err := fs.ReadFile(webUIFS, "dist/assets/"+assetName); err != nil {
 			t.Skip("no embedded asset, skip S2 (assetCount==0)")
 		}
 	}
@@ -166,7 +166,7 @@ func TestBuildEmbed_07_S4_GET_buildInfo(t *testing.T) {
 		t.Fatalf("embedded = false but assetCount=%d", assetCount)
 	}
 	// verify indexHash matches actual file
-	if data, err := webUIFS.ReadFile("dist/index.html"); err == nil {
+	if data, err := fs.ReadFile(webUIFS, "dist/index.html"); err == nil {
 		h := sha256.Sum256(data)
 		want := hex.EncodeToString(h[:])
 		if indexHash != want {

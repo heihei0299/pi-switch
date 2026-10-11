@@ -7,11 +7,13 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/heihei0299/pi-switch/internal/server"
+	webuiFS "github.com/heihei0299/pi-switch/webui"
 )
 
 const managementUIScheme = "pi-switch-ui"
 
 func registerManagementUI() (string, error) {
+	server.SetWebUIAssets(webuiFS.FS)
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", err

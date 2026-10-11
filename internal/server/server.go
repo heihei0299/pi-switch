@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -13,17 +14,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/scan"
-	webuiFS "github.com/heihei0299/pi-switch/webui"
 )
 
-var webUIFS = webuiFS.FS
+var webUIFS fs.FS = embed.FS{}
 
 var (
 	Version     = "dev"
@@ -34,109 +33,120 @@ var (
 )
 
 var (
-	webuiEmbedded   bool
-	webuiIndexHash  string
-	webuiScript     string
-	webuiAssetCount int
-	webuiOnce       sync.Once
+	webuiEmbedded        bool
+	webuiIndexHash       string
+	webuiScript          string
+	webuiAssetCount      int
+	webuiEmbeddedBuild   = "false"
+	webuiIndexHashBuild  = "8b174df572d29e07bf94378556508b41b4d8d6f426db768df4842d63a2d3e37c"
+	webuiScriptBuild     = ""
+	webuiAssetCountBuild = "0"
 )
 
 func init() {
-	computeBuildInfo()
+	webuiEmbedded = webuiEmbeddedBuild == "true"
+	webuiIndexHash = webuiIndexHashBuild
+	webuiScript = webuiScriptBuild
+	webuiAssetCount, _ = strconv.Atoi(webuiAssetCountBuild)
 }
 
-func computeBuildInfo() {
-	webuiOnce.Do(func() {
-		// index hash
-		if data, err := webUIFS.ReadFile("dist/index.html"); err == nil && len(data) > 0 {
-			webuiEmbedded = true
-			h := sha256.Sum256(data)
-			webuiIndexHash = hex.EncodeToString(h[:])
-		} else if data, err := fs.ReadFile(webUIFS, "dist/index.html"); err == nil && len(data) > 0 {
-			webuiEmbedded = true
-			h := sha256.Sum256(data)
-			webuiIndexHash = hex.EncodeToString(h[:])
-		} else {
-			// placeholder hash (so indexHash non-empty even without embed)
-			placeholder := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>`)
-			h := sha256.Sum256(placeholder)
-			webuiIndexHash = hex.EncodeToString(h[:])
-			webuiEmbedded = false
-		}
-		// assets
-		var assetsFS fs.FS = webUIFS
-		if sub, err := fs.Sub(webUIFS, "dist/assets"); err == nil {
-			assetsFS = sub
-			if entries, err := fs.ReadDir(assetsFS, "."); err == nil {
-				webuiAssetCount = len(entries)
+// SetWebUIAssets supplies the frontend used by the explicit Desktop rollback.
+// The CLI build injects its metadata separately and does not carry the assets.
+func SetWebUIAssets(fsys fs.FS) {
+	webUIFS = fsys
+	computeBuildInfo(fsys)
+}
+
+func computeBuildInfo(fsys fs.FS) {
+	webuiEmbedded = false
+	webuiIndexHash = ""
+	webuiScript = ""
+	webuiAssetCount = 0
+	// index hash
+	if data, err := fs.ReadFile(fsys, "dist/index.html"); err == nil && len(data) > 0 {
+		webuiEmbedded = true
+		h := sha256.Sum256(data)
+		webuiIndexHash = hex.EncodeToString(h[:])
+	} else {
+		// placeholder hash (so indexHash non-empty even without embed)
+		placeholder := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>`)
+		h := sha256.Sum256(placeholder)
+		webuiIndexHash = hex.EncodeToString(h[:])
+		webuiEmbedded = false
+	}
+	// assets
+	var assetsFS fs.FS = fsys
+	if sub, err := fs.Sub(fsys, "dist/assets"); err == nil {
+		assetsFS = sub
+		if entries, err := fs.ReadDir(assetsFS, "."); err == nil {
+			webuiAssetCount = len(entries)
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
+					webuiScript = "/assets/" + name
+				}
+			}
+			// if no index-*.js but has any js, fallback
+			if webuiScript == "" {
 				for _, e := range entries {
-					if e.IsDir() {
-						continue
-					}
-					name := e.Name()
-					if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
-						webuiScript = "/assets/" + name
+					if !e.IsDir() && len(e.Name()) > 3 && e.Name()[len(e.Name())-3:] == ".js" {
+						webuiScript = "/assets/" + e.Name()
+						break
 					}
 				}
-				// if no index-*.js but has any js, fallback
-				if webuiScript == "" {
-					for _, e := range entries {
-						if !e.IsDir() && len(e.Name()) > 3 && e.Name()[len(e.Name())-3:] == ".js" {
-							webuiScript = "/assets/" + e.Name()
-							break
-						}
-					}
-				}
-			} else {
-				webuiAssetCount = 0
 			}
 		} else {
-			// try listing dist/assets via ReadDir on webUIFS
-			if entries, err := fs.ReadDir(webUIFS, "dist/assets"); err == nil {
-				webuiAssetCount = len(entries)
-				for _, e := range entries {
-					if e.IsDir() {
-						continue
-					}
-					name := e.Name()
-					if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
-						webuiScript = "/assets/" + name
-					}
-				}
-			} else {
-				webuiAssetCount = 0
-				// also try to find script via glob of dist/assets in webUIFS directly
-			}
+			webuiAssetCount = 0
 		}
-		// if still no script but embedded, try to parse index.html for script src
-		if webuiScript == "" && webuiEmbedded {
-			if data, err := webUIFS.ReadFile("dist/index.html"); err == nil {
-				s := string(data)
-				// naive search for /assets/index-*.js
-				idx := 0
-				for {
-					pos := indexOf(s[idx:], "/assets/")
-					if pos < 0 {
-						break
-					}
-					pos += idx
-					end := pos
-					for end < len(s) && s[end] != 34 && s[end] != 39 && s[end] != 32 && s[end] != 62 {
-						end++
-					}
-					candidate := s[pos:end]
-					if len(candidate) > 4 && candidate[len(candidate)-3:] == ".js" {
-						webuiScript = candidate
-						break
-					}
-					idx = end
-					if idx >= len(s) {
-						break
-					}
+	} else {
+		// try listing dist/assets via ReadDir on webUIFS
+		if entries, err := fs.ReadDir(fsys, "dist/assets"); err == nil {
+			webuiAssetCount = len(entries)
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
+					webuiScript = "/assets/" + name
 				}
 			}
+		} else {
+			webuiAssetCount = 0
+			// also try to find script via glob of dist/assets in the provided filesystem
 		}
-	})
+	}
+	// if still no script but embedded, try to parse index.html for script src
+	if webuiScript == "" && webuiEmbedded {
+		if data, err := fs.ReadFile(fsys, "dist/index.html"); err == nil {
+			s := string(data)
+			// naive search for /assets/index-*.js
+			idx := 0
+			for {
+				pos := indexOf(s[idx:], "/assets/")
+				if pos < 0 {
+					break
+				}
+				pos += idx
+				end := pos
+				for end < len(s) && s[end] != 34 && s[end] != 39 && s[end] != 32 && s[end] != 62 {
+					end++
+				}
+				candidate := s[pos:end]
+				if len(candidate) > 4 && candidate[len(candidate)-3:] == ".js" {
+					webuiScript = candidate
+					break
+				}
+				idx = end
+				if idx >= len(s) {
+					break
+				}
+			}
+		}
+	}
 }
 
 func indexOf(s, substr string) int {
@@ -554,7 +564,7 @@ func basicAuthMiddleware(password string, unauthorized func() gin.H, guardedPref
 func handleWebUIIndex(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	// try embed
-	if data, err := webUIFS.ReadFile("dist/index.html"); err == nil && len(data) > 0 {
+	if data, err := fs.ReadFile(webUIFS, "dist/index.html"); err == nil && len(data) > 0 {
 		c.Data(200, "text/html; charset=utf-8", data)
 		return
 	}
@@ -596,7 +606,7 @@ func handleWebUIFallback(c *gin.Context) {
 		clean,
 	}
 	for _, tp := range tryPaths {
-		if data, err := webUIFS.ReadFile(tp); err == nil {
+		if data, err := fs.ReadFile(webUIFS, tp); err == nil {
 			// guess MIME
 			ct := "application/octet-stream"
 			if strings.HasSuffix(tp, ".html") {
@@ -671,7 +681,7 @@ func handleAssets(c *gin.Context) {
 		"assets/" + clean,
 	}
 	for _, tp := range tryPaths {
-		if data, err := webUIFS.ReadFile(tp); err == nil {
+		if data, err := fs.ReadFile(webUIFS, tp); err == nil {
 			ct := "application/octet-stream"
 			if strings.HasSuffix(tp, ".js") {
 				ct = "application/javascript"

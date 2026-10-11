@@ -12,7 +12,6 @@ import (
 )
 
 func handleBuildInfo(c *gin.Context) {
-	computeBuildInfo()
 	c.JSON(200, gin.H{
 		"status":    "ok",
 		"version":   Version,
