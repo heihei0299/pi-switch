@@ -45,14 +45,14 @@ Usage:
 
 Commands:
   proxy     Start proxy server (gateway) — proxy start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
-  webui     Start WebUI server — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
+  webui     Start management API (legacy command name) — webui start/stop/status [--host HOST] [--port PORT] [--daemon] [--generate-password]
   tui       Terminal UI (bubbletea) — profile list/switch, gateway status, stats
   provider  Manage suppliers — list | show <name> | add <name> [--preset P] [--api-key K] [--base-url U] [--models M1,M2] | duplicate <name> --as <new> | test <name> | fetch-models <name> [--channel C] | expose <name> <model-id>... [--channel C] | use <name> | delete <name> (aliases: ls, rm, remove)
   package   Package management — list | add <spec> [--disabled] | import | show <id> | delete <id>
   ccs       cc-switch — list (import is not implemented)
   presets   List presets — presets [list] | presets show <id>
   gateway   Gateway — gateway publish | gateway status | gateway preview
-  stats     Not implemented — request stats live in the WebUI and GET /api/stats
+  stats     Not implemented — request stats are available from GET /api/stats
   config    Config — config show | config validate | config path
   doctor    Run diagnostics
   build-info Show embedded build identity as JSON
@@ -177,10 +177,10 @@ func hasGeneratePasswordFlag(args []string) bool {
 // run and the daemon child both arrive here, so the bind-address guard cannot
 // be bypassed by spawning.
 func startWebUI(host string, port int) {
-	r := server.NewMgmtRouterWithAuth(mustResolveBindAuth(host))
+	r := server.NewMgmtAPIRouterWithAuth(mustResolveBindAuth(host))
 	server.ImportLegacyOnStartup()
 	addr := host + ":" + strconv.Itoa(port)
-	fmt.Printf("WebUI server listening on http://%s\n", addr)
+	fmt.Printf("Management API server listening on http://%s\n", addr)
 	if err := r.Run(addr); err != nil {
 		fmt.Fprintf(os.Stderr, "webui: %v\n", err)
 		os.Exit(1)

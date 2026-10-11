@@ -230,10 +230,19 @@ func NewMgmtRouter() *gin.Engine {
 	return NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "127.0.0.1"})
 }
 
-// NewMgmtRouterWithAuth builds the management router for a specific bind
-// address: non-loopback bindings require the password from opts, and the
-// decision never consults the config file.
+// NewMgmtRouterWithAuth builds the legacy WebUI and management API router for
+// a specific bind address. Non-loopback bindings require opts.Password.
 func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
+	return newMgmtRouter(opts, true)
+}
+
+// NewMgmtAPIRouterWithAuth builds the management API without the legacy WebUI.
+// Non-loopback bindings require opts.Password.
+func NewMgmtAPIRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
+	return newMgmtRouter(opts, false)
+}
+
+func newMgmtRouter(opts MgmtAuthOptions, legacyWebUI bool) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.CustomRecovery(managementRecovery))
 	// Any non-loopback bind installs the guard, including an unspecified bind
@@ -312,10 +321,16 @@ func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
 		api.GET("/buildInfo", handleBuildInfo)
 		api.GET("/dumps", handleDumps)
 	}
-	// static webui
-	r.GET("/", handleWebUIIndex)
-	r.GET("/assets/*filepath", handleAssets)
-	r.NoRoute(handleWebUIFallback)
+	if legacyWebUI {
+		r.GET("/", handleWebUIIndex)
+		r.GET("/assets/*filepath", handleAssets)
+		r.NoRoute(handleWebUIFallback)
+	} else {
+		r.GET("/", func(c *gin.Context) {
+			c.String(http.StatusGone, "The pi-switch WebUI has been retired. The management API remains available under /api/.\n")
+		})
+		r.NoRoute(func(c *gin.Context) { c.JSON(http.StatusNotFound, gin.H{"error": "not found"}) })
+	}
 	return r
 }
 

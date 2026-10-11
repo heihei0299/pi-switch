@@ -68,13 +68,13 @@ New CLI/npm versions support Linux amd64 and arm64 only. macOS and Windows are u
 
 ## Quick start
 
-Start the browser UI and open <http://127.0.0.1:43110>:
+Start the management API (the legacy `webui` command name remains; its browser UI is retired):
 
 ~~~bash
 pi-switch webui start --daemon
 ~~~
 
-Run environment checks with <code>pi-switch doctor</code>. Stop the UI with <code>pi-switch webui stop</code>. The terminal interfaces are also available: <code>pi-switch tui</code> or other <code>pi-switch</code> commands.
+The management API remains available under `/api/*`; `/` displays the WebUI retirement notice. Run environment checks with <code>pi-switch doctor</code> and stop the API with <code>pi-switch webui stop</code>. The terminal interfaces are also available: <code>pi-switch tui</code> or other <code>pi-switch</code> commands.
 
 ### Use a model in Pi
 
