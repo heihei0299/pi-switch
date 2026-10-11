@@ -59,9 +59,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        goarch: [amd64, arm64]
+        include:
+          - goarch: amd64
+            runner: ubuntu-24.04
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     name: package test / linux-${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v4
@@ -112,6 +116,25 @@ jobs:
       - name: Build desktop installer/package
         working-directory: desktop
         run: go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
+
+      - name: Run bundled CLI on native arm64
+        if: matrix.goarch == 'arm64'
+        env:
+          EXPECTED_TARGET: linux/arm64
+        run: |
+          test "$(uname -m)" = aarch64
+          binary=desktop/build/linux-arm64/pi-switch
+          "$binary" --version >/dev/null
+          info=$("$binary" --build-info)
+          expected_commit=$(git rev-parse --short=7 HEAD)
+          node - "$info" "$expected_commit" <<'NODE'
+          const [raw, commit] = process.argv.slice(2);
+          const info = JSON.parse(raw);
+          if (info.target !== process.env.EXPECTED_TARGET || info.commit !== commit) {
+            console.error({ target: info.target, commit: info.commit });
+            process.exit(1);
+          }
+          NODE
 
       - name: Smoke-test Linux installer archive in an isolated HOME
         working-directory: desktop
