@@ -34,6 +34,8 @@ version=$("$binary" --version)
 info=$("$binary" --build-info)
 node -e 'const info=JSON.parse(process.argv[1]); const version=process.argv[2]; if (!info.version || info.version !== version || !info.commit || !info.target || !info.buildTime) { console.error(info); process.exit(1); }' "$info" "$version"
 "$binary" config path >/dev/null
+printf '%s\n' '{"ts":"2026-08-03T12:00:00Z","provider":"legacy-smoke","model":"compat-model","ok":true,"status":200,"promptTokens":13,"completionTokens":7,"cachedTokens":0,"reasoningTokens":0,"costTotal":0.002}' >"$workdir/requests.log"
+legacy_log_hash=$(sha256sum "$workdir/requests.log" | cut -d' ' -f1)
 
 port=$(node -e 'const net=require("node:net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
 "$binary" webui start --host 127.0.0.1 --port "$port" >"$workdir/webui.log" 2>&1 &
@@ -69,6 +71,25 @@ assert.equal(info.webui.indexHash, crypto.createHash('sha256').update(index).dig
 assert.equal(info.webui.script, script ? (script.startsWith('/assets/') ? script : `/assets/${script}`) : '');
 assert.equal(info.webui.assetCount, assets.length);
 NODE
+legacy_stats_ready=false
+for _ in $(seq 1 50); do
+  if curl -fsS "http://127.0.0.1:$port/api/stats" >"$workdir/legacy-stats.json" && node - "$workdir/legacy-stats.json" <<'NODE'
+const fs = require('node:fs');
+const stats = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (stats.totalRequests !== 1 || stats.okRequests !== 1 || stats.totalTokens.input !== 13 || stats.totalTokens.output !== 7) process.exit(1);
+NODE
+  then
+    legacy_stats_ready=true
+    break
+  fi
+  sleep 0.1
+done
+if [ "$legacy_stats_ready" != true ]; then
+  cat "$workdir/legacy-stats.json" >&2
+  echo "functional check: startup did not import the legacy requests.log into SQLite stats" >&2
+  exit 1
+fi
+test "$(sha256sum "$workdir/requests.log" | cut -d' ' -f1)" = "$legacy_log_hash"
 assets_status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/assets/index.js")
 test "$assets_status" = 404
 kill "$server_pid"
@@ -120,4 +141,4 @@ if "$binary" proxy status >"$workdir/proxy-stopped-status.log" 2>&1; then
   exit 1
 fi
 proxy_started=false
-printf 'functional smoke passed for %s (%s; API-only router and managed headless Proxy lifecycle)\n' "$binary" "$version"
+printf 'functional smoke passed for %s (%s; API-only router, legacy SQLite import, and managed headless Proxy lifecycle)\n' "$binary" "$version"
