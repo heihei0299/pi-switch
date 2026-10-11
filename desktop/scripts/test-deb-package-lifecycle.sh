@@ -74,7 +74,7 @@ sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$base_deb
 assert_version "$base_version"
 test -x "$install_path"
 test -e "$launcher_path"
-test ! -e "/opt/pi-switch-mygo-spike/$upgrade_marker"
+test ! -e "/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
@@ -85,14 +85,14 @@ assert_user_data
 sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$upgrade_deb"
 assert_version "$upgrade_version"
 test -x "$install_path"
-grep -qx 'synthetic higher-version payload' "/opt/pi-switch-mygo-spike/$upgrade_marker"
+grep -qx 'synthetic higher-version payload' "/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
 sudo env HOME="$user_home" apt-get install --allow-downgrades -y --no-install-recommends "$base_deb"
 assert_version "$base_version"
 test -x "$install_path"
-test ! -e "/opt/pi-switch-mygo-spike/$upgrade_marker"
+test ! -e "/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
