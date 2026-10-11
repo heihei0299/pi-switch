@@ -322,6 +322,9 @@ func TestHandleStatsCLI_ReportsUnimplemented(t *testing.T) {
 	if !strings.Contains(errOut, "not implemented") {
 		t.Fatalf("stats did not say it is unimplemented: %q", errOut)
 	}
+	if !strings.Contains(errOut, "Desktop Stats & Sessions") || !strings.Contains(errOut, "GET /api/stats") || strings.Contains(errOut, "WebUI") {
+		t.Fatalf("stats help points to a retired browser UI or omits current alternatives: %q", errOut)
+	}
 	if strings.Contains(out, `"ok"`) {
 		t.Fatalf("stats printed ok: %q", out)
 	}

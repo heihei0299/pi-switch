@@ -827,7 +827,7 @@ func handlePresets(args []string) int {
 }
 
 func handleStatsCLI() int {
-	fmt.Fprintln(os.Stderr, `stats is not implemented in the CLI; the aggregated numbers live in the WebUI and in GET /api/stats while "pi-switch webui start" is running`)
+	fmt.Fprintln(os.Stderr, `stats is not implemented in the CLI; use the Desktop Stats & Sessions page or GET /api/stats while "pi-switch webui start" is running`)
 	return 2
 }
 
