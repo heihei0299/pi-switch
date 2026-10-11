@@ -89,7 +89,11 @@ finally:
     db.close()
 PY
 printf '{"type":"session","id":"sentinel"}\n' >"$user_home/.pi/agent/sessions/session.jsonl"
+chmod 0600 "$user_home/.pi-switch/config.json" "$user_home/.pi-switch/models.json" "$user_home/.pi-switch/requests.db" "$user_home/.pi/agent/sessions/session.jsonl"
 assert_user_data() {
+  for file in "$user_home/.pi-switch/config.json" "$user_home/.pi-switch/models.json" "$user_home/.pi-switch/requests.db" "$user_home/.pi/agent/sessions/session.jsonl"; do
+    test "$(stat -c '%a' "$file")" = 600
+  done
   grep -qx '{"sentinel":"preserve"}' "$user_home/.pi-switch/config.json"
   grep -qx '{"sentinel":"preserve"}' "$user_home/.pi-switch/models.json"
   python3 - "$user_home/.pi-switch/requests.db" <<'PY'
