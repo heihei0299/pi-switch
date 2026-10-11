@@ -4,7 +4,7 @@ This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a publi
 
 The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. New CLI/npm versions support Linux amd64 and arm64 only; macOS and Windows are retired for new versions.
 
-No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes. The archive installer smoke does not execute the packaged application; arm64 binary runtime, Debian package-manager transactions, system rollback, daemon lifecycle, and real-user data migration remain unverified. New CLI/npm packages contain only Linux amd64 and arm64 binaries; historical release artifacts are unchanged.
+No automatic-update channel is configured. Linux tarball install/reinstall/uninstall and an isolated 0.1.0→0.1.1 replacement with sentinel-data preservation were tested in temporary homes. Ubuntu 24.04 amd64 and native arm64 CI also pass Debian install/reinstall/remove/purge and a synthetic `0.1.0`→`0.1.0+ci1`→`0.1.0` package-manager rollback using the same payload; this does not test rollback between distinct application builds. The archive installer smoke does not execute the packaged application. Desktop GUI arm64 runtime, application/daemon lifecycle, and real-user data migration remain unverified. New CLI/npm packages contain only Linux amd64 and arm64 binaries; historical release artifacts are unchanged.
 
 ## Build
 
@@ -34,7 +34,7 @@ XDG_CONFIG_HOME="$data_dir/xdg" \
 go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo dev
 ```
 
-Do not point test builds at real user paths. Desktop CI run `38151349388` passed on commit `79f994e`: linux-amd64 and linux-arm64 packages built, and the archive-level install/reinstall/uninstall smoke passed for both architectures in isolated homes. The smoke does not run either packaged binary. A separate Ubuntu 24.04 Xvfb/Openbox smoke confirmed window visibility and basic Tab input only. Formal Arch+niri/Wayland, real IME/high-DPI, tray, managed-Proxy GUI lifecycle, Debian package-manager install/rollback, and real-user data migration remain unverified.
+Do not point test builds at real user paths. Desktop CI run `38151349388` passed on commit `79f994e`: linux-amd64 and linux-arm64 packages built, and the archive-level install/reinstall/uninstall smoke passed for both architectures in isolated homes. The smoke does not run either packaged binary. A separate Ubuntu 24.04 Xvfb/Openbox smoke confirmed window visibility and basic Tab input only. Formal Arch+niri/Wayland, real IME/high-DPI, tray, managed-Proxy GUI lifecycle, distinct-payload Debian rollback, and real-user data migration remain unverified; Debian package-manager version transactions are covered by a synthetic same-payload CI smoke.
 
 ## Native default and legacy rollback (T03)
 
