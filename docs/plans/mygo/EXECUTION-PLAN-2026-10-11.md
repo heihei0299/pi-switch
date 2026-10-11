@@ -153,20 +153,13 @@ gh workflow run ci.yml --ref mygo
 
 **当前执行状态（2026-10-11）**：T02、任务 2 与 T03 的正式 Arch+niri/Wayland/IME/托盘/硬件缩放/受控 Proxy 生命周期验收仍为 **PENDING**（不是 PASS）。本轮只在 Ubuntu 24.04/Xvfb/Openbox 做了补充 GUI smoke，托盘能力不可用，不能替代正式门禁。用户明确授权在门禁待定时继续按计划推进；这不豁免验收条件，也不表示发布就绪。
 
-**本任务已完成的子范围（HEAD `47ffa91`）**：CLI `webui` 入口已 API-only，根路径显示退役说明；npm Linux CLI 保留，单独的 `webui/dist/` 已从 npm `files` 移除，包检查会拒绝重新加入。`webui/dist` Go embed、React 构建和 Desktop `--web` fallback 仍保留，尚未完成 T05 退役。
+**已完成的 T05 子范围（HEAD `6096da3`）**：CLI `webui` 入口已 API-only，根路径显示退役说明；npm Linux CLI 保留，单独的 `webui/dist/` 已从 npm `files` 移除，包检查会拒绝重新加入。Desktop Native 不再配置 MyGo `frontendDist`，仅用于占位 HTML 的 Vite/TypeScript/npm/Bun 构建链已移除，Desktop CI 改用 `desktop/go.mod` 固定的 MyGo Go CLI。`webui/dist` Go embed、React 构建和 Desktop `--web` fallback 仍保留，因此 T05 尚未完成。
 
-Root CI `38140186739` 与 Desktop CI `38140179179` 均在 `47ffa91` 成功；前者包括 Linux 双架构构建与 Linux-only npm package check。未运行 Release/publish。
+Root CI `38140186739` 与 Desktop CI `38140179179` 验证了 npm/API 子范围；Desktop CI run `38141867619` 对精确提交 `6096da3d5f332607021115ac163273a5d7dc8d64` 全绿（Linux amd64/arm64 构建通过，amd64 installer smoke 通过，arm64 installer smoke 按条件跳过）。未运行 Release/publish。
 
 **前置**：任务 3 已证明所有正式桌面能力可纯 Native 操作，且有可恢复旧构建。
 
-**删除前必须明确的兼容决策**：
-
-- pi-switch webui start/stop/status 如何处理；
-- npm 包是否继续提供无头 Linux CLI，旧浏览器管理入口如何迁移；
-- TUI 是否保留以及哪些 CLI 子命令必须保留；
-- 旧版使用者如何升级/回滚，哪些用户可见行为会变更。
-
-未经确认，不把“全面 GUI 化”等同于删除推理 API、Headless Proxy 或必要的管理接口。
+**用户已明确的兼容决策**：`webui start|stop|status` 保留为 API-only，`/api/*` 与认证行为不变，根路径显示退役说明；npm/`pi install` Linux CLI 保留且不再携带独立 `webui/dist/`；TUI、Proxy `/v1/*` 保持；Desktop `--web` / `pi-switch-ui://` 至少保留到正式 GUI 门禁通过并发布弃用说明。API/UI 路由与 Desktop fallback 已按这些决策实施。未经新授权，不停止无头 CLI/Proxy，也不删除尚受门禁约束的 fallback。
 
 **必须完成：**
 
