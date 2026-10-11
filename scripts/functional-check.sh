@@ -39,6 +39,20 @@ cat >"$PI_SWITCH_CONFIG" <<'JSON'
 JSON
 chmod 0600 "$PI_SWITCH_CONFIG"
 legacy_config_hash=$(sha256sum "$PI_SWITCH_CONFIG" | cut -d' ' -f1)
+python3 - "$PI_SWITCH_DB" <<'PY'
+import sqlite3, sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("""CREATE TABLE requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, provider TEXT, model TEXT, success INTEGER,
+  prompt_tokens INTEGER, completion_tokens INTEGER, cached_tokens INTEGER, conversation_id TEXT
+)""")
+db.execute("""INSERT INTO requests(ts, provider, model, success, prompt_tokens, completion_tokens, cached_tokens, conversation_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+  ("2026-08-02T10:00:00Z", "legacy-db", "old-model", 0, 100, 20, 0, None))
+db.commit()
+db.close()
+PY
 printf '%s\n' '{"ts":"2026-08-03T12:00:00Z","provider":"legacy-smoke","model":"compat-model","ok":true,"status":200,"promptTokens":13,"completionTokens":7,"cachedTokens":0,"reasoningTokens":0,"costTotal":0.002}' >"$workdir/requests.log"
 legacy_log_hash=$(sha256sum "$workdir/requests.log" | cut -d' ' -f1)
 
@@ -104,7 +118,12 @@ for _ in $(seq 1 50); do
   if curl -fsS "http://127.0.0.1:$port/api/stats" >"$workdir/legacy-stats.json" && node - "$workdir/legacy-stats.json" <<'NODE'
 const fs = require('node:fs');
 const stats = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-if (stats.totalRequests !== 1 || stats.okRequests !== 1 || stats.totalTokens.input !== 13 || stats.totalTokens.output !== 7) process.exit(1);
+const oldProvider = stats.byProvider['legacy-db'];
+const importedProvider = stats.byProvider['legacy-smoke'];
+const oldRequest = stats.recentRequests.find(request => request.provider === 'legacy-db');
+if (stats.totalRequests !== 2 || stats.okRequests !== 1 || stats.failedRequests !== 1 || stats.totalTokens.input !== 13 || stats.totalTokens.output !== 7) process.exit(1);
+if (!oldProvider || oldProvider.total !== 1 || oldProvider.failed !== 1 || !importedProvider || importedProvider.ok !== 1) process.exit(1);
+if (!oldRequest || oldRequest.success !== false || oldRequest.promptTokens !== 100 || oldRequest.completionTokens !== 20 || oldRequest.status !== null || oldRequest.error !== null || oldRequest.upstream_url !== null) process.exit(1);
 NODE
   then
     legacy_stats_ready=true
@@ -169,4 +188,4 @@ if "$binary" proxy status >"$workdir/proxy-stopped-status.log" 2>&1; then
   exit 1
 fi
 proxy_started=false
-printf 'functional smoke passed for %s (%s; API-only router, legacy config/SQLite migration, and managed headless Proxy lifecycle)\n' "$binary" "$version"
+printf 'functional smoke passed for %s (%s; API-only router, legacy config/SQLite schema/log migration, and managed headless Proxy lifecycle)\n' "$binary" "$version"
