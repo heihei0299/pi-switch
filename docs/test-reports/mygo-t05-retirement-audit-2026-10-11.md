@@ -62,3 +62,11 @@
 - 本地验证：根 `go test -p 1 -parallel 2 ./...`、`go vet ./...`、Desktop `CGO_ENABLED=0 go -C desktop test -mod=readonly ./...`、对应 vet、MyGo vet 均通过；MyGo Linux/amd64 Desktop package build 成功。
 - 提交 `1fc2c5641a5b50c0eadf1b75849ae2c722287522` 已推送。Root CI run `38143769439` 与 Desktop CI run `38143737004` 均在该精确 SHA 成功。Root CI 覆盖 Go/WebUI tests、secret scan、Linux amd64/arm64 CLI build、functional/API smoke 和 npm package check；Desktop CI 覆盖 Go/MyGo vet 与 Linux amd64/arm64 package build。amd64 installer smoke 通过；arm64 smoke 按条件跳过。Release preflight/publish 均跳过。
 - 两个 Actions run 均提示 Node.js 20 action deprecation 与 `ubuntu-latest` 将于 2026-10-19 迁移 Ubuntu 26；CI 结论仍为 success。正式 T02/任务 2/T03 GUI gate 继续为 **PENDING（不是 PASS）**。
+
+## 后续授权与 Linux CLI/npm 发布核验（2026-10-11）
+
+- 后续用户授权继续按 Linux-only 计划清单推进。已在版本身份提交 `236e1c4e8dad71a9a0ab825b49bcdc0c0949dac1` 将包版本更新为 `20261011.0.0`，并通过现有 tag workflow 发布；tag `v20261011.0.0` 指向该提交。
+- 发布前，Root CI `38146405791` 与 Desktop CI `38146393315` 均在该 SHA 成功。tag workflow `38146698318` 的 Root 检查、release preflight、npm 包检查、发布后 Registry 核验和 GitHub Release 创建均成功；没有发布 Desktop 安装包。
+- Registry 中实际发布的 `@heihei0299/pi-switch@20261011.0.0` tarball 共 6 个文件：`package.json`、`bin/pi-switch.js`、`bin/pi-switch-linux-amd64`、`bin/pi-switch-linux-arm64`、`README.md`、`README_ZH.md`；不含 `webui/dist/`、Darwin 或 Windows 二进制。
+- 当前工作树忽略的 `bin/` 目录仍留有旧 Darwin/Windows 产物；因此直接在该工作树执行 `npm pack --dry-run` 会列出这些文件，`scripts/check-npm-package.mjs` 会拒绝。未删除这些既有产物。干净源码 fixture、CI package check 与 Registry 实际 tarball 检查均通过。
+- 本次仅完成 CLI/npm 发布，不代表 T05 的 Desktop WebView 回退已退役。T02、任务 2、T03 正式 GUI gate 继续为 **PENDING（未运行，不是 PASS）**；按兼容决策保留 `--web` / `pi-switch-ui://`，不发布 Desktop 包。
