@@ -138,7 +138,6 @@ jobs:
           pattern: binary-linux-*
           path: artifacts
           merge-multiple: true
-          if-no-files-found: error
 
       - name: Move binaries to bin
         run: |
@@ -229,7 +228,6 @@ jobs:
           pattern: binary-*
           path: artifacts
           merge-multiple: true
-          if-no-files-found: error
 
       - name: Move artifacts to bin
         run: |
