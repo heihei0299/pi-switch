@@ -24,10 +24,11 @@ const required = [
 const missing = required.filter((file) => !files.includes(file));
 const supportedBinaries = new Set(required.slice(2));
 const unsupportedBinaries = files.filter((file) => file.startsWith("bin/pi-switch-") && !supportedBinaries.has(file));
+const webuiAssets = files.filter((file) => file.startsWith("webui/"));
 const forbidden = files.filter((file) => /(^|\/)(\.env|.*\.key$|.*secret.*|node_modules|\.git)(\/|$)/i.test(file));
 
-if (missing.length || unsupportedBinaries.length || forbidden.length) {
-  console.error({ missing, unsupportedBinaries, forbidden });
+if (missing.length || unsupportedBinaries.length || webuiAssets.length || forbidden.length) {
+  console.error({ missing, unsupportedBinaries, webuiAssets, forbidden });
   process.exit(1);
 }
 

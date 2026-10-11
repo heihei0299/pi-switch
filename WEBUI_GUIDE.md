@@ -1,17 +1,18 @@
 # pi-switch WebUI Guide — the thick reference
 
-> **WebUI is now the primary interface.** This guide is the thick, single-source reference for the browser UI — architecture, build, runtime, security, the 4-step recipe and the full REST ↔ core map.
-> The [README](./README.md) stays **thin**: quick start + overview + screenshots, with details deferred here.
+> **Status:** Native Desktop is the primary GUI. The legacy React WebView is retained through Desktop's `--web` rollback option. `pi-switch webui start|stop|status` is API-only; `/api/*` remains available and `/` returns a WebUI retirement notice. This guide documents the retained UI implementation and management API, not a browser launch path.
+> See the [Desktop guide](./desktop/README.md) for the rollback entry and the [README](./README.md) for current CLI behavior.
 
-pi-switch offers **three ways** to manage the same configuration — order reflects the new priority:
+The supported Native/terminal entry points and the retained legacy rollback are:
 
 | Priority | Interface | Entry | Lives in |
 |----------|-----------|-------|----------|
-| **① Primary** | **WebUI** | `pi-switch webui start --daemon` → http://127.0.0.1:43110 | `internal/server` (gin) + `webui/` (React, `embed.FS`) |
-| ② CLI | `pi-switch <cmd>` | `bin/pi-switch.js` → Go binary | |
-| ③ TUI | `pi-switch tui` | `internal/tui/` (bubbletea) — secondary, terminal fallback | |
+| **① Primary** | **Native Desktop** | packaged MyGo app | `desktop/` (Native UI) |
+| ② CLI / management API | `pi-switch <cmd>` / `pi-switch webui start` | `bin/pi-switch.js` → Go binary; `/api/*` | Go CLI and `internal/server` |
+| ③ TUI | `pi-switch tui` | `internal/tui/` (bubbletea) | |
+| Legacy rollback | Desktop WebView | Desktop `--web` → `pi-switch-ui://` | `internal/server` + `webui/` (React, `embed.FS`) |
 
-All three are **thin adapters over the same Go core** (`internal/config` +
+Native Desktop, CLI, TUI and HTTP are **adapters over the same Go core** (`internal/config` +
 `internal/gateway` + `internal/proxy` + `internal/server` + `internal/store`). No business logic lives in the UI
 layers, so behaviour stays identical across them.
 
@@ -44,12 +45,11 @@ TUI screenshot remains at `assets/main.png` for terminal reference.
    React SPA            (Go binary)            (bubbletea)
 ```
 
-The WebUI backend is a **gin server** that:
-1. serves the React SPA (compiled into the Go binary via `embed.FS`), and
-2. exposes `REST /api/*` where every route delegates to `config`/`gateway`/`daemon`/`store`.
-
-It runs as a second **daemon-managed service** alongside the proxy (own pid/log/port),
-using the generalized machinery in `internal/daemon`.
+The retained legacy WebUI uses a **gin router** that serves the React SPA from
+`embed.FS` and exposes `REST /api/*`. The CLI's historical `webui` daemon now
+uses an API-only router; the Desktop `--web` rollback uses the legacy router.
+Both share management handlers and the existing bind/auth rules. The daemon
+service name, pid/log handling and port remain for CLI compatibility.
 
 ---
 
@@ -80,8 +80,11 @@ pi-switch webui status
 pi-switch webui stop
 ```
 
-Then open `http://127.0.0.1:43110` in a browser. Defaults come from
-`settings.web` in `~/.pi-switch/config.json` (host `127.0.0.1`, port `43110`).
+The command now starts the management API only. Its bind defaults still come from
+`settings.web` in `~/.pi-switch/config.json` (host `127.0.0.1`, port `43110`);
+`/api/*` remains available and `/` returns the retirement notice rather than the
+React app. The retained WebView rollback is launched from the Desktop app with
+`--web`, not through this HTTP command.
 
 ### Dev workflow (hot reload)
 

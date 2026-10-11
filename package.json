@@ -8,7 +8,6 @@
   },
   "files": [
     "bin/",
-    "webui/dist/",
     "README.md",
     "README_ZH.md"
   ],

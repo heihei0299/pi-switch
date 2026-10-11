@@ -7,9 +7,9 @@
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)](https://go.dev/)
 [![许可证](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
-**面向 pi agent、以 WebUI 为主的控制面板。**
+**面向 pi agent、以 Native Desktop 为主，并提供 Linux CLI 与 TUI 的控制面板。**
 
-管理 provider 配置，并发布本地模型名网关；也可通过 CLI 和 TUI 在终端中操作。
+管理 provider 配置并发布本地模型名网关。Native Desktop 是主要 GUI；旧 WebView 暂通过 Desktop `--web` 回退入口保留。
 
 [English](README.md) | [中文](#)
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 界面截图
+## 旧 WebView 截图（Desktop `--web` 回退）
 
 <div align="center">
 
@@ -36,8 +36,8 @@
 - 管理 provider 配置、模型列表和各渠道暴露的模型。
 - 在 Gateway 页面预览并发布模型到 Pi。
 - 通过本地代理按模型名路由请求。
-- 在 WebUI 查看请求与 token 用量，并管理 pi packages。
-- WebUI、CLI 和 TUI 共用同一套 Go 核心。
+- 在 Native Desktop 或旧 WebView 中查看请求与 token 用量，并管理 pi packages。
+- Native Desktop、CLI、TUI 与管理 API 共用同一套 Go 核心。
 
 架构与详细行为见 [WebUI 指南](./WEBUI_GUIDE.md)、[后端架构](./docs/architecture.md) 和[系统契约](./docs/system-contract.md)。
 
@@ -68,13 +68,13 @@ node bin/pi-switch.js webui start --daemon
 
 ## 快速开始
 
-启动浏览器界面并打开 <http://127.0.0.1:43110>：
+启动 HTTP 管理 API（`webui` 是保留的历史命令名；此命令不再提供浏览器界面）：
 
 ~~~bash
 pi-switch webui start --daemon
 ~~~
 
-运行 <code>pi-switch doctor</code> 检查环境，用 <code>pi-switch webui stop</code> 停止界面。也可以使用终端界面 <code>pi-switch tui</code> 或其他 <code>pi-switch</code> 命令。
+管理 API 仍位于 `/api/*`，根路径 `/` 会显示 WebUI 退役说明。正式 GUI 门禁与弃用步骤完成前，Desktop `--web` 回退仍保留。运行 <code>pi-switch doctor</code> 检查环境，用 <code>pi-switch webui stop</code> 停止 API；也可以使用终端界面 <code>pi-switch tui</code> 或其他 CLI 命令。
 
 ### 在 Pi 中使用模型
 
@@ -83,7 +83,7 @@ pi-switch webui start --daemon
 3. 在 **Proxy** 中启动代理，或运行 <code>pi-switch proxy start --daemon</code>。
 4. 在 Pi 中，Responses 模型选择 <code>pi-switch-res</code>，Chat 模型选择 <code>pi-switch-chat</code>，然后选择已暴露的模型。
 
-WebUI 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[安全说明](./WEBUI_GUIDE.md#security)。
+管理 API 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[安全说明](./WEBUI_GUIDE.md#security)。
 
 ## 常见问题
 
