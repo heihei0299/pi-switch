@@ -1,16 +1,22 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/protocol"
+	"golang.org/x/sys/unix"
 )
+
+var errGatewayPlanStale = errors.New("models.json changed since the Gateway preview; reload and review it again")
 
 func ModelsPath() string {
 	if p := os.Getenv("PI_SWITCH_MODELS"); p != "" {
@@ -1033,7 +1039,7 @@ func buildCanonicalGatewayPlan(cfg config.PiSwitchConfig, current, submitted map
 	}
 }
 
-// PublishPlan writes the already validated canonical plan without recomputing any projection.
+// PublishPlan atomically writes a validated plan only if its current snapshot is unchanged.
 func PublishPlan(plan CanonicalGatewayPlan) error {
 	if len(plan.Conflicts) > 0 {
 		return fmt.Errorf("gateway plan rejected: %s", strings.Join(plan.Conflicts, "; "))
@@ -1050,11 +1056,75 @@ func PublishPlan(plan CanonicalGatewayPlan) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+	expected := plan.Current
+	if expected == nil {
+		expected = emptyGatewayWrapper()
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return withGatewayWriteLock(path, func() error {
+		current, err := ReadCurrent()
+		if err != nil {
+			return err
+		}
+		currentJSON, err := json.Marshal(current)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(expectedJSON, currentJSON) {
+			return errGatewayPlanStale
+		}
+
+		file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+		if err != nil {
+			return err
+		}
+		tmp := file.Name()
+		defer os.Remove(tmp)
+		defer file.Close()
+		if err := file.Chmod(0644); err != nil {
+			return err
+		}
+		if _, err := file.Write(append(b, '\n')); err != nil {
+			return err
+		}
+		if err := file.Sync(); err != nil {
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+		return os.Rename(tmp, path)
+	})
+}
+
+func withGatewayWriteLock(path string, publish func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("gateway write lock busy: %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer unix.Flock(int(file.Fd()), unix.LOCK_UN)
+	return publish()
 }
 func gatewayProviderForAPI(api string) string {
 	if !protocol.CanGateway(api) {

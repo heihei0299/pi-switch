@@ -2,10 +2,12 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heihei0299/pi-switch/internal/config"
 )
@@ -22,6 +24,90 @@ func publishDraft(t *testing.T, cfg config.PiSwitchConfig, draft map[string]inte
 		t.Fatalf("read current: %v", err)
 	}
 	return PublishPlan(BuildDraftPlan(cfg, current, draft))
+}
+
+func TestPublishPlanRejectsStaleSnapshotWithoutOverwritingConcurrentChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	t.Setenv("PI_SWITCH_MODELS", path)
+
+	original := []byte(`{"providers":{"third-party":{"baseUrl":"https://old.example"}}}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	current, err := ReadCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := CanonicalGatewayPlan{
+		Current: current,
+		Proposed: map[string]interface{}{"providers": map[string]interface{}{
+			"third-party": map[string]interface{}{"baseUrl": "https://old.example"},
+			"pi-switch":   map[string]interface{}{"models": []interface{}{}},
+		}},
+	}
+
+	concurrent := []byte(`{"providers":{"third-party":{"baseUrl":"https://old.example"},"user-added":{"baseUrl":"https://new.example"}}}`)
+	if err := os.WriteFile(path, concurrent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishPlan(plan); !errors.Is(err, errGatewayPlanStale) {
+		t.Fatalf("stale preview error = %v, want %v", err, errGatewayPlanStale)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(concurrent) {
+		t.Fatalf("stale publish changed concurrent content: got %s, want %s", got, concurrent)
+	}
+}
+
+func TestGatewayWriteLockSerializesPublishers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondEntered := make(chan struct{})
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- withGatewayWriteLock(path, func() error {
+			close(firstEntered)
+			<-releaseFirst
+			return nil
+		})
+	}()
+	select {
+	case <-firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first publisher did not acquire the lock")
+	}
+	go func() {
+		errCh <- withGatewayWriteLock(path, func() error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+	enteredEarly := false
+	select {
+	case <-secondEntered:
+		enteredEarly = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if !enteredEarly {
+		select {
+		case <-secondEntered:
+		case <-time.After(time.Second):
+			t.Fatal("second publisher did not enter after the first released the lock")
+		}
+	}
+	for range 2 {
+		if err := <-errCh; err != nil {
+			t.Fatalf("publisher lock: %v", err)
+		}
+	}
+	if enteredEarly {
+		t.Fatal("second publisher entered while the first held the lock")
+	}
 }
 
 // Regression: 落盘 cost 含显式 cacheWrite:0（经 webui draft round-trip 写入）
