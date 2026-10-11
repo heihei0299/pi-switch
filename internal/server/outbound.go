@@ -101,13 +101,7 @@ func selectedOutboundUpstream(prof config.ProviderProfile) config.Upstream {
 }
 
 func resolveUserAgentValues(profile, global *string) string {
-	if profile != nil && *profile != "" {
-		return *profile
-	}
-	if global != nil && *global != "" {
-		return *global
-	}
-	return "curl/8.5.0"
+	return config.ResolveUserAgentValues(profile, global)
 }
 
 func applyOpenCodeSessionAffinityHeader(baseURL string, incoming, outgoing http.Header) {

@@ -2,6 +2,8 @@ package profile
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,3 +273,15 @@ func TestEnsureMutationChannelUpgradesLegacyUnnamedUpstream(t *testing.T) {
 }
 
 func strptr(s string) *string { return &s }
+
+func TestFetchChannelModelEntriesDoesNotUpgradeInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"data":[{"id":"one"}]}`)) }))
+	defer server.Close()
+	prof := config.ProviderProfile{API: "openai-completions", BaseURL: server.URL, APIKey: "fake-key", Upstreams: []config.Upstream{{}}}
+	if _, _, _, err := FetchChannelModelEntries(prof, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if prof.Upstreams[0].Name != nil || prof.Upstreams[0].API != "" || prof.Upstreams[0].BaseURL != "" || prof.Upstreams[0].APIKey != "" {
+		t.Fatal("read-only fetch upgraded caller's legacy channel")
+	}
+}

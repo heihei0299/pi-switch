@@ -166,3 +166,18 @@ func TestDesktopProxyAddressUsesConfigAndDefaults(t *testing.T) {
 		t.Fatal("out-of-range proxy port was accepted")
 	}
 }
+
+func TestOverviewRefreshAfterWriteIsCoalescedNotDropped(t *testing.T) {
+	for _, switching := range []bool{false, true} {
+		app := &desktopShell{nativeWindow: &mygo.Window{}, overviewBusy: !switching, profileSwitching: switching}
+		app.refreshNativeOverview()
+		if !app.overviewRefreshPending {
+			t.Fatal("refresh during an in-flight snapshot/switch was dropped")
+		}
+		app.exiting = true
+		app.flushOverviewRefresh()
+		if app.overviewRefreshPending {
+			t.Fatal("quit retained pending refresh")
+		}
+	}
+}

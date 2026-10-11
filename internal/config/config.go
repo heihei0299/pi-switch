@@ -70,6 +70,18 @@ func (u *Upstream) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*upstreamAlias)(u))
 }
 
+func (u Upstream) MarshalJSON() ([]byte, error) {
+	type upstreamAlias Upstream
+	var exposed *[]string
+	if u.ExposedModels != nil {
+		exposed = &u.ExposedModels
+	}
+	return json.Marshal(struct {
+		upstreamAlias
+		ExposedModels *[]string `json:"exposedModels,omitempty"`
+	}{upstreamAlias: upstreamAlias(u), ExposedModels: exposed})
+}
+
 func isJSONNull(v json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(v), []byte("null"))
 }
@@ -565,6 +577,26 @@ func UpdateAtPath(path string, mutate func(*PiSwitchConfig) error) error {
 			return err
 		}
 		return saveAtPathUnlocked(cfg, path)
+	})
+}
+
+// ReplaceAtPath supports explicit recovery even when the current JSON is broken.
+// prepare runs under the same write lock as normal mutations and must check the
+// expected bytes and preserve a backup before returning a replacement.
+func ReplaceAtPath(path string, prepare func([]byte) (PiSwitchConfig, error)) error {
+	if prepare == nil {
+		return errors.New("config replacement callback is nil")
+	}
+	return withConfigWriteLock(path, func() error {
+		current, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		replacement, err := prepare(current)
+		if err != nil {
+			return err
+		}
+		return saveAtPathUnlocked(replacement, path)
 	})
 }
 

@@ -12,18 +12,19 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
-	uiURL, err := registerManagementUI()
+	shell, err := prepareDesktopShell(os.Args[1:], registerManagementUI)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	shell := &desktopShell{
-		startMinimized: startsMinimized(os.Args[1:]),
-		proxyMessage:   "Checking proxy status…",
-		uiURL:          uiURL,
-	}
 	mygo.App.SetMenu(shell.applicationMenu())
-	mygo.App.OnSecondInstance(func(_ []string, _ string) { shell.showWindow() })
+	mygo.App.OnSecondInstance(func(args []string, _ string) {
+		if startsNative(args) {
+			shell.showNativeOverview()
+		} else {
+			shell.showWindow()
+		}
+	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		shell.exiting = true
 		shell.tasks.close()
@@ -42,4 +43,16 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func prepareDesktopShell(args []string, registerUI func() (string, error)) (*desktopShell, error) {
+	shell := &desktopShell{nativeOnly: startsNative(args), startMinimized: startsMinimized(args), proxyMessage: "Checking proxy status…"}
+	if !shell.nativeOnly {
+		url, err := registerUI()
+		if err != nil {
+			return nil, err
+		}
+		shell.uiURL = url
+	}
+	return shell, nil
 }

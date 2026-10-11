@@ -1,0 +1,170 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/profile"
+)
+
+type nativeStandardPages struct {
+	page      string
+	providers nativeProvidersPage
+	settings  nativeSettingsPage
+	backups   nativeBackupsPage
+	doctor    nativeDoctorPage
+	stopProxy bool
+}
+
+func (a *desktopShell) standardPages() *nativeStandardPages {
+	if a.standard == nil {
+		a.standard = &nativeStandardPages{page: "Overview"}
+	}
+	return a.standard
+}
+
+func (a *desktopShell) standardView(c *ui.Context) {
+	pages := a.standardPages()
+	ui.Column(c).Fill().Gap(8).Children(func() {
+		for _, row := range [][]string{{"Overview", "Profiles", "Providers", "Proxy"}, {"Settings", "Backups", "Doctor"}} {
+			ui.Row(c).Gap(6).Padding(6, 12).Children(func() {
+				for _, name := range row {
+					if ui.Button(c, name).Clicked() {
+						pages.page = name
+						switch name {
+						case "Overview", "Profiles", "Providers":
+							a.refreshNativeOverview()
+						case "Proxy":
+							a.refreshNativeOverview()
+							a.refreshProxy()
+						case "Settings":
+							if !pages.settings.loaded {
+								a.loadNativeSettings()
+							}
+						case "Backups":
+							a.loadNativeBackups()
+						case "Doctor":
+							a.runNativeDoctor()
+						}
+					}
+				}
+			})
+		}
+
+		switch pages.page {
+		case "Profiles", "Providers":
+			ui.Scroll(c).Fill().Children(func() { a.providersView(c) })
+		case "Proxy":
+			ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
+				ui.Text(c, "Proxy").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
+				ui.Text(c, "Only identity-verified, managed processes can be stopped. Hiding or quitting the GUI leaves Proxy running.")
+				ui.Text(c, "Configured address: "+a.overview.proxyAddress)
+				if a.overviewError != "" {
+					ui.Text(c, a.overviewError).Role(ui.RoleStatus)
+				}
+				a.proxyControls(c)
+			})
+		case "Settings":
+			ui.Scroll(c).Fill().Children(func() { a.settingsView(c) })
+		case "Backups":
+			ui.Scroll(c).Fill().Children(func() { a.backupsView(c) })
+		case "Doctor":
+			ui.Scroll(c).Fill().Children(func() { a.doctorView(c) })
+		default:
+			a.view(c)
+		}
+	})
+}
+
+func (a *desktopShell) proxyControls(c *ui.Context) {
+	message := a.proxyMessage
+	if message == "" {
+		message = "Status not checked yet."
+	}
+	ui.Text(c, message).Role(ui.RoleStatus)
+	a.proxyStatus.view(c)
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, "Start Proxy").Disabled(a.busy).Clicked() {
+			a.startProxy()
+		}
+		if ui.Button(c, "Stop Proxy").Disabled(a.busy).Clicked() {
+			a.standardPages().stopProxy = true
+		}
+		if ui.Button(c, "Refresh Status").Disabled(a.busy).Clicked() {
+			a.refreshProxy()
+		}
+	})
+	if ui.AlertDialog(c, &a.standardPages().stopProxy, "Stop managed Proxy?", "In-flight requests may fail. Unknown processes will not be stopped.", "Cancel", "Stop") == 1 {
+		a.stopProxy()
+	}
+}
+
+// Each page owns its state. This only bridges workers to the window UI thread.
+func (a *desktopShell) runStandardTask(name string, run func() (interface{}, error), apply func(interface{}, error)) bool {
+	if a.exiting || a.nativeWindow == nil {
+		return false
+	}
+	ctx, token, ok := a.tasks.begin(name)
+	if !ok {
+		return false
+	}
+	window := a.nativeWindow
+	window.Invalidate()
+	go func() {
+		result, err := run()
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept(name, token) {
+				a.tasks.finish(name, token)
+				return
+			}
+			a.tasks.finish(name, token)
+			apply(result, err)
+		})
+	}()
+	return true
+}
+
+func nativeManagementError(err error) string {
+	if errors.Is(err, application.ErrManagementConflict) {
+		return err.Error()
+	}
+	if errors.Is(err, daemon.ErrPortInUse) {
+		return "Proxy port is occupied by an unverified listener; refusing takeover. Use ss -tlnp to inspect the listener."
+	}
+	if errors.Is(err, profile.ErrProfileExists) {
+		return "Provider name already exists; choose another name. Nothing was overwritten."
+	}
+	if errors.Is(err, profile.ErrProfileNotFound) {
+		return "Provider no longer exists; reload before continuing."
+	}
+	if errors.Is(err, profile.ErrUnknownChannel) {
+		return "Channel does not exist; check the channel name in the draft."
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "Storage permission denied; check config/backup permissions. No successful write was reported."
+	}
+	var validation *application.ManagementValidationError
+	if errors.As(err, &validation) {
+		return validation.Error()
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return "Storage operation failed (" + pathErr.Op + "); no successful write was reported."
+	}
+	// Loader/validator messages can contain user-supplied credentials or URLs.
+	return fmt.Sprintf("Operation failed (%T). Check the draft and run Doctor; credentials are not shown.", err)
+}
+
+// MyGo can enable a disabled action mid-click when blur clears preedit.
+func blockComposingPress(composing bool) func(ui.InputEvent) bool {
+	return func(event ui.InputEvent) bool {
+		return composing && event.Kind == ui.InputPointerDown && event.Button == 0
+	}
+}

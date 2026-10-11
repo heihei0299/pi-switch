@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -17,31 +18,45 @@ import (
 )
 
 type desktopShell struct {
-	window               *mygo.Window
-	nativeWindow         *mygo.Window
-	complexWindow        *mygo.Window
-	uiURL                string
-	tray                 *mygo.Tray
-	startMinimized       bool
-	exiting              bool
-	busy                 bool
-	proxyMessage         string
-	trayMessage          string
-	overview             nativeOverview
-	complexPreview       *nativeComplexPreview
-	overviewError        string
-	overviewBusy         bool
-	profileQuery         string
-	profileList          ui.ListState
-	selectedProfile      int
-	profileSwitching     bool
-	profileSwitchMessage string
-	tasks                desktopTasks
+	window                 *mygo.Window
+	nativeWindow           *mygo.Window
+	complexWindow          *mygo.Window
+	uiURL                  string
+	tray                   *mygo.Tray
+	startMinimized         bool
+	nativeOnly             bool
+	exiting                bool
+	busy                   bool
+	proxyMessage           string
+	trayMessage            string
+	overview               nativeOverview
+	standard               *nativeStandardPages
+	proxyStatus            nativeProxyStatus
+	complexPreview         *nativeComplexPreview
+	overviewError          string
+	overviewBusy           bool
+	overviewRefreshPending bool
+	profileQuery           string
+	profileList            ui.ListState
+	selectedProfile        int
+	profileSwitching       bool
+	profileSwitchMessage   string
+	tasks                  desktopTasks
 }
 
 func startsMinimized(args []string) bool {
 	for _, arg := range args {
 		if arg == "--start-minimized" {
+			return true
+		}
+	}
+	return false
+}
+
+// --native is an opt-in validation entry; the default stays WebView until T04.
+func startsNative(args []string) bool {
+	for _, arg := range args {
+		if arg == "--native" {
 			return true
 		}
 	}
@@ -129,7 +144,14 @@ func (a *desktopShell) refreshProxy() {
 }
 
 func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
-	if a.busy || a.exiting || a.window == nil {
+	if a.busy || a.exiting {
+		return
+	}
+	window := a.nativeWindow
+	if window == nil || window.IsDestroyed() {
+		window = a.window
+	}
+	if window == nil || window.IsDestroyed() {
 		return
 	}
 	ctx, token, ok := a.tasks.begin("proxy")
@@ -137,8 +159,7 @@ func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
 		return
 	}
 	a.busy = true
-	a.window.Invalidate()
-	window := a.window
+	window.Invalidate()
 	go func() {
 		result, err := run()
 		if ctx.Err() != nil {
@@ -146,8 +167,9 @@ func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
 		}
 		message := result.Message
 		if err != nil {
-			message = err.Error()
+			message = nativeManagementError(err)
 		}
+		checkedAt := time.Now().Format(time.RFC3339)
 		window.Update(func() {
 			if window.IsDestroyed() || !a.tasks.accept("proxy", token) {
 				a.tasks.finish("proxy", token)
@@ -156,6 +178,7 @@ func (a *desktopShell) runProxyTask(run func() (daemon.DaemonResult, error)) {
 			defer a.tasks.finish("proxy", token)
 			a.busy = false
 			a.proxyMessage = message
+			a.proxyStatus = nativeProxyStatus{result: result, checked: true, failed: err != nil, checkedAt: checkedAt}
 			if a.nativeWindow != nil {
 				a.nativeWindow.Invalidate()
 			}
@@ -226,7 +249,7 @@ func (a *desktopShell) createTray() {
 }
 
 func (a *desktopShell) setTrayError(err error) {
-	a.trayMessage = "System tray unavailable; use File > Show pi-switch (Alt+F10 on Linux/Windows). " + err.Error()
+	a.trayMessage = "System tray unavailable; use File > Show pi-switch (Alt+F10 on Linux). " + err.Error()
 	log.Printf("desktop tray unavailable: %v", err)
 }
 
@@ -234,41 +257,37 @@ func (a *desktopShell) startsHidden() bool {
 	return a.startMinimized && a.tray != nil
 }
 
+func (a *desktopShell) primaryWindowOptions() mygo.WindowOptions {
+	if a.nativeOnly {
+		return a.nativeWindowOptions(a.startsHidden())
+	}
+	return mygo.WindowOptions{Title: "pi-switch", Width: 760, Height: 560, MinWidth: 560, MinHeight: 420, BackgroundColor: "light-dark(#f6f7f9, #0f1115)", StateKey: "main", Hidden: a.startsHidden(), AutoHideMenuBar: true, URL: a.uiURL}
+}
+
+func (a *desktopShell) nativeWindowOptions(hidden bool) mygo.WindowOptions {
+	return mygo.WindowOptions{Title: "pi-switch — Native Management", Width: 1000, Height: 760, MinWidth: 560, MinHeight: 420, BackgroundColor: "light-dark(#f6f7f9, #0f1115)", StateKey: "native-overview", Hidden: hidden, AutoHideMenuBar: true, Content: ui.View(a.standardView)}
+}
+
 func (a *desktopShell) start() {
 	a.createTray()
-	hidden := a.startsHidden()
-	a.window = mygo.NewWindow(mygo.WindowOptions{
-		Title:           "pi-switch",
-		Width:           760,
-		Height:          560,
-		MinWidth:        560,
-		MinHeight:       420,
-		BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
-		StateKey:        "main",
-		Hidden:          hidden,
-		AutoHideMenuBar: true,
-		URL:             a.uiURL,
-	})
+	a.window = mygo.NewWindow(a.primaryWindowOptions())
+	if a.nativeOnly {
+		a.nativeWindow = a.window
+	}
 	a.window.OnClose(func(e *mygo.CloseEvent) {
 		if a.onWindowClose(e) {
 			mygo.App.Quit()
 		}
 	})
+	if a.nativeOnly {
+		a.refreshNativeOverview()
+	}
 	a.refreshProxy()
 }
 
 func (a *desktopShell) showNativeOverview() {
 	if a.nativeWindow == nil {
-		a.nativeWindow = mygo.NewWindow(mygo.WindowOptions{
-			Title:           "pi-switch — Native Overview",
-			Width:           760,
-			Height:          600,
-			MinWidth:        560,
-			MinHeight:       420,
-			BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
-			StateKey:        "native-overview",
-			Content:         ui.View(a.view),
-		})
+		a.nativeWindow = mygo.NewWindow(a.nativeWindowOptions(false))
 		a.nativeWindow.OnClose(a.onNativeWindowClose)
 	}
 	a.nativeWindow.Restore()
@@ -560,7 +579,11 @@ func (a *desktopShell) onComplexWindowClose(e *mygo.CloseEvent) {
 }
 
 func (a *desktopShell) refreshNativeOverview() {
-	if a.nativeWindow == nil || a.overviewBusy || a.exiting {
+	if a.nativeWindow == nil || a.exiting {
+		return
+	}
+	if a.overviewBusy || a.profileSwitching {
+		a.overviewRefreshPending = true
 		return
 	}
 	a.overviewBusy = true
@@ -581,10 +604,19 @@ func (a *desktopShell) refreshNativeOverview() {
 				a.tasks.finish("overview", token)
 				return
 			}
-			defer a.tasks.finish("overview", token)
+			a.tasks.finish("overview", token)
 			a.updateNativeOverview(overview, err)
+			a.flushOverviewRefresh()
 		})
 	}()
+}
+
+func (a *desktopShell) flushOverviewRefresh() {
+	if !a.overviewRefreshPending {
+		return
+	}
+	a.overviewRefreshPending = false
+	a.refreshNativeOverview()
 }
 
 func (a *desktopShell) updateNativeOverview(overview nativeOverview, err error) {
@@ -626,10 +658,11 @@ func (a *desktopShell) switchProfile(name string) {
 				a.tasks.finish("overview", token)
 				return
 			}
-			defer a.tasks.finish("overview", token)
+			a.tasks.finish("overview", token)
 			a.profileSwitching = false
+			defer a.flushOverviewRefresh()
 			if err != nil {
-				a.profileSwitchMessage = "Switch failed: " + err.Error()
+				a.profileSwitchMessage = "Switch failed: " + nativeManagementError(err)
 				return
 			}
 			a.profileSwitchMessage = "Switched to " + name
@@ -661,7 +694,16 @@ func (a *desktopShell) view(c *ui.Context) {
 	theme := c.Theme()
 	ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "pi-switch").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
-		ui.Text(c, "Native overview preview · the Web UI remains available from the File menu.").TextColor(theme.TextMuted)
+		if a.nativeOnly {
+			ui.Text(c, "Native validation entry · React/WebView management pages are not initialized.").TextColor(theme.TextMuted)
+		} else {
+			ui.Text(c, "Native management · the legacy Web UI remains available via File > Show pi-switch.").TextColor(theme.TextMuted)
+		}
+		if a.overview.source != "" {
+			ui.Text(c, "Config source: "+a.overview.source)
+		} else {
+			ui.Text(c, "Config source has not been checked.").TextColor(theme.TextMuted)
+		}
 		ui.Text(c, "Active Profile").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
 		activeProfile := currentOverviewProfile(a.overview.profiles)
 		if activeProfile == nil {
@@ -677,27 +719,13 @@ func (a *desktopShell) view(c *ui.Context) {
 			ui.Text(c, fmt.Sprintf("Models: %d (%d exposed) · %d channel(s)", activeProfile.models, activeProfile.exposed, activeProfile.channels))
 		}
 		ui.Text(c, "Proxy status").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
-		message := a.proxyMessage
-		if message == "" {
-			message = "Status not checked yet."
-		}
-		ui.Text(c, message).TextColor(theme.Text).Role(ui.RoleStatus)
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.PrimaryButton(c, "Start Proxy").Disabled(a.busy).Clicked() {
-				a.startProxy()
-			}
-			if ui.Button(c, "Stop Proxy").Disabled(a.busy).Clicked() {
-				a.stopProxy()
-			}
-			if ui.Button(c, "Refresh Status").Disabled(a.busy).Clicked() {
-				a.refreshProxy()
-			}
-		})
+		a.proxyControls(c)
 		if a.trayMessage != "" {
 			ui.Text(c, a.trayMessage).TextColor(theme.Warning).Role(ui.RoleStatus)
 		}
 		ui.Text(c, "Profiles").FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
-		if ui.SearchField(c, &a.profileQuery).Label("Filter profiles").Width(440).Changed() {
+		filter := ui.SearchField(c, &a.profileQuery).Label("Filter profiles").Width(440)
+		if filter.Changed() {
 			a.selectedProfile = -1
 		}
 		profiles := a.visibleProfiles()
@@ -721,9 +749,11 @@ func (a *desktopShell) view(c *ui.Context) {
 			selectedName = profiles[a.selectedProfile].name
 			selectedIsCurrent = profiles[a.selectedProfile].current
 		}
-		if ui.PrimaryButton(c, "Switch to selected profile").Disabled(a.overviewBusy || a.profileSwitching || selectedName == "" || selectedIsCurrent).Clicked() {
-			a.switchProfile(selectedName)
-		}
+		ui.Row(c).HandleInput(blockComposingPress(filter.Composing())).Children(func() {
+			if ui.PrimaryButton(c, "Switch to selected profile").Disabled(filter.Composing() || a.overviewBusy || a.profileSwitching || selectedName == "" || selectedIsCurrent).Clicked() {
+				a.switchProfile(selectedName)
+			}
+		})
 		if a.profileSwitchMessage != "" {
 			ui.Text(c, a.profileSwitchMessage).Role(ui.RoleStatus)
 		}

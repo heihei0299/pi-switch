@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,5 +185,64 @@ func TestLoadConfigAtPath_NullExposedModelsNamesField(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q is missing path segment %q", err, want)
 		}
+	}
+}
+
+func TestSaveAtPathPreservesExplicitEmptyExposedModels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	name := "main"
+	cfg := DefaultConfig()
+	cfg.Profiles = map[string]ProviderProfile{
+		"p": {Upstreams: []Upstream{{Name: &name, ExposedModels: []string{}}}},
+	}
+	if err := SaveAtPath(cfg, path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"exposedModels": []`) {
+		t.Fatalf("explicit empty exposure was omitted from saved config: %s", data)
+	}
+	loaded, _, err := LoadConfigAtPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exposed := loaded.Profiles["p"].Upstreams[0].ExposedModels; exposed == nil || len(exposed) != 0 {
+		t.Fatalf("loaded exposure = %#v, want non-nil empty slice", exposed)
+	}
+}
+
+func TestUpstreamMarshalExposureStatesAndOtherFields(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		exposed []string
+		want    string
+	}{
+		{"missing", nil, ""}, {"empty", []string{}, `[]`}, {"selected", []string{"one"}, `["one"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel, weight := "primary", uint32(7)
+			upstream := Upstream{Name: &channel, Weight: &weight, API: "openai-completions", APIKey: "fake-key", Models: []ModelEntry{{ID: "one"}}, ExposedModels: tc.exposed}
+			data, err := json.Marshal(upstream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["exposedModels"]) != tc.want {
+				t.Fatalf("exposure = %s, want %s", fields["exposedModels"], tc.want)
+			}
+			var loaded Upstream
+			if err := json.Unmarshal(data, &loaded); err != nil {
+				t.Fatal(err)
+			}
+			if loaded.APIKey != upstream.APIKey || loaded.Name == nil || *loaded.Name != channel || loaded.Weight == nil || *loaded.Weight != weight || len(loaded.Models) != 1 {
+				t.Fatal("custom marshal lost other fields")
+			}
+		})
 	}
 }

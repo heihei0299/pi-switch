@@ -227,12 +227,38 @@ func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
 	if !ok {
 		return nil, EnrichCounts{}, profileErr(ErrProfileNotFound, "profile %q not found", name)
 	}
+	ids, entries, counts, err := FetchChannelModelEntries(prof, channel)
+	if err != nil {
+		return nil, EnrichCounts{}, err
+	}
+	// The network call intentionally happens outside the config lock. The
+	// latest profile is reloaded in the transaction below before merging so a
+	// concurrent model/expose update cannot be overwritten by this fetch.
+	if err := updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
+		latest, ok := cfg.Profiles[name]
+		if !ok {
+			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", name))
+		}
+		if err := MergeChannelModels(&latest, channel, entries); err != nil {
+			return keepMutation(err)
+		}
+		cfg.Profiles[name] = latest
+		return nil
+	}); err != nil {
+		return nil, EnrichCounts{}, err
+	}
+	return ids, counts, nil
+}
+
+// FetchChannelModelEntries performs the shared fetch/enrichment without a config write.
+func FetchChannelModelEntries(prof config.ProviderProfile, channel string) ([]string, []config.ModelEntry, EnrichCounts, error) {
+	prof.Upstreams = append([]config.Upstream(nil), prof.Upstreams...)
 	if channel == "" {
-		return nil, EnrichCounts{}, errors.New("channel is required")
+		return nil, nil, EnrichCounts{}, errors.New("channel is required")
 	}
 	idx := EnsureMutationChannel(&prof, channel)
 	if idx < 0 {
-		return nil, EnrichCounts{}, profileErr(ErrUnknownChannel, "unknown channel %q", channel)
+		return nil, nil, EnrichCounts{}, profileErr(ErrUnknownChannel, "unknown channel %q", channel)
 	}
 	// Select this channel for the same inherited URL, key and header policy
 	// used by primary-channel probes. The original profile is not modified.
@@ -240,7 +266,7 @@ func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
 	selected.Upstreams = prof.Upstreams[idx : idx+1]
 	ids, lastErr := FetchUpstreamModelIDs(selected)
 	if ids == nil {
-		return nil, EnrichCounts{}, profileErr(ErrUpstreamFetchFailed, "%s", lastErr)
+		return nil, nil, EnrichCounts{}, profileErr(ErrUpstreamFetchFailed, "%s", lastErr)
 	}
 	seeds := make([]map[string]interface{}, 0, len(ids))
 	for _, id := range ids {
@@ -253,36 +279,32 @@ func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
 	}
 	enriched, skipped, failed, warning := EnrichModelsWithCatalog(seeds, prof)
 	var entries []config.ModelEntry
-	if b, err := json.Marshal(seeds); err == nil {
-		_ = json.Unmarshal(b, &entries)
+	data, err := json.Marshal(seeds)
+	if err != nil {
+		return nil, nil, EnrichCounts{}, err
 	}
-	// The network call intentionally happens outside the config lock. The
-	// latest profile is reloaded in the transaction below before merging so a
-	// concurrent model/expose update cannot be overwritten by this fetch.
-	if err := updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
-		latest, ok := cfg.Profiles[name]
-		if !ok {
-			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", name))
-		}
-		latestIdx := EnsureMutationChannel(&latest, channel)
-		if latestIdx < 0 {
-			return keepMutation(profileErr(ErrUnknownChannel, "unknown channel %q", channel))
-		}
-		seen := map[string]bool{}
-		for _, m := range latest.Upstreams[latestIdx].Models {
-			seen[m.ID] = true
-		}
-		for _, e := range entries {
-			if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
-				continue
-			}
-			seen[e.ID] = true
-			latest.Upstreams[latestIdx].Models = append(latest.Upstreams[latestIdx].Models, e)
-		}
-		cfg.Profiles[name] = latest
-		return nil
-	}); err != nil {
-		return nil, EnrichCounts{}, err
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, nil, EnrichCounts{}, err
 	}
-	return ids, EnrichCounts{Enriched: enriched, Skipped: skipped, Failed: failed, Warning: warning}, nil
+	return ids, entries, EnrichCounts{Enriched: enriched, Skipped: skipped, Failed: failed, Warning: warning}, nil
+}
+
+// MergeChannelModels only adds new IDs; exposure and existing metadata stay intact.
+func MergeChannelModels(prof *config.ProviderProfile, channel string, entries []config.ModelEntry) error {
+	latestIdx := EnsureMutationChannel(prof, channel)
+	if latestIdx < 0 {
+		return profileErr(ErrUnknownChannel, "unknown channel %q", channel)
+	}
+	seen := map[string]bool{}
+	for _, m := range prof.Upstreams[latestIdx].Models {
+		seen[m.ID] = true
+	}
+	for _, e := range entries {
+		if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
+			continue
+		}
+		seen[e.ID] = true
+		prof.Upstreams[latestIdx].Models = append(prof.Upstreams[latestIdx].Models, e)
+	}
+	return nil
 }

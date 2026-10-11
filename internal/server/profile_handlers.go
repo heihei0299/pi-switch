@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
@@ -38,27 +36,9 @@ func handlePutConfig(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid config: " + err.Error()})
 		return
 	}
-	for name, prof := range cfg.Profiles {
-		// 第一层：profile 顶层组合自身必须自洽（原先的检查保留）。注意这里不再因为
-		// responsesMode 为空而整段跳过——空 mode 等于 auto，是合法声明，不该顺带放过
-		// channel 检查。
-		if prof.API != "" {
-			if err := protocol.ValidateResponsesMode(prof.API, prof.ResponsesMode); err != nil {
-				c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
-				return
-			}
-		}
-		// 第二层：与运行期同一口径——请求路径先 narrowToChannel(ResolvedUpstreams()[i])，
-		// 再交给 translator.PlanRequest；所以逐个 channel 判 effective api/mode（channel
-		// 声明优先、否则回退 profile），而 ResolvedUpstreams() 为空（无 channel 且无
-		// baseUrl/apiKey/headers）时判 profile 自己声明的 api。这条规则收在
-		// config.ValidateResolvedCapability：DuplicateProfile 复制前判的是同一条，所以副本
-		// 不可能是这道门会拒绝的配置。shape/模型/channel 名校验不在此门（CRUD 门的规则，
-		// 见 §2.2）。
-		if err := config.ValidateResolvedCapability(prof); err != nil {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("profile %s: %s", name, err.Error())})
-			return
-		}
+	if err := application.ValidateWritableConfig(cfg); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	if err := config.SaveAtPath(cfg, configPath()); err != nil {
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
@@ -271,39 +251,7 @@ func handleFetchModelsForChannel(c *gin.Context, name, channel string) {
 // inventing numbers. User-Agent is required, Cloudflare 403s UA-less
 // requests from opencode.ai frontends.
 func fetchUpstreamUsage(baseURL, apiKey, userAgent string) (map[string]interface{}, error) {
-	if baseURL == "" {
-		return nil, fmt.Errorf("baseUrl is empty")
-	}
-	u := strings.TrimRight(baseURL, "/") + "/usage"
-	req, err := http.NewRequest("GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	if userAgent != "" {
-		req.Header.Set("User-Agent", userAgent)
-	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("usage endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var decoded map[string]interface{}
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, fmt.Errorf("usage endpoint returned invalid JSON: %v", err)
-	}
-	usage, ok := decoded["usage"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("usage endpoint response has no usage object")
-	}
-	return usage, nil
+	return application.FetchUpstreamUsage(baseURL, apiKey, userAgent)
 }
 
 func handleFetchModels(c *gin.Context) {
@@ -519,28 +467,8 @@ func handleGetCredits(c *gin.Context) {
 	c.JSON(200, gin.H{"balance": 0, "used": 0, "total": 0, "remaining": 0, "percent": percent, "usage": usage, "raw": gin.H{}})
 }
 
-// ProviderPresets is the single source of the static provider preset list,
-// shared by GET /api/presets and `pi-switch preset`. Presets are filtered by the
-// one capability source so the list can never offer a profile the write doors
-// refuse.
-func ProviderPresets() []map[string]interface{} {
-	all := []map[string]interface{}{
-		{"id": "openai", "name": "OpenAI", "description": "OpenAI API", "websiteUrl": "https://openai.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.openai.com/v1", "models": []string{"gpt-4o-mini", "gpt-4o", "o1"}},
-		{"id": "anthropic", "name": "Anthropic", "description": "Anthropic API", "websiteUrl": "https://anthropic.com", "api": protocol.AnthropicMessages, "baseUrl": "https://api.anthropic.com", "models": []string{"claude-3-5-sonnet", "claude-3-opus"}},
-		{"id": "google", "name": "Google", "description": "Google Gemini", "websiteUrl": "https://ai.google.dev", "api": protocol.GoogleGenerativeAI, "baseUrl": "https://generativelanguage.googleapis.com/v1", "models": []string{"gemini-pro"}},
-		{"id": "deepseek", "name": "DeepSeek", "description": "DeepSeek", "websiteUrl": "https://deepseek.com", "api": protocol.OpenAIChat, "baseUrl": "https://api.deepseek.com/v1", "models": []string{"deepseek-chat"}},
-	}
-	// 预设必须与写入口能力一致：不可代理的 api 现在会被两个写入口拒绝，若仍在这里
-	// 提供预设，用户点选后只会拿到一个必失败的保存。过滤依据是同一个能力来源
-	// protocol.CanProxy，不维护第二份列表（见 system-contract §2.2）。
-	usable := make([]map[string]interface{}, 0, len(all))
-	for _, preset := range all {
-		if api, _ := preset["api"].(string); protocol.CanProxy(api) {
-			usable = append(usable, preset)
-		}
-	}
-	return usable
-}
+// ProviderPresets retains the existing HTTP/CLI entry point during migration.
+func ProviderPresets() []map[string]interface{} { return application.ProviderPresets() }
 
 func handlePresets(c *gin.Context) {
 	c.JSON(200, ProviderPresets())
@@ -549,87 +477,12 @@ func handlePresetDetail(c *gin.Context) {
 	c.JSON(404, gin.H{"error": "not found"})
 }
 func handleDoctor(c *gin.Context) {
-	cfg, _, err := config.LoadConfigAtPath(configPath())
-	if err != nil {
-		// The first check below claims the config JSON is valid, so a broken file
-		// must flip that check instead of being reported as healthy.
-		c.JSON(200, []map[string]interface{}{
-			{"ok": false, "msg": "config unreadable: " + err.Error()},
-		})
-		return
-	}
-	checks := []map[string]interface{}{
-		{"ok": true, "msg": "config JSON is valid"},
-		{"ok": len(cfg.Profiles) > 0, "msg": fmt.Sprintf("%d profile(s) configured", len(cfg.Profiles))},
-	}
+	checks, _ := application.DiagnoseConfig(configPath())
 	c.JSON(200, checks)
 }
 
 func handleValidate(c *gin.Context) {
-	cfg, _, err := config.LoadConfigAtPath(configPath())
-	if err != nil {
-		c.JSON(200, []map[string]interface{}{
-			{"level": "error", "path": "config", "message": err.Error()},
-		})
-		return
-	}
-	issues := []map[string]interface{}{}
-	for name, prof := range cfg.Profiles {
-		if prof.API == "" {
-			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": "api required"})
-		} else if !protocol.IsKnown(prof.API) {
-			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": fmt.Sprintf("unsupported api %s", prof.API)})
-		} else if len(prof.Upstreams) == 0 {
-			// legacy flat profile：effective api 就是 profile 自己的 api，路径按 profile 报。
-			// 声明了 channel 的 profile 由 ProfileIssues 逐 channel 报（同一能力来源）。
-			if err := config.ValidateEffectiveFlatAPI(prof); err != nil {
-				issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.api", name), "message": err.Error()})
-			}
-		}
-		if prof.BaseURL == "" && len(prof.Upstreams) == 0 {
-			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.baseUrl", name), "message": "baseUrl required"})
-		}
-		hasModels := false
-		for _, u := range prof.Upstreams {
-			if len(u.Models) > 0 {
-				hasModels = true
-				break
-			}
-		}
-		if !hasModels {
-			issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.upstreams", name), "message": "no models"})
-		}
-		if prof.ModelsDevProvider != nil && *prof.ModelsDevProvider != "" {
-			known := map[string]bool{"openai": true, "anthropic": true, "google": true, "deepseek": true, "xai": true, "moonshot": true, "qwen": true, "cohere": true, "mistral": true, "azure": true, "custom": true}
-			if !known[*prof.ModelsDevProvider] {
-				issues = append(issues, map[string]interface{}{"level": "warning", "path": fmt.Sprintf("profiles.%s.modelsDevProvider", name), "message": fmt.Sprintf("modelsDevProvider unknown: %s", *prof.ModelsDevProvider)})
-			}
-		}
-		if err := profile.ValidateResponsesMode(prof); err != nil {
-			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.responsesMode", name), "message": err.Error()})
-		}
-		if err := config.ValidateProviderRetry(prof); err != nil {
-			issues = append(issues, map[string]interface{}{"level": "error", "path": fmt.Sprintf("profiles.%s.retry", name), "message": err.Error()})
-		}
-		// shape / channel / model 诊断整份来自 profile.ProfileIssues（CRUD 门拒绝什么，
-		// 这里就报什么、且逐条带字段路径）——宽松保存 + 完整 advisory validation 才闭环。
-		for _, issue := range profile.ProfileIssues(prof) {
-			issues = append(issues, map[string]interface{}{
-				"level":   "error",
-				"path":    fmt.Sprintf("profiles.%s.%s", name, issue.Field),
-				"message": issue.Message,
-			})
-		}
-	}
-	// failover check removed (transitional)
-	if err := config.ValidateSettingsRetry(cfg.Settings); err != nil {
-		issues = append(issues, map[string]interface{}{"level": "error", "path": "settings.proxy.retry", "message": err.Error()})
-	}
-	if len(issues) == 0 {
-		// ensure at least empty array not null
-		c.JSON(200, []interface{}{})
-		return
-	}
+	_, issues := application.DiagnoseConfig(configPath())
 	c.JSON(200, issues)
 }
 
