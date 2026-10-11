@@ -117,28 +117,13 @@ jobs:
         working-directory: desktop
         run: go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/${{ matrix.goarch }}" -skip-build-command -skip-notarize
 
-      - name: Test Debian package install/reinstall/remove/purge
+      - name: Test Debian package install/reinstall/upgrade/downgrade/remove/purge
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
         run: |
           deb=$(find "desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
-          apt_deb="./$deb"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "$apt_deb"
-          test "$(dpkg-query -W -f='${Status}' pi-switch-mygo-spike)" = 'install ok installed'
-          dpkg --verify pi-switch-mygo-spike
-          sudo apt-get install --reinstall -y --no-install-recommends "$apt_deb"
-          sudo apt-get remove -y pi-switch-mygo-spike
-          test ! -e /opt/pi-switch-mygo-spike/pi-switch-mygo-spike
-          sudo apt-get install -y --no-install-recommends "$apt_deb"
-          sudo apt-get purge -y pi-switch-mygo-spike
-          test ! -e /opt/pi-switch-mygo-spike/pi-switch-mygo-spike
-          test ! -e /usr/bin/pi-switch-mygo-spike
-          if dpkg-query -W pi-switch-mygo-spike >/dev/null 2>&1; then
-            echo "package registration remains after purge" >&2
-            exit 1
-          fi
+          bash desktop/scripts/test-deb-package-lifecycle.sh "$deb"
 
       - name: Run bundled CLI on native arm64
         if: matrix.goarch == 'arm64'
