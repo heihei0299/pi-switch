@@ -46,7 +46,7 @@
 
 | 项目 | 状态 | 证据与边界 |
 | --- | --- | --- |
-| Native 与 HTTP 适配器边界 | PASS（静态检查） | `desktop/native_*.go`、`desktop/shell.go` 未导入 `internal/server` 或 `webui`；唯一旧 UI 消费者是保留的 `desktop/management.go` 回退注册器。 |
+| Native 与 HTTP 适配器边界 | PASS（限定：无 HTTP handler 业务依赖） | 静态检查 `desktop/native_*.go`、`desktop/shell.go` 未导入 `internal/server` 或 `webui`。`desktop/management.go` 是唯一旧 UI 消费者，仅供明确 `--web` 回退注册；`prepareDesktopShell` 与 `TestDefaultStartupUsesNativeWithoutRegisteringLegacyUI` 验证默认 Native 不注册该路由。Native 仍直接使用 `config`/`gateway`/`store` 的读取函数及类型；Gateway 规划/发布经 `internal/application`，Stats 通过明确供 HTTP/Native 共用的 `stats.OpenManagementService`，Packages 使用 T01 `a148f49` 抽出的 `internal/packages` 服务 API。未发现 Native 调用 HTTP handler 或重复业务规则；本项不声称存在静态强制的完整 package-layer 检查，也不据此要求机械增加转发 wrapper。 |
 | Stats 自定义日期异步一致性 | PASS（自动化与主代理自审） | MyGo v0.3.3 的 `Window.Update` 将回调投递到 UI 主线程；`refreshNativeStats` 在该回调内校验窗口与 task token、读取最新筛选并重跑，只重置发生变化的范围分页。测试覆盖加载时日期控件禁用、已打开日历的日期变更及分页计算；未直接驱动 shell 的异步 worker 集成路径。红测曾复现“加载期间旧日历仍可改日期”。 |
 | Gateway 显式发布与凭据保护 | PASS（静态与自动化） | Native preview 状态不含 API key；验证/预览无写入，Publish 需要显式确认；共享 `gateway.PublishPlan` 在锁内比较当前快照并原子替换，保留第三方 provider。审计发现输出文件原为 `0644`，虽保留第三方 `apiKey`；`23f88d5` 改为 `0600`，`TestPublishPreservesThirdPartyProviders` 增加权限断言（修复前实际红测为 `0644`）。 |
 | 配置、备份、Proxy 身份 | PASS（自动化范围） | Root/Desktop 全套测试通过；现有用例覆盖旧配置迁移、备份/恢复、旧 SQLite 行/unknown 保留及 daemon 身份核验。T06 自审发现 graceful Stop 原来在身份检查后经 `os.Process.Signal` 有 PID 复用窗口；现改为 PIDFD 固定目标后复验身份再发 SIGINT，无 PIDFD 时 fail closed。新增变身份进程不被 signal、CLI 锁错误非零退出、API Stop 错误回 500 的测试。测试通过不替代真实用户数据迁移。 |
