@@ -2,8 +2,12 @@ package stats
 
 import (
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/conversation"
@@ -202,6 +206,80 @@ type StatsResponse struct {
 	RecentRequestTotal  int                     `json:"recentRequestTotal"`
 	Rows                []RequestDTO            `json:"rows"`
 	RecentRequestTotalS int                     `json:"recent_request_total"`
+}
+
+// ExportRequests writes the complete raw request history in chronological order.
+// Its JSON aliases and CSV columns preserve the existing logs export contract.
+func (s Service) ExportRequests(w io.Writer, format string) error {
+	if w == nil {
+		return fmt.Errorf("stats export writer is nil")
+	}
+	if format != "json" && format != "csv" {
+		return fmt.Errorf("unsupported stats export format %q", format)
+	}
+	if format == "json" {
+		requests := make([]map[string]any, 0)
+		if err := s.forEachFact(nil, "ASC", func(fact RequestFact) error {
+			request := map[string]any{
+				"ts": exportValue(fact.TS), "provider": exportValue(fact.Provider), "model": exportValue(fact.Model),
+				"success": exportValue(fact.Success), "ok": exportValue(fact.Success),
+				"prompt_tokens": exportValue(fact.PromptTokens), "completion_tokens": exportValue(fact.CompletionTokens),
+				"cached_tokens": exportValue(fact.CachedTokens), "reasoning_tokens": exportValue(fact.ReasoningTokens),
+				"cachedTokens": exportValue(fact.CachedTokens), "reasoningTokens": exportValue(fact.ReasoningTokens),
+				"promptTokens": exportValue(fact.PromptTokens), "completionTokens": exportValue(fact.CompletionTokens),
+				"cost": exportValue(fact.Cost), "costTotal": exportValue(fact.Cost),
+				"conversation_id": exportValue(fact.ConversationID), "conversationId": exportValue(fact.ConversationID),
+				"conversation_name": exportValue(fact.ConversationName), "conversationName": exportValue(fact.ConversationName),
+				"latency_ms": exportValue(fact.LatencyMs), "status": exportValue(fact.Status), "error": exportValue(fact.Error),
+				"upstream_url": exportValue(fact.UpstreamURL), "upstreamUrl": exportValue(fact.UpstreamURL),
+			}
+			if fact.TS != nil {
+				request["timestamp"] = *fact.TS
+			}
+			requests = append(requests, request)
+			return nil
+		}); err != nil {
+			return err
+		}
+		return json.NewEncoder(w).Encode(requests)
+	}
+
+	csvWriter := csv.NewWriter(w)
+	if err := csvWriter.Write([]string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}); err != nil {
+		return err
+	}
+	err := s.forEachFact(nil, "ASC", func(fact RequestFact) error {
+		cost := ""
+		if fact.Cost != nil {
+			cost = strconv.FormatFloat(*fact.Cost, 'f', -1, 64)
+		}
+		return csvWriter.Write([]string{
+			exportField(fact.TS), exportField(fact.Success), exportField(fact.Provider), exportField(fact.Model),
+			exportField(fact.Status), exportField(fact.LatencyMs), exportField(fact.Error), "", "", "",
+			exportField(fact.UpstreamURL), exportField(fact.PromptTokens), exportField(fact.CompletionTokens),
+			exportField(fact.CachedTokens), exportField(fact.ReasoningTokens), exportField(fact.ConversationID),
+			exportField(fact.ConversationName), cost, cost, exportField(fact.CachedTokens), exportField(fact.ReasoningTokens),
+		})
+	})
+	csvWriter.Flush()
+	if err != nil {
+		return err
+	}
+	return csvWriter.Error()
+}
+
+func exportValue[T any](value *T) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func exportField[T any](value *T) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprint(*value)
 }
 
 func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {

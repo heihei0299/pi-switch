@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/gateway"
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
@@ -569,6 +571,69 @@ func TestNativeStatsDoesNotCreateMissingHistoryDatabase(t *testing.T) {
 	}
 }
 
+func TestNativeStatsAutoRefreshUsesConfiguredIntervalWithoutOverlap(t *testing.T) {
+	for tier, want := range map[int]time.Duration{
+		0: 0,
+		1: 5 * time.Second,
+		2: 30 * time.Second,
+		3: 5 * time.Minute,
+	} {
+		if got := nativeStatsRefreshInterval(tier); got != want {
+			t.Errorf("tier %d interval = %v, want %v", tier, got, want)
+		}
+	}
+
+	var refreshes, requestPage, conversationPage int
+	var filters nativeStatsFilters
+	preview := &nativeComplexPreview{
+		tab:          2,
+		stats:        nativeStatsPage{requestPage: 2, conversationPage: 3},
+		statsFilters: nativeStatsFilters{requestRange: nativeRange7d, conversationRange: nativeRange24h},
+	}
+	preview.refreshStats = func(request, conversation int, current nativeStatsFilters) {
+		refreshes++
+		requestPage, conversationPage, filters = request, conversation, current
+	}
+	tester := ui.NewTester(preview.view, 900, 1000)
+	if preview.statsRefreshTier != 0 || !tester.HasText("Auto-refresh") {
+		t.Fatalf("auto-refresh should be visible and off by default: tier=%d text=%q", preview.statsRefreshTier, tester.Texts())
+	}
+	if err := tester.Click("5s"); err != nil {
+		t.Fatal(err)
+	}
+	if preview.statsRefreshTier != 1 || preview.statsRefreshAt.IsZero() {
+		t.Fatalf("5s interval was not scheduled: tier=%d at=%v", preview.statsRefreshTier, preview.statsRefreshAt)
+	}
+
+	preview.statsRefreshAt = time.Now().Add(-time.Second)
+	tester.Frame()
+	if refreshes != 1 || preview.statsRefreshAt.Before(time.Now()) || requestPage != 2 || conversationPage != 3 || filters != preview.statsFilters {
+		t.Fatalf("due auto-refresh count=%d pages=%d/%d filters=%+v next=%v", refreshes, requestPage, conversationPage, filters, preview.statsRefreshAt)
+	}
+
+	preview.statsLoading = true
+	preview.statsRefreshAt = time.Now().Add(-time.Second)
+	tester.Frame()
+	if refreshes != 1 {
+		t.Fatalf("auto-refresh overlapped an in-flight load: %d refreshes", refreshes)
+	}
+	preview.statsLoading = false
+	preview.statsRefreshAt = time.Now().Add(-time.Second)
+	tester.Frame()
+	if refreshes != 2 {
+		t.Fatalf("auto-refresh did not resume after loading: %d refreshes", refreshes)
+	}
+
+	if err := tester.Click("Off"); err != nil {
+		t.Fatal(err)
+	}
+	preview.statsRefreshAt = time.Now().Add(-time.Second)
+	tester.Frame()
+	if refreshes != 2 || !preview.statsRefreshAt.IsZero() {
+		t.Fatalf("Off did not stop auto-refresh: refreshes=%d next=%v", refreshes, preview.statsRefreshAt)
+	}
+}
+
 func TestNativeStatsSummaryShowsFailuresAndOnlyKnownUsage(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "requests.db")
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -957,5 +1022,57 @@ func TestNativeGatewayPublishRejectsConflictWithoutWriting(t *testing.T) {
 	}
 	if string(updated) != string(originalModels) {
 		t.Fatalf("conflicting Gateway publish changed models.json: %s", updated)
+	}
+}
+
+func TestNativeStatsExportButtonsAndAtomicFileWrite(t *testing.T) {
+	format := ""
+	preview := &nativeComplexPreview{tab: 2, exportStats: func(selected string) { format = selected }}
+	tester := ui.NewTester(preview.view, 900, 1000)
+	if !tester.HasText("error text and upstream URLs may contain sensitive data") {
+		t.Fatalf("export sensitivity warning missing: %q", tester.Texts())
+	}
+	if err := tester.Click("Export CSV"); err != nil || format != "csv" {
+		t.Fatalf("CSV action format=%q err=%v", format, err)
+	}
+	if err := tester.Click("Export JSON"); err != nil || format != "json" {
+		t.Fatalf("JSON action format=%q err=%v", format, err)
+	}
+
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "requests.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.InsertRequest(db, "supplier", "model-a", true, 10, 5, 2, nil, "conversation", 12, "2026-10-11T12:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	service := statsservice.Service{DB: db, Source: conversation.SourceOff}
+	path := filepath.Join(dir, "pi-switch-logs.json")
+	if err := os.WriteFile(path, []byte("previous export"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNativeStatsExport(path, "json", service); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil || !json.Valid(written) || strings.Contains(string(written), "previous export") {
+		t.Fatalf("atomic JSON export=%q err=%v", written, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("export permissions=%v", info.Mode().Perm())
+	}
+	beforeFailure := append([]byte(nil), written...)
+	if err := writeNativeStatsExport(path, "xml", service); err == nil {
+		t.Fatal("unsupported export format was accepted")
+	}
+	afterFailure, err := os.ReadFile(path)
+	if err != nil || string(afterFailure) != string(beforeFailure) {
+		t.Fatalf("failed export changed previous file: %q err=%v", afterFailure, err)
 	}
 }

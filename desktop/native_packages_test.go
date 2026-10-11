@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,5 +130,45 @@ func TestNativePackageDisplayNameOmitsGitURLCredentials(t *testing.T) {
 	}
 	if got := nativePackageDisplayName(pkg); got != "repo" || strings.Contains(got, "secret") || strings.Contains(got, "user") {
 		t.Fatalf("display name = %q", got)
+	}
+}
+
+func TestNativePackageListVirtualizesAndNavigates100And1000Items(t *testing.T) {
+	for _, size := range []int{100, 1000} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			items := make([]nativePackage, size)
+			for i := range items {
+				items[i] = nativePackage{id: fmt.Sprintf("npm:pkg-%04d", i), typeName: "npm", name: fmt.Sprintf("package-%04d", i), version: "1.0.0", enabled: true}
+			}
+			preview := &nativeComplexPreview{tab: 3, packages: items, packagesLoaded: true}
+			tester := ui.NewTester(preview.view, 900, 1000)
+			tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+			first, last := preview.packageList.Visible()
+			if last < first || last-first+1 > 24 {
+				t.Fatalf("package list rendered %d rows at once; threshold is 24", last-first+1)
+			}
+			if !tester.HasText(items[0].name) || tester.HasText(items[size-1].name) {
+				t.Fatalf("%d-item package list was not virtualized: %q", size, tester.Texts())
+			}
+			if err := tester.Click(items[0].name); err != nil {
+				t.Fatal(err)
+			}
+			if !tester.Focused(items[0].name) {
+				t.Fatal("clicking a package did not focus the list")
+			}
+			firstRect, ok := tester.Find(items[0].name)
+			if !ok {
+				t.Fatal("first package row disappeared before scrolling")
+			}
+			tester.Scroll(firstRect.X+firstRect.W/2, firstRect.Y+firstRect.H/2, 0, 1e6)
+			first, last = preview.packageList.Visible()
+			if first == 0 || last < first || last-first+1 > 24 || !tester.HasText(items[size-1].name) {
+				t.Fatalf("wheel scroll did not reveal the virtualized list end: visible=%d..%d text=%q", first, last, tester.Texts())
+			}
+			tester.Key(0, ui.KeyEnd)
+			if preview.packageSelected != size-1 || !tester.HasText(items[size-1].name) {
+				t.Fatalf("End did not navigate %d packages: selected=%d text=%q", size, preview.packageSelected, tester.Texts())
+			}
+		})
 	}
 }

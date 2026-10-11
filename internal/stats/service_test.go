@@ -1,8 +1,12 @@
 package stats
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,5 +160,66 @@ func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
 	}
 	if windowed.Requests != 3 || windowed.PromptTokens != 10 || windowed.Cost == nil || *windowed.Cost != 0.25 {
 		t.Fatalf("windowed summary = %+v", windowed)
+	}
+}
+
+func TestExportRequestsPreservesWebUIContractOrderUnknownsAndReadOnlyFacts(t *testing.T) {
+	db := openStatsDB(t)
+	insertFact(t, db, "2026-09-10T12:00:00Z", "supplier", "known", 1, int64(10), int64(5), int64(2), nil, 0.25, nil, nil, int64(12))
+	insertFact(t, db, "2026-09-10T12:01:00Z", "supplier", "unknown", 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	if _, err := db.Exec(`UPDATE requests SET status = 502, error = 'upstream failed', upstream_url = 'https://supplier.example/v1' WHERE model = 'unknown'`); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{
+		DB: db, Source: conversation.SourceSessionScan,
+		Candidates: []conversation.Candidate{{ID: "session", Model: "known", LastActiveAt: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}},
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := service.ExportRequests(&jsonOutput, "json"); err != nil {
+		t.Fatal(err)
+	}
+	var requests []map[string]any
+	if err := json.Unmarshal(jsonOutput.Bytes(), &requests); err != nil {
+		t.Fatalf("exported JSON %q: %v", jsonOutput.String(), err)
+	}
+	if len(requests) != 2 || requests[0]["model"] != "known" || requests[1]["model"] != "unknown" {
+		t.Fatalf("exported requests/order = %+v", requests)
+	}
+	if requests[0]["ts"] != "2026-09-10T12:00:00Z" || requests[0]["timestamp"] != requests[0]["ts"] || requests[0]["costTotal"] != 0.25 || requests[0]["cost"] != requests[0]["costTotal"] {
+		t.Fatalf("JSON export does not preserve timestamp/cost aliases: %+v", requests[0])
+	}
+	if requests[0]["conversationId"] != nil {
+		t.Fatalf("JSON export inferred a session attribution: %+v", requests[0])
+	}
+	if requests[1]["prompt_tokens"] != nil || requests[1]["cachedTokens"] != nil || requests[1]["cost"] != nil || requests[1]["ok"] != false || requests[1]["status"] != float64(502) || requests[1]["error"] != "upstream failed" || requests[1]["upstreamUrl"] != "https://supplier.example/v1" {
+		t.Fatalf("JSON export fabricated unknowns or dropped failure aliases: %+v", requests[1])
+	}
+
+	var csvOutput bytes.Buffer
+	if err := service.ExportRequests(&csvOutput, "csv"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(strings.NewReader(csvOutput.String())).ReadAll()
+	if err != nil || len(records) != 3 {
+		t.Fatalf("exported CSV records=%v, err=%v", records, err)
+	}
+	wantHeader := "timestamp,ok,provider,model,status,latency_ms,error,retry,skipped,converted,upstream_url,promptTokens,completionTokens,cachedTokens,reasoningTokens,conversationId,conversationName,costTotal,cost,cached_tokens,reasoning_tokens"
+	if strings.Join(records[0], ",") != wantHeader {
+		t.Fatalf("CSV header = %q, want %q", strings.Join(records[0], ","), wantHeader)
+	}
+	columns := make(map[string]int, len(records[0]))
+	for i, column := range records[0] {
+		columns[column] = i
+	}
+	if records[1][columns["model"]] != "known" || records[2][columns["model"]] != "unknown" || records[2][columns["promptTokens"]] != "" || records[2][columns["cachedTokens"]] != "" || records[2][columns["cost"]] != "" || records[2][columns["status"]] != "502" || records[2][columns["error"]] != "upstream failed" {
+		t.Fatalf("CSV order/nullability/failure facts = %v", records)
+	}
+	if err := service.ExportRequests(&bytes.Buffer{}, "xml"); err == nil {
+		t.Fatal("unsupported export format was accepted")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM requests`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("export changed request facts: count=%d, err=%v", count, err)
 	}
 }

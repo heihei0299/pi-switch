@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
+	statsservice "github.com/heihei0299/pi-switch/internal/stats"
+	"github.com/heihei0299/pi-switch/internal/store"
 )
 
 type desktopShell struct {
@@ -314,6 +317,7 @@ func (a *desktopShell) showComplexPrototypes() {
 		a.complexPreview.publishGatewayDraft = a.publishNativeGatewayDraft
 		a.complexPreview.runPackageTask = a.runNativePackageTask
 		a.complexPreview.refreshStats = a.refreshNativeStats
+		a.complexPreview.exportStats = a.exportNativeStats
 		a.complexPreview.refreshConversationRequests = a.refreshNativeConversationRequests
 		a.complexWindow = mygo.NewWindow(mygo.WindowOptions{
 			Title:           "pi-switch — Complex UI Prototypes",
@@ -528,6 +532,67 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 			preview.statsLoaded = true
 			preview.statsError = ""
 			preview.selectedUsage = -1
+		})
+	}()
+}
+
+func (a *desktopShell) exportNativeStats(format string) {
+	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.statsExporting || a.exiting || (format != "json" && format != "csv") {
+		return
+	}
+	preview := a.complexPreview
+	window := a.complexWindow
+	ctx, token, ok := a.tasks.begin("stats-export")
+	if !ok {
+		return
+	}
+	preview.statsExporting = true
+	preview.statsExportStatus = "Preparing request history export…"
+	window.Invalidate()
+	go func() {
+		var status string
+		if _, err := os.Stat(store.DBPath()); errors.Is(err, os.ErrNotExist) {
+			status = "No request history to export."
+		} else if err != nil {
+			status = "Export failed: inspect request history: " + err.Error()
+		} else {
+			db, err := store.GetDB()
+			if err != nil {
+				status = "Export failed: " + err.Error()
+			} else {
+				service := statsservice.Service{DB: db}
+				filter := mygo.FileFilter{Name: "JSON", Extensions: []string{"json"}}
+				if format == "csv" {
+					filter = mygo.FileFilter{Name: "CSV", Extensions: []string{"csv"}}
+				}
+				path, saveErr := mygo.Dialog.Save(mygo.SaveDialogOptions{
+					Parent: window, Title: "Export request history", DefaultPath: "pi-switch-logs." + format,
+					Filters: []mygo.FileFilter{filter},
+				})
+				if saveErr != nil {
+					status = "Export failed: " + saveErr.Error()
+				} else if path == "" {
+					status = "Export canceled."
+				} else if ctx.Err() == nil {
+					if err := writeNativeStatsExport(path, format, service); err != nil {
+						status = "Export failed: " + err.Error()
+					} else {
+						status = "Exported request history to " + filepath.Base(path)
+					}
+				}
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !a.tasks.accept("stats-export", token) {
+				a.tasks.finish("stats-export", token)
+				return
+			}
+			defer a.tasks.finish("stats-export", token)
+			preview.statsExporting = false
+			preview.statsExportStatus = status
 		})
 	}()
 }

@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"database/sql"
-	"encoding/csv"
 	"fmt"
 	"strconv"
 	"strings"
@@ -207,7 +206,7 @@ func handleConversationRequests(c *gin.Context) {
 
 func handleLogsExport(c *gin.Context) {
 	format := c.DefaultQuery("format", "json")
-	if format == "" {
+	if format != "csv" {
 		format = "json"
 	}
 	db, err := store.GetDB()
@@ -215,185 +214,17 @@ func handleLogsExport(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	rows, err := db.Query(`SELECT ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests ORDER BY id ASC`)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-	type rec struct {
-		TS          sql.NullString
-		Provider    sql.NullString
-		Model       sql.NullString
-		Success     sql.NullInt64
-		PT          sql.NullInt64
-		CT          sql.NullInt64
-		Cached      sql.NullInt64
-		Reasoning   sql.NullInt64
-		Cost        sql.NullFloat64
-		ConvID      sql.NullString
-		ConvName    sql.NullString
-		Latency     sql.NullInt64
-		Status      sql.NullInt64
-		Error       sql.NullString
-		UpstreamURL sql.NullString
-	}
-	var recs []rec
-	for rows.Next() {
-		var r rec
-		if err := rows.Scan(&r.TS, &r.Provider, &r.Model, &r.Success, &r.PT, &r.CT, &r.Cached, &r.Reasoning, &r.Cost, &r.ConvID, &r.ConvName, &r.Latency, &r.Status, &r.Error, &r.UpstreamURL); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		recs = append(recs, r)
-	}
-	if err := rows.Err(); err != nil {
+	var output bytes.Buffer
+	if err := (statsservice.Service{DB: db}).ExportRequests(&output, format); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	if format == "csv" {
-		var buf bytes.Buffer
-		w := csv.NewWriter(&buf)
-		header := []string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}
-		_ = w.Write(header)
-		for _, r := range recs {
-			okStr := ""
-			if r.Success.Valid {
-				if r.Success.Int64 == 1 {
-					okStr = "true"
-				} else {
-					okStr = "false"
-				}
-			}
-			status := ""
-			if r.Status.Valid {
-				status = strconv.FormatInt(r.Status.Int64, 10)
-			}
-			lat := ""
-			if r.Latency.Valid {
-				lat = strconv.FormatInt(r.Latency.Int64, 10)
-			}
-			pt := ""
-			if r.PT.Valid {
-				pt = strconv.FormatInt(r.PT.Int64, 10)
-			}
-			ct := ""
-			if r.CT.Valid {
-				ct = strconv.FormatInt(r.CT.Int64, 10)
-			}
-			cached := ""
-			if r.Cached.Valid {
-				cached = strconv.FormatInt(r.Cached.Int64, 10)
-			}
-			reason := ""
-			if r.Reasoning.Valid {
-				reason = strconv.FormatInt(r.Reasoning.Int64, 10)
-			}
-			cost := ""
-			if r.Cost.Valid {
-				cost = strconv.FormatFloat(r.Cost.Float64, 'f', -1, 64)
-			}
-			ts := ""
-			if r.TS.Valid {
-				ts = r.TS.String
-			}
-			prov := ""
-			if r.Provider.Valid {
-				prov = r.Provider.String
-			}
-			mod := ""
-			if r.Model.Valid {
-				mod = r.Model.String
-			}
-			conv := ""
-			if r.ConvID.Valid {
-				conv = r.ConvID.String
-			}
-			convName := ""
-			if r.ConvName.Valid {
-				convName = r.ConvName.String
-			}
-			row := []string{ts, okStr, prov, mod, status, lat, r.Error.String, "", "", "", r.UpstreamURL.String, pt, ct, cached, reason, conv, convName, cost, cost, cached, reason}
-			_ = w.Write(row)
-		}
-		w.Flush()
 		c.Header("Content-Type", "text/csv")
 		c.Header("Content-Disposition", `attachment; filename="pi-switch-logs.csv"`)
-		c.String(200, buf.String())
-		return
+	} else {
+		c.Header("Content-Type", "application/json")
+		c.Header("Content-Disposition", `attachment; filename="pi-switch-logs.json"`)
 	}
-	// json
-	var out []map[string]interface{}
-	for _, r := range recs {
-		m := map[string]interface{}{
-			"ts": nil, "provider": nil, "model": nil, "success": nil, "ok": nil,
-			"prompt_tokens": nil, "completion_tokens": nil, "cached_tokens": nil, "reasoning_tokens": nil,
-			"cachedTokens": nil, "reasoningTokens": nil, "promptTokens": nil, "completionTokens": nil,
-			"cost": nil, "costTotal": nil, "conversation_id": nil, "conversationId": nil, "conversation_name": nil, "conversationName": nil,
-			"latency_ms": nil, "status": nil, "error": nil, "upstream_url": nil, "upstreamUrl": nil,
-		}
-		if r.TS.Valid {
-			m["ts"] = r.TS.String
-			m["timestamp"] = r.TS.String
-		}
-		if r.Provider.Valid {
-			m["provider"] = r.Provider.String
-		}
-		if r.Model.Valid {
-			m["model"] = r.Model.String
-		}
-		if r.Success.Valid {
-			m["success"] = r.Success.Int64 == 1
-			m["ok"] = r.Success.Int64 == 1
-
-		}
-		if r.Status.Valid {
-			m["status"] = r.Status.Int64
-		}
-		if r.Error.Valid {
-			m["error"] = r.Error.String
-		}
-		if r.UpstreamURL.Valid {
-			m["upstream_url"] = r.UpstreamURL.String
-			m["upstreamUrl"] = r.UpstreamURL.String
-		}
-		if r.PT.Valid {
-			m["prompt_tokens"] = r.PT.Int64
-			m["promptTokens"] = r.PT.Int64
-		}
-		if r.CT.Valid {
-			m["completion_tokens"] = r.CT.Int64
-			m["completionTokens"] = r.CT.Int64
-		}
-		if r.Cached.Valid {
-			m["cached_tokens"] = r.Cached.Int64
-			m["cachedTokens"] = r.Cached.Int64
-		}
-		if r.Reasoning.Valid {
-			m["reasoning_tokens"] = r.Reasoning.Int64
-			m["reasoningTokens"] = r.Reasoning.Int64
-		}
-		if r.Cost.Valid {
-			m["cost"] = r.Cost.Float64
-			m["costTotal"] = r.Cost.Float64
-		}
-		if r.ConvID.Valid {
-			m["conversation_id"] = r.ConvID.String
-			m["conversationId"] = r.ConvID.String
-		}
-		if r.ConvName.Valid {
-			m["conversation_name"] = r.ConvName.String
-			m["conversationName"] = r.ConvName.String
-		}
-		if r.Latency.Valid {
-			m["latency_ms"] = r.Latency.Int64
-		}
-		out = append(out, m)
-	}
-	if out == nil {
-		out = []map[string]interface{}{}
-	}
-	c.Header("Content-Type", "application/json")
-	c.Header("Content-Disposition", `attachment; filename="pi-switch-logs.json"`)
-	c.JSON(200, out)
+	c.Data(200, c.Writer.Header().Get("Content-Type"), output.Bytes())
 }

@@ -114,6 +114,19 @@ type nativeStatsFilters struct {
 	conversationTo    time.Time
 }
 
+func nativeStatsRefreshInterval(tier int) time.Duration {
+	switch tier {
+	case 1:
+		return 5 * time.Second
+	case 2:
+		return 30 * time.Second
+	case 3:
+		return 5 * time.Minute
+	default:
+		return 0
+	}
+}
+
 type nativeComplexPreview struct {
 	tab                         int
 	jsonDraft                   string
@@ -132,6 +145,7 @@ type nativeComplexPreview struct {
 	packagesMessage             string
 	packageSpec                 string
 	packageList                 ui.ListState
+	packageSelected             int
 	packageDeleteConfirm        bool
 	packageDeleteID             string
 	packageDeleteName           string
@@ -153,8 +167,13 @@ type nativeComplexPreview struct {
 	statsLoaded                 bool
 	statsLoading                bool
 	statsError                  string
+	statsExportStatus           string
+	statsExporting              bool
 	statsFilters                nativeStatsFilters
+	statsRefreshTier            int
+	statsRefreshAt              time.Time
 	refreshStats                func(int, int, nativeStatsFilters)
+	exportStats                 func(string)
 	conversationRequests        nativeConversationPage
 	conversationRequestsLoading bool
 	conversationRequestsError   string
@@ -433,6 +452,27 @@ func loadNativeStats(requestPage, conversationPage, limit int, filters nativeSta
 		}
 	}
 	return loaded, nil
+}
+
+func writeNativeStatsExport(path, format string, service statsservice.Service) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".pi-switch-stats-export-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := service.ExportRequests(temp, format); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
 }
 
 func loadNativeConversationPage(id string, page, limit int) (nativeConversationPage, error) {
@@ -729,6 +769,7 @@ func (a *nativeComplexPreview) packagesSection(c *ui.Context) {
 	} else if len(a.packages) > 0 {
 		a.packageList.Key = func(i int) any { return a.packages[i].id }
 		a.packageList.Label = func(i int) string { return nativePackageDisplayName(a.packages[i]) }
+		a.packageList.Selected = &a.packageSelected
 		ui.List(c, &a.packageList, len(a.packages), func(i int) {
 			pkg := a.packages[i]
 			name := nativePackageDisplayName(pkg)
@@ -941,6 +982,36 @@ func (a *nativeComplexPreview) statsAndSessions(c *ui.Context) {
 	refreshClicked := ui.Button(c, "Refresh Stats").Disabled(a.refreshStats == nil || a.statsLoading).Clicked()
 	if refreshClicked && a.refreshStats != nil {
 		a.refreshStats(a.stats.requestPage, a.stats.conversationPage, a.statsFilters)
+	}
+	if ui.Segmented(c, &a.statsRefreshTier, "Off", "5s", "30s", "5min").Label("Auto-refresh").Disabled(a.refreshStats == nil).Changed() {
+		a.statsRefreshAt = time.Time{}
+	}
+	if interval := nativeStatsRefreshInterval(a.statsRefreshTier); interval > 0 && a.refreshStats != nil {
+		now := c.Now()
+		if a.statsRefreshAt.IsZero() {
+			a.statsRefreshAt = now.Add(interval)
+		}
+		if !now.Before(a.statsRefreshAt) {
+			if !a.statsLoading {
+				a.refreshStats(a.stats.requestPage, a.stats.conversationPage, a.statsFilters)
+			}
+			a.statsRefreshAt = now.Add(interval)
+		}
+		c.After(a.statsRefreshAt.Sub(now))
+	} else {
+		a.statsRefreshAt = time.Time{}
+	}
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.Button(c, "Export JSON").Disabled(a.exportStats == nil || a.statsExporting).Clicked() && a.exportStats != nil {
+			a.exportStats("json")
+		}
+		if ui.Button(c, "Export CSV").Disabled(a.exportStats == nil || a.statsExporting).Clicked() && a.exportStats != nil {
+			a.exportStats("csv")
+		}
+	})
+	ui.Text(c, "Exports the full request history; error text and upstream URLs may contain sensitive data.").TextColor(c.Theme().TextMuted)
+	if a.statsExportStatus != "" {
+		ui.Text(c, a.statsExportStatus).Role(ui.RoleStatus)
 	}
 	if ui.Segmented(c, &a.statsFilters.requestRange, "Today", "24h", "7d", "Custom", "All time").Label("Request range").Disabled(a.refreshStats == nil || a.statsLoading).Changed() && a.refreshStats != nil {
 		a.refreshStats(0, a.stats.conversationPage, a.statsFilters)
