@@ -704,22 +704,26 @@ func publishNativeGatewayDraft(raw string) (nativeGatewayPreview, error) {
 
 func (a *nativeComplexPreview) view(c *ui.Context) {
 	ui.Column(c).Fill().Padding(20).Gap(12).Children(func() {
-		ui.Text(c, "Complex UI prototypes").FontSize(24).Bold().Role(ui.RoleHeading).Level(1)
+		ui.Text(c, "Native management").FontSize(24).Bold().Role(ui.RoleHeading).Level(1)
 		ui.Text(c, "Validation is read-only. Publishing a draft requires explicit confirmation and writes models.json only; config and request history are not modified.").TextColor(c.Theme().TextMuted)
 		ui.Segmented(c, &a.tab, "JSON Editor", "Gateway Diff", "Stats & Sessions", "Packages").Label("Prototype section")
 		ui.Scroll(c).Fill().Gap(12).Children(func() {
-			switch a.tab {
-			case 0:
-				a.jsonEditor(c)
-			case 1:
-				a.gatewayDiff(c)
-			case 2:
-				a.statsAndSessions(c)
-			case 3:
-				a.packagesSection(c)
-			}
+			a.section(c, a.tab)
 		})
 	})
+}
+
+func (a *nativeComplexPreview) section(c *ui.Context, tab int) {
+	switch tab {
+	case 0:
+		a.jsonEditor(c)
+	case 1:
+		a.gatewayDiff(c)
+	case 2:
+		a.statsAndSessions(c)
+	case 3:
+		a.packagesSection(c)
+	}
 }
 
 func (a *nativeComplexPreview) packagesSection(c *ui.Context) {

@@ -30,7 +30,12 @@ func (a *desktopShell) standardPages() *nativeStandardPages {
 func (a *desktopShell) standardView(c *ui.Context) {
 	pages := a.standardPages()
 	ui.Column(c).Fill().Gap(8).Children(func() {
-		for _, row := range [][]string{{"Overview", "Profiles", "Providers", "Proxy"}, {"Settings", "Backups", "Doctor"}} {
+		for _, row := range [][]string{
+			{"Overview", "Profiles", "Providers", "Proxy"},
+			{"Gateway", "JSON Editor"},
+			{"Stats & Sessions", "Packages"},
+			{"Settings", "Backups", "Doctor"},
+		} {
 			ui.Row(c).Gap(6).Padding(6, 12).Children(func() {
 				for _, name := range row {
 					if ui.Button(c, name).Clicked() {
@@ -41,6 +46,12 @@ func (a *desktopShell) standardView(c *ui.Context) {
 						case "Proxy":
 							a.refreshNativeOverview()
 							a.refreshProxy()
+						case "Gateway":
+							a.refreshNativeGatewayPreview(nativeGatewaySelections(a.complexPreview))
+						case "Stats & Sessions":
+							if !a.complexPreview.statsLoaded {
+								a.refreshNativeStats(0, 0, a.complexPreview.statsFilters)
+							}
 						case "Settings":
 							if !pages.settings.loaded {
 								a.loadNativeSettings()
@@ -74,6 +85,19 @@ func (a *desktopShell) standardView(c *ui.Context) {
 			ui.Scroll(c).Fill().Children(func() { a.backupsView(c) })
 		case "Doctor":
 			ui.Scroll(c).Fill().Children(func() { a.doctorView(c) })
+		case "Gateway", "JSON Editor", "Stats & Sessions", "Packages":
+			ui.Scroll(c).Fill().Gap(12).Padding(20).Children(func() {
+				switch pages.page {
+				case "JSON Editor":
+					a.complexPreview.section(c, 0)
+				case "Gateway":
+					a.complexPreview.section(c, 1)
+				case "Stats & Sessions":
+					a.complexPreview.section(c, 2)
+				case "Packages":
+					a.complexPreview.section(c, 3)
+				}
+			})
 		default:
 			a.view(c)
 		}

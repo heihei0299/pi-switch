@@ -7,12 +7,15 @@ import (
 	"github.com/egoist/mygo"
 )
 
-func TestNativeStartupDoesNotRegisterLegacyManagementUI(t *testing.T) {
+func TestDefaultStartupUsesNativeWithoutRegisteringLegacyUI(t *testing.T) {
 	calls := 0
 	register := func() (string, error) { calls++; return "", errors.New("legacy UI deliberately unavailable") }
-	app, err := prepareDesktopShell([]string{"--native", "--start-minimized"}, register)
+	app, err := prepareDesktopShell([]string{"--start-minimized"}, register)
 	if err != nil || calls != 0 || app == nil || !app.nativeOnly || !app.startMinimized || app.uiURL != "" {
 		t.Fatalf("Native required legacy initialization: app=%+v calls=%d err=%v", app, calls, err)
+	}
+	if app.complexPreview == nil || app.complexPreview.refreshGateway == nil || app.complexPreview.refreshStats == nil {
+		t.Fatal("Native feature pages were not attached to the main shell")
 	}
 	opts := app.primaryWindowOptions()
 	if opts.Content == nil || opts.URL != "" || opts.Hidden {
@@ -24,20 +27,20 @@ func TestNativeStartupDoesNotRegisterLegacyManagementUI(t *testing.T) {
 	}
 }
 
-func TestDefaultStartupRetainsWebViewAndRegistrationFailure(t *testing.T) {
+func TestLegacyWebViewRequiresExplicitRollbackFlag(t *testing.T) {
 	calls := 0
 	register := func() (string, error) { calls++; return "pi-switch-ui://fixture/", nil }
-	app, err := prepareDesktopShell(nil, register)
+	app, err := prepareDesktopShell([]string{"--web"}, register)
 	if err != nil || calls != 1 || app.nativeOnly {
-		t.Fatal("default startup changed before T04")
+		t.Fatal("explicit WebView fallback did not register the legacy UI")
 	}
 	opts := app.primaryWindowOptions()
 	if opts.Content != nil || opts.URL != "pi-switch-ui://fixture/" {
-		t.Fatal("default lost existing management URL")
+		t.Fatal("WebView fallback lost its management URL")
 	}
 	expected := errors.New("registration failed")
-	if app, err := prepareDesktopShell([]string{"--native=false"}, func() (string, error) { return "", expected }); app != nil || !errors.Is(err, expected) {
-		t.Fatal("legacy registration failure was hidden")
+	if app, err := prepareDesktopShell([]string{"--web"}, func() (string, error) { return "", expected }); app != nil || !errors.Is(err, expected) {
+		t.Fatal("WebView fallback registration failure was hidden")
 	}
 }
 

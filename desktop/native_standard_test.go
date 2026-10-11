@@ -18,12 +18,12 @@ import (
 )
 
 func TestNativeStandardNavigationAndEmptyStates(t *testing.T) {
-	app := &desktopShell{}
+	app := &desktopShell{complexPreview: newNativeComplexPreview()}
 	p := app.standardPages()
 	p.backups.loaded = true
 	p.doctor.loaded = true
-	tester := ui.NewTester(app.standardView, 1000, 1200)
-	for _, page := range []string{"Profiles", "Providers", "Proxy", "Settings", "Backups", "Doctor", "Overview"} {
+	tester := ui.NewTester(app.standardView, 560, 1200)
+	for _, page := range []string{"Profiles", "Providers", "Gateway", "JSON Editor", "Proxy", "Stats & Sessions", "Packages", "Settings", "Backups", "Doctor", "Overview"} {
 		if err := tester.Click(page); err != nil {
 			t.Fatalf("navigate %s: %v", page, err)
 		}
@@ -38,6 +38,22 @@ func TestNativeStandardNavigationAndEmptyStates(t *testing.T) {
 		case "Proxy":
 			if !tester.HasText("Status not checked yet.") {
 				t.Fatal("unverified proxy shown as healthy")
+			}
+		case "Gateway":
+			if !tester.HasText("Current vs proposed Gateway") {
+				t.Fatal("Gateway is not part of the main native navigation")
+			}
+		case "JSON Editor":
+			if !tester.HasText("Gateway JSON draft validation") {
+				t.Fatal("JSON Editor is not part of the main native navigation")
+			}
+		case "Stats & Sessions":
+			if !tester.HasText("Usage summary · local request history") {
+				t.Fatal("Stats and Sessions are not part of the main native navigation")
+			}
+		case "Packages":
+			if !tester.HasText("Packages · local package registry") {
+				t.Fatal("Packages are not part of the main native navigation")
 			}
 		case "Settings":
 			if !tester.HasText("Settings have not loaded yet.") {
@@ -283,7 +299,7 @@ func TestNativeProxySnapshotDistinguishesUnknownIdentityAndActualAddress(t *test
 func TestNativeSettingsShowsNativeBinaryIdentity(t *testing.T) {
 	app := &desktopShell{}
 	app.standardPages().page = "Settings"
-	tester := ui.NewTester(app.standardView, 1000, 1200)
+	tester := ui.NewTester(app.standardView, 560, 1200)
 	if !tester.HasText(nativeBuildIdentityText()) || !strings.Contains(nativeBuildIdentityText(), "target linux/") {
 		t.Fatal("Native build facts missing")
 	}
@@ -348,7 +364,7 @@ func TestNativeBackupSelectionDisplaysIdentityAndCancelDoesNotWrite(t *testing.T
 	modified := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
 	pages.backups.loaded, pages.backups.selected = true, "config-fixture.json"
 	pages.backups.items = []application.ConfigBackup{{Name: "config-fixture.json", Size: 123, ModifiedAt: modified}}
-	tester := ui.NewTester(app.standardView, 1000, 1200)
+	tester := ui.NewTester(app.standardView, 560, 1200)
 	if !tester.HasText("Selected snapshot: config-fixture.json · 123 bytes · modified " + modified.Local().Format("2006-01-02 15:04:05 -0700")) {
 		t.Fatal("selected backup cannot be identified")
 	}

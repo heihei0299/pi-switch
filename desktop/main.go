@@ -19,11 +19,7 @@ func main() {
 
 	mygo.App.SetMenu(shell.applicationMenu())
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
-		if startsNative(args) {
-			shell.showNativeOverview()
-		} else {
-			shell.showWindow()
-		}
+		shell.showWindow()
 	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		shell.exiting = true
@@ -53,6 +49,15 @@ func prepareDesktopShell(args []string, registerUI func() (string, error)) (*des
 			return nil, err
 		}
 		shell.uiURL = url
+	} else {
+		shell.complexPreview = newNativeComplexPreview()
+		shell.complexPreview.refreshGateway = shell.refreshNativeGatewayPreview
+		shell.complexPreview.publishGateway = shell.publishNativeGatewaySelection
+		shell.complexPreview.publishGatewayDraft = shell.publishNativeGatewayDraft
+		shell.complexPreview.runPackageTask = shell.runNativePackageTask
+		shell.complexPreview.refreshStats = shell.refreshNativeStats
+		shell.complexPreview.exportStats = shell.exportNativeStats
+		shell.complexPreview.refreshConversationRequests = shell.refreshNativeConversationRequests
 	}
 	return shell, nil
 }

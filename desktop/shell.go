@@ -23,7 +23,6 @@ import (
 type desktopShell struct {
 	window                 *mygo.Window
 	nativeWindow           *mygo.Window
-	complexWindow          *mygo.Window
 	uiURL                  string
 	tray                   *mygo.Tray
 	startMinimized         bool
@@ -56,14 +55,18 @@ func startsMinimized(args []string) bool {
 	return false
 }
 
-// --native is an opt-in validation entry; the default stays WebView until T04.
+// --web keeps the legacy WebView available as an explicit rollback entry.
 func startsNative(args []string) bool {
+	native := true
 	for _, arg := range args {
-		if arg == "--native" {
-			return true
+		switch arg {
+		case "--native":
+			native = true
+		case "--web":
+			native = false
 		}
 	}
-	return false
+	return native
 }
 
 // ponytail: CLI discovery uses resources, PATH or PI_SWITCH_CLI_PATH until WP-07 bundles target binaries.
@@ -203,8 +206,6 @@ func (a *desktopShell) applicationMenu() *mygo.Menu {
 		{Role: mygo.RoleAppMenu},
 		{Label: "File", Submenu: []*mygo.MenuItem{
 			{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
-			{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
-			{Label: "Show Complex UI Prototypes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showComplexPrototypes() }},
 			{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 			{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 			{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -218,8 +219,6 @@ func (a *desktopShell) applicationMenu() *mygo.Menu {
 func (a *desktopShell) trayMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Show pi-switch", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
-		{Label: "Show Native Overview", Click: func(*mygo.MenuItem, *mygo.Window) { a.showNativeOverview() }},
-		{Label: "Show Complex UI Prototypes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showComplexPrototypes() }},
 		{Label: "Refresh Proxy Status", Click: func(*mygo.MenuItem, *mygo.Window) { a.refreshProxy() }},
 		{Label: "Start Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.startProxy() }},
 		{Label: "Stop Proxy", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopProxy() }},
@@ -288,62 +287,12 @@ func (a *desktopShell) start() {
 	a.refreshProxy()
 }
 
-func (a *desktopShell) showNativeOverview() {
-	if a.nativeWindow == nil {
-		a.nativeWindow = mygo.NewWindow(a.nativeWindowOptions(false))
-		a.nativeWindow.OnClose(a.onNativeWindowClose)
-	}
-	a.nativeWindow.Restore()
-	a.nativeWindow.Show()
-	a.nativeWindow.Focus()
-	a.refreshNativeOverview()
-}
-
-func (a *desktopShell) onNativeWindowClose(e *mygo.CloseEvent) {
-	if a.exiting {
-		return
-	}
-	e.PreventDefault()
-	if a.nativeWindow != nil {
-		a.nativeWindow.Hide()
-	}
-}
-
-func (a *desktopShell) showComplexPrototypes() {
-	if a.complexWindow == nil {
-		a.complexPreview = newNativeComplexPreview()
-		a.complexPreview.refreshGateway = a.refreshNativeGatewayPreview
-		a.complexPreview.publishGateway = a.publishNativeGatewaySelection
-		a.complexPreview.publishGatewayDraft = a.publishNativeGatewayDraft
-		a.complexPreview.runPackageTask = a.runNativePackageTask
-		a.complexPreview.refreshStats = a.refreshNativeStats
-		a.complexPreview.exportStats = a.exportNativeStats
-		a.complexPreview.refreshConversationRequests = a.refreshNativeConversationRequests
-		a.complexWindow = mygo.NewWindow(mygo.WindowOptions{
-			Title:           "pi-switch — Complex UI Prototypes",
-			Width:           900,
-			Height:          720,
-			MinWidth:        640,
-			MinHeight:       480,
-			BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
-			StateKey:        "complex-prototypes",
-			Content:         ui.View(a.complexPreview.view),
-		})
-		a.complexWindow.OnClose(a.onComplexWindowClose)
-	}
-	a.complexWindow.Restore()
-	a.complexWindow.Show()
-	a.complexWindow.Focus()
-	a.refreshNativeGatewayPreview(nativeGatewaySelections(a.complexPreview))
-	a.refreshNativeStats(0, 0, a.complexPreview.statsFilters)
-}
-
 func (a *desktopShell) runNativePackageTask(task func() (string, error)) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.packagesLoading || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.packagesLoading || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("packages")
 	if !ok {
 		return
@@ -385,11 +334,11 @@ func (a *desktopShell) runNativePackageTask(task func() (string, error)) {
 }
 
 func (a *desktopShell) refreshNativeGatewayPreview(selections []gateway.GatewaySelection) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("gateway")
 	if !ok {
 		return
@@ -422,11 +371,11 @@ func (a *desktopShell) refreshNativeGatewayPreview(selections []gateway.GatewayS
 }
 
 func (a *desktopShell) publishNativeGatewaySelection(selections []gateway.GatewaySelection) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("gateway")
 	if !ok {
 		return
@@ -459,11 +408,11 @@ func (a *desktopShell) publishNativeGatewaySelection(selections []gateway.Gatewa
 }
 
 func (a *desktopShell) publishNativeGatewayDraft(raw string) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.gatewayLoading || a.complexPreview.gatewayPublishing || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("gateway")
 	if !ok {
 		return
@@ -500,11 +449,11 @@ func (a *desktopShell) publishNativeGatewayDraft(raw string) {
 }
 
 func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, filters nativeStatsFilters) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.statsLoading || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.statsLoading || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("stats")
 	if !ok {
 		return
@@ -537,11 +486,11 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 }
 
 func (a *desktopShell) exportNativeStats(format string) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.statsExporting || a.exiting || (format != "json" && format != "csv") {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.statsExporting || a.exiting || (format != "json" && format != "csv") {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("stats-export")
 	if !ok {
 		return
@@ -598,11 +547,11 @@ func (a *desktopShell) exportNativeStats(format string) {
 }
 
 func (a *desktopShell) refreshNativeConversationRequests(id string, page int) {
-	if a.complexPreview == nil || a.complexWindow == nil || a.complexPreview.conversationRequestsLoading || a.exiting {
+	if a.complexPreview == nil || a.nativeWindow == nil || a.complexPreview.conversationRequestsLoading || a.exiting {
 		return
 	}
 	preview := a.complexPreview
-	window := a.complexWindow
+	window := a.nativeWindow
 	ctx, token, ok := a.tasks.begin("conversation")
 	if !ok {
 		return
@@ -631,16 +580,6 @@ func (a *desktopShell) refreshNativeConversationRequests(id string, page int) {
 			preview.conversationRequestsError = ""
 		})
 	}()
-}
-
-func (a *desktopShell) onComplexWindowClose(e *mygo.CloseEvent) {
-	if a.exiting {
-		return
-	}
-	e.PreventDefault()
-	if a.complexWindow != nil {
-		a.complexWindow.Hide()
-	}
 }
 
 func (a *desktopShell) refreshNativeOverview() {
@@ -759,11 +698,7 @@ func (a *desktopShell) view(c *ui.Context) {
 	theme := c.Theme()
 	ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "pi-switch").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
-		if a.nativeOnly {
-			ui.Text(c, "Native validation entry · React/WebView management pages are not initialized.").TextColor(theme.TextMuted)
-		} else {
-			ui.Text(c, "Native management · the legacy Web UI remains available via File > Show pi-switch.").TextColor(theme.TextMuted)
-		}
+		ui.Text(c, "Native management · the legacy Web UI remains available with --web.").TextColor(theme.TextMuted)
 		if a.overview.source != "" {
 			ui.Text(c, "Config source: "+a.overview.source)
 		} else {

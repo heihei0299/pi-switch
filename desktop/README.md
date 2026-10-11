@@ -1,6 +1,6 @@
 # MyGo desktop shell — test distribution only
 
-This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Supported desktop targets are Linux amd64 and arm64; Windows and macOS desktop builds are not supported. The React WebView remains the default management UI; `--native` is an opt-in validation entry for the seven T02 standard pages, not the T04 default switch. WP-05/06 complex native views remain previews. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
+This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Supported desktop targets are Linux amd64 and arm64; Windows and macOS desktop builds are not supported. The MyGo Native window is now the default and combines the standard management pages with Gateway, JSON Editor, Stats/Sessions, and Packages. `--web` explicitly selects the legacy React WebView rollback; `--native` remains accepted. The T02 and Task 1/2 functional and real-GUI gates are not all complete, so this entry switch is not release acceptance. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
 
 The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. New CLI/npm versions support Linux amd64 and arm64 only; macOS and Windows are retired for new versions.
 
@@ -29,9 +29,9 @@ bun run dev
 
 Do not point test builds at real user paths. The desktop workflow is configured to validate compilation, UI tests, and the Linux tarball install/reinstall/uninstall lifecycle in an isolated `HOME`; remote Actions execution, interactive GUI, real IME/high-DPI, Debian package-manager install/rollback, daemon lifecycle, and Linux desktop GUI smoke tests remain unverified.
 
-## Native-only validation entry (T02)
+## Native default and legacy rollback (T03)
 
-Start a **fresh desktop process** with `--native` to create a MyGo widget window without registering the legacy management router/protocol or creating a React WebView window. Exit any previous desktop instance normally first: a second invocation is forwarded to the existing process, which may already have initialized the legacy UI. The default launch and File/tray native entry remain available for migration comparison. `--start-minimized` still requires a working tray; without one, the window stays visible.
+The default launch creates a MyGo widget window without registering the legacy management router/protocol or creating a React WebView window. Start with `--web` only to use the old WebView rollback. Exit any previous desktop instance normally first: a second invocation is forwarded to the existing process. File/tray show, second-instance activation, and hide/quit operate on that one primary window. `--start-minimized` still requires a working tray; without one, the window stays visible.
 
 With the existing Go module/build caches and Linux runtime dependencies present, the Go entry below does not run the React/Bun frontend build. It deliberately disables dependency downloads; if dependencies are missing, stop rather than install them without approval. The binary still links the transitional server/WebUI package, whose package initialization fingerprints embedded assets; this is not removal of WebView/React build or runtime dependencies.
 

@@ -54,16 +54,21 @@ func TestStartsHiddenOnlyWhenTrayIsAvailable(t *testing.T) {
 func TestMenusKeepActionsReachable(t *testing.T) {
 	app := &desktopShell{}
 	applicationMenu := app.applicationMenu()
-	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Show Complex UI Prototypes", "Start Proxy", "Stop Proxy"} {
+	for _, label := range []string{"Show pi-switch", "Start Proxy", "Stop Proxy"} {
 		if !menuHasLabel(applicationMenu.Items(), label) {
 			t.Fatalf("application menu is missing %q", label)
+		}
+	}
+	for _, label := range []string{"Show Native Overview", "Show Complex UI Prototypes"} {
+		if menuHasLabel(applicationMenu.Items(), label) || menuHasLabel(app.trayMenu().Items(), label) {
+			t.Fatalf("separate Native window action %q remains", label)
 		}
 	}
 	if !menuHasRole(applicationMenu.Items(), mygo.RoleQuit) {
 		t.Fatal("application menu is missing Quit")
 	}
 	trayMenu := app.trayMenu()
-	for _, label := range []string{"Show pi-switch", "Show Native Overview", "Show Complex UI Prototypes", "Quit"} {
+	for _, label := range []string{"Show pi-switch", "Quit"} {
 		if !menuHasLabel(trayMenu.Items(), label) {
 			t.Fatalf("tray menu is missing %q", label)
 		}
@@ -106,36 +111,6 @@ func menuHasRole(items []*mygo.MenuItem, role mygo.MenuRole) bool {
 		}
 	}
 	return false
-}
-
-func TestNativeWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
-	app := &desktopShell{}
-	closeEvent := &mygo.CloseEvent{}
-	app.onNativeWindowClose(closeEvent)
-	if !closeEvent.DefaultPrevented() {
-		t.Fatal("closing the native overview should hide it rather than quit")
-	}
-	app.exiting = true
-	quitEvent := &mygo.CloseEvent{}
-	app.onNativeWindowClose(quitEvent)
-	if quitEvent.DefaultPrevented() {
-		t.Fatal("explicit app quit should be allowed to close the native overview")
-	}
-}
-
-func TestComplexWindowCloseHidesUnlessTheAppIsQuitting(t *testing.T) {
-	app := &desktopShell{}
-	closeEvent := &mygo.CloseEvent{}
-	app.onComplexWindowClose(closeEvent)
-	if !closeEvent.DefaultPrevented() {
-		t.Fatal("closing the complex preview should hide it rather than quit")
-	}
-	app.exiting = true
-	quitEvent := &mygo.CloseEvent{}
-	app.onComplexWindowClose(quitEvent)
-	if quitEvent.DefaultPrevented() {
-		t.Fatal("explicit app quit should be allowed to close the complex preview")
-	}
 }
 
 func TestDesktopProxyAddressUsesConfigAndDefaults(t *testing.T) {
