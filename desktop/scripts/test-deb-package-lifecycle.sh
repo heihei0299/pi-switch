@@ -23,6 +23,10 @@ if dpkg-query -W "$package_name" >/dev/null 2>&1; then
   echo "$package_name is already registered before the isolated lifecycle test" >&2
   exit 1
 fi
+if [[ "${ROLLBACK_NATIVE_WINDOW_SMOKE:-false}" == true && -z "$previous_deb" ]]; then
+  echo "rollback window smoke requires a previous-source package" >&2
+  exit 1
+fi
 
 work_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pi-switch-deb-lifecycle.XXXXXX")
 current_root="$work_dir/current-root"
@@ -90,6 +94,9 @@ assert_version() {
 }
 
 sudo apt-get update
+if [[ "${ROLLBACK_NATIVE_WINDOW_SMOKE:-false}" == true ]]; then
+  sudo apt-get install -y --no-install-recommends xvfb xauth x11-utils
+fi
 if [[ -n "$previous_deb" ]]; then
   sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$previous_test_deb"
   assert_version "$previous_version"
@@ -109,6 +116,12 @@ if [[ -n "$previous_deb" ]]; then
   test "$(sha256sum "$install_path" | awk '{print $1}')" = "$previous_app_sha"
   dpkg --verify "$package_name"
   assert_user_data
+  if [[ "${ROLLBACK_NATIVE_WINDOW_SMOKE:-false}" == true ]]; then
+    bash desktop/scripts/test-native-window-xvfb.sh "$install_path" "$work_dir/rollback-native-window.log"
+    assert_version "$previous_version"
+    test "$(sha256sum "$install_path" | awk '{print $1}')" = "$previous_app_sha"
+    assert_user_data
+  fi
 fi
 
 sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$current_deb"

@@ -146,9 +146,10 @@ jobs:
             go run -mod=readonly github.com/egoist/mygo/cmd/mygo build -platform "linux/$DESKTOP_ARCH" -skip-build-command -skip-notarize
           )
 
-      - name: Test Debian package install/reinstall/real-binary rollback/remove/purge
+      - name: Test Debian package lifecycle and rollback Xvfb smoke (not GUI gate)
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
+          ROLLBACK_NATIVE_WINDOW_SMOKE: ${{ matrix.goarch == 'arm64' && github.event_name == 'push' }}
         run: |
           deb=$(find "desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
