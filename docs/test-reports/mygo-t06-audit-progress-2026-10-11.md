@@ -75,3 +75,11 @@
 2. 按用户兼容决策保留 Desktop `--web` / `pi-switch-ui://` fallback；不得在正式 GUI 门禁通过且弃用说明发布前删除。故 T05 尚未完全关闭。
 3. Debian 包管理器现已通过动态选取真实生产源码差异版本的可执行文件 SHA-256 升级/降级 smoke；有效 SQLite sentinel 行与完整性检查覆盖完整包生命周期，降级后的旧版应用也通过 arm64 Xvfb 窗口启动 smoke。但这不是实际用户数据库迁移，也没有验证 Stats 等具体旧版交互行为。正式 GUI arm64 门禁、真实用户数据升级/迁移与卸载后数据检查仍待验证。
 4. 本报告是进度审计，不是最终 T06 结论；T06 验收与最终发布门禁继续开放。本阶段未 merge、未创建新 tag、未发布 Desktop，也未修改真实用户数据；此前的 `v20261011.0.0` 是 CLI/npm 发布，不是 Desktop 发布。
+
+## 当前 HEAD 补充复验（2026-10-11，`082e426d`）
+
+- Root CI `38177433521` 与 Desktop CI `38177421020` 均为 success，`headSha` 精确等于 `082e426d1f43289c9e676cc584e98750db37f3c8`。Desktop artifact 的 `build-identity.json` 同样确认 `linux/amd64` 与该 commit。
+- 从该 Desktop artifact 在独立临时 HOME/XDG/config/DB/models/session 路径启动 Native 包：Ubuntu 24.04.4、Xvfb `:99`、Openbox、llvmpipe 下窗口可见；发送 Tab 后截图显示 Overview 焦点样式；窗口关闭后测试 PID 退出，隔离 config/agent 目录未产生文件，已有 GUI 窗口数量恢复原值。
+- 同一 artifact 以 `--web` 启动后旧 React WebView 能显示 Overview，确认 Desktop `pi-switch-ui://` fallback 在当前包中仍可用。此项是兼容面 smoke，不改变保留 fallback 的决定。
+- 环境日志确认托盘因缺少/不支持 `libayatana-appindicator3` 不可用，绘制使用 llvmpipe CPU；环境没有 niri、Wayland 会话或 fcitx5。AT-SPI/WebKit DRI3 另有环境告警。故上述 Native 与 WebView 结果仅为 Xvfb smoke，正式 Arch+niri/Wayland/IME/托盘/硬件缩放/受控 Proxy GUI gate 继续 **PENDING（未通过，不是 PASS）**。
+- 工作树 Native 定向测试 `GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=0 go -C desktop test -mod=readonly . -run '^TestNative' -count=1` 通过；该次运行包含未提交的工作树测试改动。`git diff --check` 与 `git diff --cached --check` 通过。未修改真实用户数据，未改变 GUI gate 状态。
