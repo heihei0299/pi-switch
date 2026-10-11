@@ -1022,8 +1022,8 @@ func (a *nativeComplexPreview) statsAndSessions(c *ui.Context) {
 	}
 	if a.statsFilters.requestRange == nativeRangeCustom {
 		ui.Row(c).Gap(8).Children(func() {
-			fromChanged := ui.DateInput(c, &a.statsFilters.requestFrom).Label("Request from").Changed()
-			toChanged := ui.DateInput(c, &a.statsFilters.requestTo).Label("Request to").Changed()
+			fromChanged := ui.DateInput(c, &a.statsFilters.requestFrom).Label("Request from").Disabled(a.statsLoading).Changed()
+			toChanged := ui.DateInput(c, &a.statsFilters.requestTo).Label("Request to").Disabled(a.statsLoading).Changed()
 			if (fromChanged || toChanged) && a.refreshStats != nil {
 				a.refreshStats(0, a.stats.conversationPage, a.statsFilters)
 			}
@@ -1034,8 +1034,8 @@ func (a *nativeComplexPreview) statsAndSessions(c *ui.Context) {
 	}
 	if a.statsFilters.conversationRange == nativeRangeCustom {
 		ui.Row(c).Gap(8).Children(func() {
-			fromChanged := ui.DateInput(c, &a.statsFilters.conversationFrom).Label("Conversation from").Changed()
-			toChanged := ui.DateInput(c, &a.statsFilters.conversationTo).Label("Conversation to").Changed()
+			fromChanged := ui.DateInput(c, &a.statsFilters.conversationFrom).Label("Conversation from").Disabled(a.statsLoading).Changed()
+			toChanged := ui.DateInput(c, &a.statsFilters.conversationTo).Label("Conversation to").Disabled(a.statsLoading).Changed()
 			if (fromChanged || toChanged) && a.refreshStats != nil {
 				a.refreshStats(a.stats.requestPage, 0, a.statsFilters)
 			}
