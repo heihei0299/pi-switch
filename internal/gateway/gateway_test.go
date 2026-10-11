@@ -411,6 +411,13 @@ func TestPublishPreservesThirdPartyProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("published models.json mode = %04o, want 0600 because it preserves third-party API keys", got)
+	}
 	firstPublish := string(result)
 	if err := publishDraft(t, cfg, edited); err != nil {
 		t.Fatal(err)

@@ -1084,7 +1084,7 @@ func PublishPlan(plan CanonicalGatewayPlan) error {
 		tmp := file.Name()
 		defer os.Remove(tmp)
 		defer file.Close()
-		if err := file.Chmod(0644); err != nil {
+		if err := file.Chmod(0600); err != nil {
 			return err
 		}
 		if _, err := file.Write(append(b, '\n')); err != nil {
