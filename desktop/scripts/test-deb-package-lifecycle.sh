@@ -6,12 +6,13 @@ if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
   exit 2
 fi
 
-base_deb=$(realpath "${1:?usage: test-deb-package-lifecycle.sh package.deb}")
+current_deb=$(realpath "${1:?usage: test-deb-package-lifecycle.sh current.deb [previous.deb]}")
+previous_deb=${2:-}
 package_name=pi-switch-mygo-spike
 install_path=/opt/pi-switch-mygo-spike/pi-switch-mygo-spike
 launcher_path=/usr/bin/pi-switch-mygo-spike
-architecture=$(dpkg-deb -f "$base_deb" Architecture)
-base_version=$(dpkg-deb -f "$base_deb" Version)
+architecture=$(dpkg-deb -f "$current_deb" Architecture)
+current_version=$(dpkg-deb -f "$current_deb" Version)
 runner_architecture=$(dpkg --print-architecture)
 
 if [[ "$architecture" != "$runner_architecture" ]]; then
@@ -24,29 +25,48 @@ if dpkg-query -W "$package_name" >/dev/null 2>&1; then
 fi
 
 work_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pi-switch-deb-lifecycle.XXXXXX")
+current_root="$work_dir/current-root"
+mkdir -p "$current_root"
+dpkg-deb -x "$current_deb" "$current_root"
+current_app="$current_root$install_path"
+current_app_sha=$(sha256sum "$current_app" | awk '{print $1}')
+test -x "$current_app"
 
-upgrade_version="${base_version}+ci1"
-dpkg --compare-versions "$upgrade_version" gt "$base_version"
-package_root="$work_dir/upgrade-package"
-mkdir -p "$package_root"
-dpkg-deb --raw-extract "$base_deb" "$package_root"
-upgrade_marker=opt/pi-switch-mygo-spike/.ci-upgrade-marker
-printf 'synthetic higher-version payload\n' >"$package_root/$upgrade_marker"
-(
-  cd "$package_root"
-  find . -type f ! -path './DEBIAN/*' -print0 | sort -z | xargs -0r md5sum | sed 's#  \./#  #' >"$work_dir/md5sums"
-)
-mv "$work_dir/md5sums" "$package_root/DEBIAN/md5sums"
-awk -v version="$upgrade_version" '
-  BEGIN { count = 0 }
-  /^Version:/ { print "Version: " version; count++; next }
-  { print }
-  END { if (count != 1) exit 1 }
-' "$package_root/DEBIAN/control" >"$work_dir/control"
-mv "$work_dir/control" "$package_root/DEBIAN/control"
-upgrade_deb="$work_dir/${package_name}_${upgrade_version}_${architecture}.deb"
-dpkg-deb --build --root-owner-group "$package_root" "$upgrade_deb"
-test "$(dpkg-deb -f "$upgrade_deb" Version)" = "$upgrade_version"
+if [[ -n "$previous_deb" ]]; then
+  previous_deb=$(realpath "$previous_deb")
+  previous_architecture=$(dpkg-deb -f "$previous_deb" Architecture)
+  previous_package=$(dpkg-deb -f "$previous_deb" Package)
+  if [[ "$previous_architecture" != "$architecture" || "$previous_package" != "$package_name" ]]; then
+    echo "previous package identity does not match current package" >&2
+    exit 1
+  fi
+
+  previous_version="${current_version}~previous"
+  dpkg --compare-versions "$previous_version" lt "$current_version"
+  package_root="$work_dir/previous-package"
+  mkdir -p "$package_root"
+  dpkg-deb --raw-extract "$previous_deb" "$package_root"
+  awk -v version="$previous_version" '
+    BEGIN { count = 0 }
+    /^Version:/ { print "Version: " version; count++; next }
+    { print }
+    END { if (count != 1) exit 1 }
+  ' "$package_root/DEBIAN/control" >"$work_dir/control"
+  mv "$work_dir/control" "$package_root/DEBIAN/control"
+  previous_test_deb="$work_dir/${package_name}_${previous_version}_${architecture}.deb"
+  dpkg-deb --build --root-owner-group "$package_root" "$previous_test_deb"
+  test "$(dpkg-deb -f "$previous_test_deb" Version)" = "$previous_version"
+
+  previous_root="$work_dir/previous-root"
+  mkdir -p "$previous_root"
+  dpkg-deb -x "$previous_test_deb" "$previous_root"
+  previous_app="$previous_root$install_path"
+  previous_app_sha=$(sha256sum "$previous_app" | awk '{print $1}')
+  if [[ "$current_app_sha" == "$previous_app_sha" ]]; then
+    echo "previous and current packages contain the same desktop executable" >&2
+    exit 1
+  fi
+fi
 
 user_home="$work_dir/user-home"
 mkdir -p "$user_home/.pi-switch" "$user_home/.pi/agent/sessions"
@@ -70,37 +90,46 @@ assert_version() {
 }
 
 sudo apt-get update
-sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$base_deb"
-assert_version "$base_version"
+if [[ -n "$previous_deb" ]]; then
+  sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$previous_test_deb"
+  assert_version "$previous_version"
+  test -x "$install_path"
+  test "$(sha256sum "$install_path" | awk '{print $1}')" = "$previous_app_sha"
+  dpkg --verify "$package_name"
+  assert_user_data
+
+  sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$current_deb"
+  assert_version "$current_version"
+  test "$(sha256sum "$install_path" | awk '{print $1}')" = "$current_app_sha"
+  dpkg --verify "$package_name"
+  assert_user_data
+
+  sudo env HOME="$user_home" apt-get install --allow-downgrades -y --no-install-recommends "$previous_test_deb"
+  assert_version "$previous_version"
+  test "$(sha256sum "$install_path" | awk '{print $1}')" = "$previous_app_sha"
+  dpkg --verify "$package_name"
+  assert_user_data
+fi
+
+sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$current_deb"
+assert_version "$current_version"
 test -x "$install_path"
 test -e "$launcher_path"
-test ! -e "/$upgrade_marker"
+test "$(sha256sum "$install_path" | awk '{print $1}')" = "$current_app_sha"
 dpkg --verify "$package_name"
-assert_user_data
-
-sudo env HOME="$user_home" apt-get install --reinstall -y --no-install-recommends "$base_deb"
-assert_version "$base_version"
-assert_user_data
-
-sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$upgrade_deb"
-assert_version "$upgrade_version"
-test -x "$install_path"
-grep -qx 'synthetic higher-version payload' "/$upgrade_marker"
-dpkg --verify "$package_name"
-assert_user_data
-
-sudo env HOME="$user_home" apt-get install --allow-downgrades -y --no-install-recommends "$base_deb"
-assert_version "$base_version"
-test -x "$install_path"
-test ! -e "/$upgrade_marker"
+sudo env HOME="$user_home" apt-get install --reinstall -y --no-install-recommends "$current_deb"
+assert_version "$current_version"
+test "$(sha256sum "$install_path" | awk '{print $1}')" = "$current_app_sha"
 dpkg --verify "$package_name"
 assert_user_data
 
 sudo env HOME="$user_home" apt-get remove -y "$package_name"
 test ! -e "$install_path"
 assert_user_data
-sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$base_deb"
-assert_version "$base_version"
+sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$current_deb"
+assert_version "$current_version"
+test "$(sha256sum "$install_path" | awk '{print $1}')" = "$current_app_sha"
+dpkg --verify "$package_name"
 assert_user_data
 sudo env HOME="$user_home" apt-get purge -y "$package_name"
 test ! -e "$install_path"
@@ -111,4 +140,7 @@ if dpkg-query -W "$package_name" >/dev/null 2>&1; then
 fi
 assert_user_data
 
-echo "Debian package install/reinstall/changed-payload upgrade/downgrade/remove/purge and isolated user-data preservation passed"
+echo "Debian package install/reinstall/remove/purge and isolated user-data preservation passed"
+if [[ -n "$previous_deb" ]]; then
+  echo "previous/current app-binary upgrade/downgrade passed (previous=$previous_app_sha current=$current_app_sha)"
+fi
