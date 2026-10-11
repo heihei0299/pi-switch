@@ -30,6 +30,13 @@ dpkg --compare-versions "$upgrade_version" gt "$base_version"
 package_root="$work_dir/upgrade-package"
 mkdir -p "$package_root"
 dpkg-deb --raw-extract "$base_deb" "$package_root"
+upgrade_marker=opt/pi-switch-mygo-spike/.ci-upgrade-marker
+printf 'synthetic higher-version payload\n' >"$package_root/$upgrade_marker"
+(
+  cd "$package_root"
+  find . -type f ! -path './DEBIAN/*' -print0 | sort -z | xargs -0r md5sum | sed 's#  \./#  #' >"$work_dir/md5sums"
+)
+mv "$work_dir/md5sums" "$package_root/DEBIAN/md5sums"
 awk -v version="$upgrade_version" '
   BEGIN { count = 0 }
   /^Version:/ { print "Version: " version; count++; next }
@@ -67,6 +74,7 @@ sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$base_deb
 assert_version "$base_version"
 test -x "$install_path"
 test -e "$launcher_path"
+test ! -e "/opt/pi-switch-mygo-spike/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
@@ -77,12 +85,14 @@ assert_user_data
 sudo env HOME="$user_home" apt-get install -y --no-install-recommends "$upgrade_deb"
 assert_version "$upgrade_version"
 test -x "$install_path"
+grep -qx 'synthetic higher-version payload' "/opt/pi-switch-mygo-spike/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
 sudo env HOME="$user_home" apt-get install --allow-downgrades -y --no-install-recommends "$base_deb"
 assert_version "$base_version"
 test -x "$install_path"
+test ! -e "/opt/pi-switch-mygo-spike/$upgrade_marker"
 dpkg --verify "$package_name"
 assert_user_data
 
@@ -101,4 +111,4 @@ if dpkg-query -W "$package_name" >/dev/null 2>&1; then
 fi
 assert_user_data
 
-echo "Debian package install/reinstall/upgrade/downgrade/remove/purge and isolated user-data preservation passed"
+echo "Debian package install/reinstall/changed-payload upgrade/downgrade/remove/purge and isolated user-data preservation passed"
