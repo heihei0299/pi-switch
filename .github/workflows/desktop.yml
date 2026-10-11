@@ -124,14 +124,14 @@ jobs:
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
         run: |
-          source_commit=$(git log -1 --format=%H "$GITHUB_SHA" -- ':(glob)**/*.go' ':(exclude,glob)**/*_test.go')
+          source_commit=$(git log -1 --format=%H "$GITHUB_SHA" -- ':(glob)desktop/*.go' ':(exclude,glob)desktop/*_test.go')
           test -n "$source_commit"
           rollback_sha=$(git rev-parse "${source_commit}^")
-          if git diff --quiet "$rollback_sha" "$GITHUB_SHA" -- ':(glob)**/*.go' ':(exclude,glob)**/*_test.go'; then
-            echo "rollback baseline has no production Go source delta" >&2
+          if git diff --quiet "$rollback_sha" "$GITHUB_SHA" -- ':(glob)desktop/*.go' ':(exclude,glob)desktop/*_test.go'; then
+            echo "rollback baseline has no production Desktop Go source delta" >&2
             exit 1
           fi
-          echo "Building rollback baseline $rollback_sha (parent of latest production Go source commit $source_commit)"
+          echo "Building rollback baseline $rollback_sha (parent of latest production Desktop Go source commit $source_commit)"
           echo "ROLLBACK_SHA=$rollback_sha" >> "$GITHUB_ENV"
           previous="$RUNNER_TEMP/pi-switch-previous"
           git worktree add --detach "$previous" "$rollback_sha"
