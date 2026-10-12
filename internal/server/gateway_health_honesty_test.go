@@ -10,9 +10,8 @@ import (
 )
 
 // known-gaps/02(c): GET /api/gateway/health answered has_models_file: true as a
-// literal, never checked against the file it names. The frontend decodes that field
-// as a required boolean (webui/src/apiSchema.ts), so it reads as "already
-// published" whether or not anything was published.
+// literal, never checked against the file it names, falsely reporting that a
+// gateway had been published when it had not.
 //
 // PI_SWITCH_MODELS is set explicitly here: isolateConfig does not isolate it, so
 // without this the test would read the developer's real ~/.pi/agent/models.json and

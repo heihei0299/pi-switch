@@ -14,7 +14,7 @@ import (
 )
 
 // EnrichCounts reports what EnrichModelsWithCatalog did, so each caller can
-// surface the same numbers the WebUI shows.
+// surface the same numbers the management API reports.
 type EnrichCounts struct {
 	Enriched int
 	Skipped  int

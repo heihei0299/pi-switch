@@ -42,11 +42,8 @@ func TestRootAndApiConfig(t *testing.T) {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/", nil)
 	r.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("GET / code = %d, want 200", w.Code)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-		t.Fatalf("Content-Type = %q, want text/html", ct)
+	if w.Code != http.StatusGone {
+		t.Fatalf("GET / code = %d, want 410", w.Code)
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

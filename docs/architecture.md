@@ -23,8 +23,6 @@
 | 请求落库与统计 | `internal/store/`、`internal/stats/` | `logRequest`、Stats service |
 | 模型目录 enrich | `internal/catalog/catalog.go` | `Ensure`、`FillMissing` / `FillOverwrite` |
 | daemon 生命周期 | `internal/daemon/daemon.go` | PID、lock、health |
-| 旧 React 前端（待 C02 退役） | `webui/src/api.ts:api` | `apiSchema.ts`、React components；当前不由 Desktop 加载 |
-| 旧静态资源嵌入（待 C02 退役） | `webui/embed.go:FS` | `webui/dist`；当前不由 Desktop 使用 |
 
 ## 2. 总体拓扑
 
@@ -282,41 +280,14 @@ PUT  /api/models/gateway
      校验并原子发布 proposed
 ```
 
-## 5. 管理 API 与待清理的旧前端代码
+## 5. 管理 API
 
-CLI 的 `pi-switch webui start` 使用 API-only router：`/api/*` 与认证行为保持不变，`/` 返回 WebUI 退役说明（HTTP 410），不提供浏览器静态资源。MyGo Desktop 始终使用 Native 界面，不注册自定义协议，也不加载 React 或 HTTP handler。
-
-仓库仍暂存旧 React 源码和资源，后续 C02 将移除。旧前端原有 API 调用链如下；它不再连接 Desktop：
-
-```text
-React component
-      │
-      ▼
-webui/src/api.ts
-      │  fetch /api/*
-      ▼
-webui/src/apiSchema.ts       decode contract
-      ▼
-internal/server/server.go   NewMgmtRouter：/api/* 与 legacy static routes
-      │
-      ▼
-config / gateway / store / piagent
-```
-
-`webui/dist` 由 Vite 构建；Desktop 已不再导入 `webui/embed.go`，生产 CLI 也不嵌入这些前端资源。
-
-```text
-webui/src
-   │
-   ▼
-Vite build
-   │
-   ▼
-webui/dist
-   │
-   ▼
-webui/embed.go:FS (legacy source, pending C02 removal)
-```
+The CLI's historical `pi-switch webui` command starts the management API only.
+`/api/*` and its authentication behavior remain available; `/healthz` stays open
+for probes, `/` returns the retirement notice with HTTP 410, and other paths
+return JSON 404. There is no SPA fallback or static asset route. The MyGo
+Desktop UI calls shared application/core services directly rather than using
+HTTP handlers as its business layer.
 
 ## 6. 核心持久化位置
 
@@ -337,7 +308,7 @@ webui/embed.go:FS (legacy source, pending C02 removal)
 3. 改请求协议转换：从 `internal/translator` 入手，不在每个 handler 内重复转换。
 4. 改上下文/输出限制：从 `internal/limit` 入手，不在各协议 handler 内分别 clamp。
 5. 改统计展示：读取 `requests.db` 的事实，不反向修改请求 row。
-6. 改 WebUI：优先经过 `webui/src/api.ts` 和 API decoder，不在组件内直接 `fetch`。
+6. 改 Native Desktop：从共享 application service 和页面操作入手，不调用 HTTP handler 作为业务服务。
 7. 改供应商业务（Create / Duplicate / FetchModels / Expose / Test）：从 `internal/profile` 入手；HTTP handler 与 CLI 只做错误码/文案映射，不复制业务规则。
-8. 改受支持的 API 或支持能力：只改 `internal/protocol`（身份、`IsKnown` / `CanProxy` / `CanGateway`、`ValidateResponsesMode`）。WebUI 从 `GET /api/state` 的 `protocol.apis` 读取，本地只保留由 Go 测试校验的 fixture，不另写一份规则。
+8. 改受支持的 API 或支持能力：只改 `internal/protocol`（身份、`IsKnown` / `CanProxy` / `CanGateway`、`ValidateResponsesMode`）；各入口消费同一份 Go 规则，不另建一份。
 9. HTTP 错误信封按面固定：管理面 `{"error":"<message>"}`，推理面 OpenAI `{"error":{"message","type"}}`；新增 handler 不得混用，契约见 `docs/system-contract.md` §2.8。

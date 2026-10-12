@@ -17,20 +17,6 @@
 
 ---
 
-## 历史 WebUI 截图（非当前 Desktop 界面）
-
-<div align="center">
-
-<img src="assets/webui-home.png" alt="pi-switch WebUI 首页" width="48%"/>
-<img src="assets/webui-profiles.png" alt="pi-switch WebUI Profiles" width="48%"/>
-<br/>
-<img src="assets/webui-gateway.png" alt="pi-switch WebUI Gateway" width="48%"/>
-<img src="assets/webui-stats.png" alt="pi-switch WebUI 统计" width="48%"/>
-
-</div>
-
----
-
 ## 功能简介
 
 - 管理 provider 配置、模型列表和各渠道暴露的模型。
@@ -39,7 +25,7 @@
 - 在 Native Desktop 中查看请求与 token 用量，并管理 pi packages。
 - Native Desktop、CLI、TUI 与管理 API 共用同一套 Go 核心。
 
-架构与详细行为见 [WebUI 指南](./WEBUI_GUIDE.md)、[后端架构](./docs/architecture.md) 和[系统契约](./docs/system-contract.md)。
+架构与管理 API 详情见[后端架构](./docs/architecture.md)、[管理 API 与安全说明](./docs/management-api.md)和[系统契约](./docs/system-contract.md)。
 
 ## 安装
 
@@ -85,7 +71,7 @@ pi-switch webui start --daemon
 
 停止受管后台进程时会用 Linux pidfd 校验并固定进程身份；若 pidfd 不可用或被安全策略拦截，`stop` 会安全拒绝，而不会按可能已复用的 PID 发送信号。
 
-管理 API 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[安全说明](./WEBUI_GUIDE.md#security)。
+管理 API 默认绑定 loopback。绑定非 loopback 地址需要密码，详见[管理 API 安全说明](./docs/management-api.md#security)。
 
 ## 常见问题
 

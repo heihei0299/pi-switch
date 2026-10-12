@@ -135,7 +135,7 @@ func buildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]
 //
 // It deliberately does NOT judge the bind address of the listener answering the
 // request: where the management API listens says nothing about whether the proxy
-// surface authenticates (a loopback webui with an exposed proxy is a supported
+// surface authenticates (a loopback management API with an exposed proxy is a supported
 // pairing, and warning there would be noise). And it cannot judge the published
 // baseUrl alone either: BuildProposedGatewayEntry rewrites a wildcard or empty host
 // to 127.0.0.1, so the plan reads as local exactly when the proxy is exposed. The
@@ -266,7 +266,7 @@ func handlePutGateway(c *gin.Context) {
 // so: the gateway is a logical concept ("logical-isolation" — publishing
 // ~/.pi/agent/models.json), so there is no process to report and no notification
 // record to date. has_models_file used to be one of those constants (literally
-// `true`), which made "already published" always true for a frontend that decodes
+// `true`), which made "already published" always true for clients that rely on
 // it as a required boolean.
 func gatewayHealthPayload(cfg config.PiSwitchConfig) gin.H {
 	_, statErr := os.Stat(gateway.ModelsPath())

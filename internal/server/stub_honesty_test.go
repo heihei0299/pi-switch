@@ -40,7 +40,7 @@ func assertNotImplemented(t *testing.T, w *httptest.ResponseRecorder) {
 		t.Fatalf("decode body: %v (%s)", err, w.Body.String())
 	}
 	// Management surface (system-contract 2.8): the 501 status carries the
-	// "not implemented" kind, so error is a bare message the WebUI can render.
+	// "not implemented" kind, so error is a bare message for the API client.
 	msg, ok := body["error"].(string)
 	if !ok || msg == "" {
 		t.Fatalf("body = %s, want a non-empty string error", w.Body.String())

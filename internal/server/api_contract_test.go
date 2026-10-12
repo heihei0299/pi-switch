@@ -24,45 +24,6 @@ func writeApiContractConfig(t *testing.T, dir, content string) string {
 	return p
 }
 
-func TestApiContract_08_S1_TypesSync(t *testing.T) {
-	// types.ts should point to Go config as source of truth, not Rust
-	data, err := os.ReadFile("../../webui/src/types.ts")
-	if err != nil {
-		// fallback when running from different cwd
-		data, err = os.ReadFile("webui/src/types.ts")
-		if err != nil {
-			t.Fatalf("read types.ts: %v", err)
-		}
-	}
-	s := string(data)
-	if !strings.Contains(s, "internal/config/config.go") && !strings.Contains(s, "internal/config") {
-		t.Fatalf("types.ts header must reference internal/config/config.go as source of truth, got header %.200s", s)
-	}
-	if strings.Contains(s, "src-rust/config.rs") && !strings.Contains(s, "internal/config") {
-		t.Fatalf("types.ts still references Rust src-rust/config.rs, should point to Go")
-	}
-	// basic presence of key types
-	for _, want := range []string{"ProviderProfile", "ModelEntry", "Settings", "ResponsesMode"} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("types.ts missing %s", want)
-		}
-	}
-	// ensure json tag sync is guarded: Go config must have expected json fields
-	cfgData, err := os.ReadFile("../../internal/config/config.go")
-	if err != nil {
-		cfgData, err = os.ReadFile("internal/config/config.go")
-		if err != nil {
-			t.Fatalf("read config.go: %v", err)
-		}
-	}
-	cs := string(cfgData)
-	for _, tag := range []string{`json:"responsesMode"`, `json:"api"`, `json:"baseUrl"`, `json:"models,omitempty"`, `json:"exposedModels,omitempty`} {
-		if !strings.Contains(cs, tag) {
-			t.Fatalf("config.go missing json tag %s", tag)
-		}
-	}
-}
-
 func TestApiContract_08_S2_ResponsesMode400(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "requests.db")

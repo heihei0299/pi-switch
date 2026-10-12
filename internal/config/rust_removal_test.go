@@ -81,17 +81,13 @@ func TestRustArtifactsRemoved(t *testing.T) {
 		}
 	}
 
-	// README/WEBUI_GUIDE 不应包含 src-rust 引用
-	for _, p := range []string{"README.md", "WEBUI_GUIDE.md"} {
+	// Current user-facing docs should not describe the retired Rust implementation.
+	for _, p := range []string{"README.md", "docs/management-api.md"} {
 		full := filepath.Join(repoRoot, p)
 		if data, err := os.ReadFile(full); err == nil {
 			content := string(data)
 			if strings.Contains(content, "src-rust") {
 				t.Errorf("F4: %s 不应包含 src-rust", p)
-			}
-			// WEBUI_GUIDE 中的 Rust core 描述应已改为 Go
-			if p == "WEBUI_GUIDE.md" && strings.Contains(content, "shared Rust core") {
-				t.Errorf("F4: WEBUI_GUIDE.md 不应包含 shared Rust core")
 			}
 		}
 	}

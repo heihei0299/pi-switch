@@ -56,7 +56,7 @@ func handleGetState(c *gin.Context) {
 		"current":  cfg.Current,
 		"profiles": cfg.Profiles,
 		"settings": cfg.Settings,
-		// The WebUI takes its api list and responsesMode rule from here
+		// The Native UI takes its api list and responsesMode rule from here
 		// (internal/protocol is the single source), never from a local copy.
 		"protocol": gin.H{"apis": protocol.Capabilities()},
 	})

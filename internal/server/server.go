@@ -2,13 +2,10 @@ package server
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,8 +18,6 @@ import (
 	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/scan"
 )
-
-var webUIFS fs.FS = embed.FS{}
 
 var (
 	Version     = "dev"
@@ -48,114 +43,6 @@ func init() {
 	webuiIndexHash = webuiIndexHashBuild
 	webuiScript = webuiScriptBuild
 	webuiAssetCount, _ = strconv.Atoi(webuiAssetCountBuild)
-}
-
-// SetWebUIAssets supplies the frontend used by the explicit Desktop rollback.
-// The CLI build injects its metadata separately and does not carry the assets.
-func SetWebUIAssets(fsys fs.FS) {
-	webUIFS = fsys
-	computeBuildInfo(fsys)
-}
-
-func computeBuildInfo(fsys fs.FS) {
-	webuiEmbedded = false
-	webuiIndexHash = ""
-	webuiScript = ""
-	webuiAssetCount = 0
-	// index hash
-	if data, err := fs.ReadFile(fsys, "dist/index.html"); err == nil && len(data) > 0 {
-		webuiEmbedded = true
-		h := sha256.Sum256(data)
-		webuiIndexHash = hex.EncodeToString(h[:])
-	} else {
-		// placeholder hash (so indexHash non-empty even without embed)
-		placeholder := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>`)
-		h := sha256.Sum256(placeholder)
-		webuiIndexHash = hex.EncodeToString(h[:])
-		webuiEmbedded = false
-	}
-	// assets
-	var assetsFS fs.FS = fsys
-	if sub, err := fs.Sub(fsys, "dist/assets"); err == nil {
-		assetsFS = sub
-		if entries, err := fs.ReadDir(assetsFS, "."); err == nil {
-			webuiAssetCount = len(entries)
-			for _, e := range entries {
-				if e.IsDir() {
-					continue
-				}
-				name := e.Name()
-				if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
-					webuiScript = "/assets/" + name
-				}
-			}
-			// if no index-*.js but has any js, fallback
-			if webuiScript == "" {
-				for _, e := range entries {
-					if !e.IsDir() && len(e.Name()) > 3 && e.Name()[len(e.Name())-3:] == ".js" {
-						webuiScript = "/assets/" + e.Name()
-						break
-					}
-				}
-			}
-		} else {
-			webuiAssetCount = 0
-		}
-	} else {
-		// try listing dist/assets via ReadDir on webUIFS
-		if entries, err := fs.ReadDir(fsys, "dist/assets"); err == nil {
-			webuiAssetCount = len(entries)
-			for _, e := range entries {
-				if e.IsDir() {
-					continue
-				}
-				name := e.Name()
-				if webuiScript == "" && len(name) > 3 && name[len(name)-3:] == ".js" && len(name) > 6 && name[:6] == "index-" {
-					webuiScript = "/assets/" + name
-				}
-			}
-		} else {
-			webuiAssetCount = 0
-			// also try to find script via glob of dist/assets in the provided filesystem
-		}
-	}
-	// if still no script but embedded, try to parse index.html for script src
-	if webuiScript == "" && webuiEmbedded {
-		if data, err := fs.ReadFile(fsys, "dist/index.html"); err == nil {
-			s := string(data)
-			// naive search for /assets/index-*.js
-			idx := 0
-			for {
-				pos := indexOf(s[idx:], "/assets/")
-				if pos < 0 {
-					break
-				}
-				pos += idx
-				end := pos
-				for end < len(s) && s[end] != 34 && s[end] != 39 && s[end] != 32 && s[end] != 62 {
-					end++
-				}
-				candidate := s[pos:end]
-				if len(candidate) > 4 && candidate[len(candidate)-3:] == ".js" {
-					webuiScript = candidate
-					break
-				}
-				idx = end
-				if idx >= len(s) {
-					break
-				}
-			}
-		}
-	}
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i < len(s)-len(substr)+1; i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
 
 // configPath is the server's single config path helper. All read-modify-write
@@ -200,9 +87,9 @@ func loadConfigOrChatError(c *gin.Context) (config.PiSwitchConfig, bool) {
 // It lives in the kernel because both the settings and profile domains use it
 // (domain files must not call each other's helpers). These endpoints used to
 // return 200 with a plausible payload — a path that was never written, a restore
-// that never happened — so the WebUI reported success for work that did not
+// that never happened — so a management client reported success for work that did not
 // occur. It returns the management envelope: the 501 status already carries the
-// "not implemented" kind, and the WebUI only renders a string message.
+// "not implemented" kind, and the API client only renders a string message.
 func notImplemented(what string) gin.H {
 	return managementError(what + " is not implemented")
 }
@@ -240,19 +127,19 @@ func NewMgmtRouter() *gin.Engine {
 	return NewMgmtRouterWithAuth(MgmtAuthOptions{BindHost: "127.0.0.1"})
 }
 
-// NewMgmtRouterWithAuth builds the legacy WebUI and management API router for
-// a specific bind address. Non-loopback bindings require opts.Password.
+// NewMgmtRouterWithAuth builds the management API for a specific bind address.
+// Non-loopback bindings require opts.Password.
 func NewMgmtRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
-	return newMgmtRouter(opts, true)
+	return newMgmtRouter(opts)
 }
 
-// NewMgmtAPIRouterWithAuth builds the management API without the legacy WebUI.
+// NewMgmtAPIRouterWithAuth is retained for callers that name the API-only router.
 // Non-loopback bindings require opts.Password.
 func NewMgmtAPIRouterWithAuth(opts MgmtAuthOptions) *gin.Engine {
-	return newMgmtRouter(opts, false)
+	return newMgmtRouter(opts)
 }
 
-func newMgmtRouter(opts MgmtAuthOptions, legacyWebUI bool) *gin.Engine {
+func newMgmtRouter(opts MgmtAuthOptions) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.CustomRecovery(managementRecovery))
 	// Any non-loopback bind installs the guard, including an unspecified bind
@@ -331,16 +218,10 @@ func newMgmtRouter(opts MgmtAuthOptions, legacyWebUI bool) *gin.Engine {
 		api.GET("/buildInfo", handleBuildInfo)
 		api.GET("/dumps", handleDumps)
 	}
-	if legacyWebUI {
-		r.GET("/", handleWebUIIndex)
-		r.GET("/assets/*filepath", handleAssets)
-		r.NoRoute(handleWebUIFallback)
-	} else {
-		r.GET("/", func(c *gin.Context) {
-			c.String(http.StatusGone, "The pi-switch WebUI has been retired. The management API remains available under /api/.\n")
-		})
-		r.NoRoute(func(c *gin.Context) { c.JSON(http.StatusNotFound, gin.H{"error": "not found"}) })
-	}
+	r.GET("/", func(c *gin.Context) {
+		c.String(http.StatusGone, "The pi-switch WebUI has been retired. The management API remains available under /api/.\n")
+	})
+	r.NoRoute(func(c *gin.Context) { c.JSON(http.StatusNotFound, gin.H{"error": "not found"}) })
 	return r
 }
 
@@ -558,146 +439,6 @@ func basicAuthMiddleware(password string, unauthorized func() gin.H, guardedPref
 		}
 		c.Next()
 	}
-}
-
-// --- static handlers ---
-func handleWebUIIndex(c *gin.Context) {
-	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-	// try embed
-	if data, err := fs.ReadFile(webUIFS, "dist/index.html"); err == nil && len(data) > 0 {
-		c.Data(200, "text/html; charset=utf-8", data)
-		return
-	}
-	// also try without prefix (depending on embed root)
-	if data, err := fs.ReadFile(webUIFS, "index.html"); err == nil {
-		c.Data(200, "text/html; charset=utf-8", data)
-		return
-	}
-	c.Data(200, "text/html; charset=utf-8", []byte(`<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>`))
-}
-
-func handleWebUIFallback(c *gin.Context) {
-	rawPath := c.Request.URL.Path
-	// prevent directory traversal - check raw path contains ..
-	if strings.Contains(rawPath, "..") {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	path := strings.TrimPrefix(rawPath, "/")
-	if path == "" {
-		handleWebUIIndex(c)
-		return
-	}
-	// API already handled via group NoRoute? But gin NoRoute catches all not matched. For /api/* unknown, return 404 json.
-	if strings.HasPrefix(rawPath, "/api/") {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	// try serve file from embed
-	clean := filepath.Clean(path)
-	// prevent directory traversal after clean as well
-	if strings.Contains(clean, "..") {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	// try webUIFS
-	tryPaths := []string{
-		"dist/" + clean,
-		clean,
-	}
-	for _, tp := range tryPaths {
-		if data, err := fs.ReadFile(webUIFS, tp); err == nil {
-			// guess MIME
-			ct := "application/octet-stream"
-			if strings.HasSuffix(tp, ".html") {
-				ct = "text/html; charset=utf-8"
-			} else if strings.HasSuffix(tp, ".js") {
-				ct = "application/javascript"
-			} else if strings.HasSuffix(tp, ".css") {
-				ct = "text/css"
-			} else if strings.HasSuffix(tp, ".json") {
-				ct = "application/json"
-			} else if strings.HasSuffix(tp, ".svg") {
-				ct = "image/svg+xml"
-			}
-			// cache header
-			if strings.HasPrefix(clean, "assets/") || strings.HasPrefix(tp, "dist/assets/") {
-				c.Header("Cache-Control", "public, max-age=31536000, immutable")
-			} else if strings.HasSuffix(tp, ".html") {
-				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			}
-			c.Data(200, ct, data)
-			return
-		}
-	}
-	// SPA fallback: serve index.html
-	handleWebUIIndex(c)
-}
-
-func handleAssets(c *gin.Context) {
-	rawPath := c.Request.URL.Path
-	if strings.Contains(rawPath, "..") {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	filepathParam := c.Param("filepath")
-	// gin wildcard includes leading slash
-	clean := strings.TrimPrefix(filepathParam, "/")
-	clean = filepath.Clean(clean)
-	if clean == "." {
-		clean = ""
-	}
-	if strings.Contains(clean, "..") {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	if clean == "" {
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	// try from dist/assets via sub FS
-	if sub, err := fs.Sub(webUIFS, "dist/assets"); err == nil {
-		if data, err := fs.ReadFile(sub, clean); err == nil {
-			ct := "application/octet-stream"
-			if strings.HasSuffix(clean, ".js") {
-				ct = "application/javascript"
-			} else if strings.HasSuffix(clean, ".css") {
-				ct = "text/css"
-			} else if strings.HasSuffix(clean, ".json") {
-				ct = "application/json"
-			} else if strings.HasSuffix(clean, ".svg") {
-				ct = "image/svg+xml"
-			} else if strings.HasSuffix(clean, ".html") {
-				ct = "text/html; charset=utf-8"
-			}
-			c.Header("Cache-Control", "public, max-age=31536000, immutable")
-			c.Data(200, ct, data)
-			return
-		}
-	}
-	// fallback try direct read
-	tryPaths := []string{
-		"dist/assets/" + clean,
-		"assets/" + clean,
-	}
-	for _, tp := range tryPaths {
-		if data, err := fs.ReadFile(webUIFS, tp); err == nil {
-			ct := "application/octet-stream"
-			if strings.HasSuffix(tp, ".js") {
-				ct = "application/javascript"
-			} else if strings.HasSuffix(tp, ".css") {
-				ct = "text/css"
-			} else if strings.HasSuffix(tp, ".json") {
-				ct = "application/json"
-			} else if strings.HasSuffix(tp, ".svg") {
-				ct = "image/svg+xml"
-			}
-			c.Header("Cache-Control", "public, max-age=31536000, immutable")
-			c.Data(200, ct, data)
-			return
-		}
-	}
-	c.JSON(404, gin.H{"error": "not found"})
 }
 
 // --- basic config handlers ---

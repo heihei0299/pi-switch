@@ -101,7 +101,7 @@ func ValidateResponsesMode(api, mode string) error {
 }
 
 // APICapability is one api's identity plus the capabilities every surface shares.
-// It is what GET /api/state exposes so the WebUI does not keep its own rule set.
+// It is what GET /api/state exposes so clients do not keep their own rule set.
 type APICapability struct {
 	ID             string   `json:"id"`
 	Label          string   `json:"label"`

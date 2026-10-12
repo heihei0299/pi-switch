@@ -158,8 +158,8 @@ func TestPutConfig_ParsesBeforePersist(t *testing.T) {
 	}
 }
 
-// The WebUI takes its api list and responsesMode rule from /api/state, so the
-// state payload must carry the protocol capability set.
+// The Native UI takes its api list and responsesMode rule from /api/state, so
+// the state payload must carry the protocol capability set.
 func TestStateExposesProtocolCapabilities(t *testing.T) {
 	isolateConfig(t)
 	w := httptest.NewRecorder()

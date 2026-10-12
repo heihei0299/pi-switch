@@ -42,13 +42,13 @@ func IsFixedGatewayProvider(key string) bool {
 }
 
 // FixedGatewayProvider is one gateway-owned provider key plus the single API
-// that key accepts. Exposed to the WebUI so it does not have to mirror the list.
+// that key accepts. Exposed to clients so they do not have to mirror the list.
 type FixedGatewayProvider struct {
 	Key string `json:"key"`
 	API string `json:"api"`
 }
 
-// FixedGatewayProviders returns the fixed-provider contract the WebUI maintains.
+// FixedGatewayProviders returns the fixed-provider contract the Native UI uses.
 func FixedGatewayProviders() []FixedGatewayProvider {
 	return []FixedGatewayProvider{
 		{Key: gatewayResponsesProvider, API: gatewayResponsesAPI},
@@ -258,7 +258,7 @@ func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{}
 }
 
 // GatewaySelection identifies one exposed model by its source config location.
-// The WebUI sends these source facts instead of reconstructing gateway provider
+// The Native UI sends these source facts instead of reconstructing gateway provider
 // keys and model entries itself.
 type GatewaySelection struct {
 	Supplier string `json:"supplier"`
@@ -418,7 +418,7 @@ func getProviders(m map[string]interface{}) map[string]interface{} {
 	return nil
 }
 
-// DiffGateway mirrors webui/src/lib/gatewayDiff.ts diffGateway for providers.
+// DiffGateway classifies provider changes between the current and proposed gateway.
 func DiffGateway(current, proposed map[string]interface{}) (added, removed, changed []string) {
 	curProvs := getProviders(current)
 	propProvs := getProviders(proposed)

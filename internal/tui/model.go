@@ -162,7 +162,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "gateway publish failed: " + err.Error()
 				return m, nil
 			}
-			// Same enriched generated flow as the WebUI and CLI.
+			// Same enriched generated flow as Native Desktop and CLI.
 			plan, _ := gateway.BuildEnrichedGeneratedPlan(m.cfg, current)
 			if err := gateway.PublishPlan(plan); err != nil {
 				m.statusMsg = "gateway publish failed: " + err.Error()

@@ -106,7 +106,7 @@ func TestGatewayPublish_WarnsWhenTheProxyIsExposed(t *testing.T) {
 
 // H2: a loopback proxy stays quiet even when this listener is bound beyond loopback.
 // Where the management API listens says nothing about whether the published provider
-// can authenticate — a loopback webui with an exposed proxy is a supported pairing,
+// can authenticate — a loopback management API with an exposed proxy is supported,
 // and warning there would be noise.
 func TestGatewayPublish_StaysQuietWhenTheProxyIsLoopback(t *testing.T) {
 	publishableConfigWithProxyHost(t, "127.0.0.1")

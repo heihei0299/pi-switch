@@ -17,22 +17,6 @@ Manage provider profiles and publish a local model-name gateway. The MyGo Native
 
 ---
 
-## Screenshots
-
-Historical WebUI screenshots; the Desktop app now uses only the MyGo Native interface.
-
-<div align="center">
-
-<img src="assets/webui-home.png" alt="pi-switch WebUI home" width="48%"/>
-<img src="assets/webui-profiles.png" alt="pi-switch WebUI profiles" width="48%"/>
-<br/>
-<img src="assets/webui-gateway.png" alt="pi-switch WebUI gateway" width="48%"/>
-<img src="assets/webui-stats.png" alt="pi-switch WebUI stats" width="48%"/>
-
-</div>
-
----
-
 ## What it does
 
 - Manage provider profiles, model lists, and per-channel model exposure.
@@ -41,7 +25,7 @@ Historical WebUI screenshots; the Desktop app now uses only the MyGo Native inte
 - View request and token usage, and manage pi packages from Native Desktop.
 - Use the same Go core through Native Desktop, CLI, TUI, and the management API.
 
-For architecture and detailed behavior, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md), [docs/architecture.md](./docs/architecture.md), and [docs/system-contract.md](./docs/system-contract.md).
+For architecture and management API details, see [docs/architecture.md](./docs/architecture.md), [docs/management-api.md](./docs/management-api.md), and [docs/system-contract.md](./docs/system-contract.md).
 
 ## Install
 
@@ -87,7 +71,7 @@ The management API remains available under `/api/*`; `/` displays the WebUI reti
 
 Stopping a managed daemon verifies its process identity with a Linux pidfd. If pidfds are unavailable or blocked, `stop` fails closed instead of signaling a possibly reused PID.
 
-The management API binds to loopback by default. Binding to a non-loopback address requires a password; see the [security guide](./WEBUI_GUIDE.md#security).
+The management API binds to loopback by default. Binding to a non-loopback address requires a password; see the [management API security guide](./docs/management-api.md#security).
 
 ## Common questions
 

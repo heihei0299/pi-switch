@@ -16,24 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestWebUI_EmbeddedReturnsHTML(t *testing.T) {
-	r := NewMgmtRouter()
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/", nil)
-	r.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("GET / code = %d, want 200", w.Code)
-	}
-	ct := w.Header().Get("Content-Type")
-	if !strings.Contains(ct, "text/html") {
-		t.Fatalf("Content-Type = %q, want text/html", ct)
-	}
-	body := w.Body.String()
-	if !strings.Contains(body, "<div id=\"root\"") && !strings.Contains(body, "pi-switch") {
-		t.Fatalf("GET / body missing root/html, got %.200s", body)
-	}
-}
-
 func TestProfiles_CRUDAndExposedModelsSync(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

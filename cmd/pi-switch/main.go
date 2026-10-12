@@ -936,14 +936,14 @@ func handleGatewayCLI(args []string) {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
-		// Same enriched generated flow as the WebUI preview/publish.
+		// Same enriched generated flow as Native Desktop preview/publish.
 		plan, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
 		if err := gateway.PublishPlan(plan); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("gateway published")
-		// 与 WebUI 那条路共用同一判定与同一份文案（server.PublishedAuthCaveat）：
+		// 与 Native Desktop 共用同一判定与同一份文案（server.PublishedAuthCaveat）：
 		// 发布的 provider 携带 Bearer 形式的 apiKey，而代理面一旦超出 loopback 就只
 		// 接受 HTTP Basic。判定以**配置里的代理 host** 为主、条目自身 baseUrl 为辅——
 		// 只看 baseUrl 会被 gateway 包的通配改写（→127.0.0.1）骗过去。
