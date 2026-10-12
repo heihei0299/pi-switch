@@ -45,7 +45,6 @@ Requires Node.js 23.6 or later and Go 1.24.2 or later.
 ~~~bash
 git clone https://github.com/heihei0299/pi-switch.git
 cd pi-switch
-npm install
 npm run build
 node bin/pi-switch.js webui start --daemon
 ~~~
@@ -88,10 +87,9 @@ Configuration and local request data are stored under <code>~/.pi-switch/</code>
 Requires Node.js 23.6 or later and Go 1.24.2 or later.
 
 ~~~bash
-npm install
 npm run build
-bash scripts/test-limited.sh
-npm run test:webui
+npm test
+bash scripts/functional-check.sh bin/pi-switch
 ~~~
 
 ## Acknowledgments

@@ -34,4 +34,8 @@ func TestBuildInfoExposesAuditableIdentity(t *testing.T) {
 			t.Fatalf("buildInfo[%q]=%v, want %q", key, payload[key], want)
 		}
 	}
+	webui, ok := payload["webui"].(map[string]any)
+	if !ok || webui["embedded"] != false || webui["indexHash"] != "" || webui["script"] != "" || webui["assetCount"] != float64(0) {
+		t.Fatalf("buildInfo should report no embedded WebUI, got %v", payload["webui"])
+	}
 }

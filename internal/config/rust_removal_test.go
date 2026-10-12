@@ -57,6 +57,10 @@ func TestRustArtifactsRemoved(t *testing.T) {
 			t.Errorf("F2: package.json main 不应指向 index.js")
 		}
 	}
+	lockPath := filepath.Join(repoRoot, "package-lock.json")
+	if data, err := os.ReadFile(lockPath); err == nil && strings.Contains(string(data), "@napi-rs/cli") {
+		t.Errorf("F2: package-lock.json should not retain the retired N-API build dependency")
+	}
 
 	// F4: CI 不应包含 Rust
 	ciPath := filepath.Join(repoRoot, ".github/workflows/ci.yml")

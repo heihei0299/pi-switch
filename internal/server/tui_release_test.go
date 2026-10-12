@@ -245,7 +245,7 @@ func TestBinDispatch_MapsPlatform(t *testing.T) {
 }
 func TestCrossCompile_MatrixFiles(t *testing.T) {
 	root := testRepoRoot(t)
-	// Verify package.json files includes bin/ and build scripts for go
+	// Verify the npm CLI package and Go build scripts remain configured.
 	b, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err != nil {
 		t.Fatalf("read package.json: %v", err)
@@ -263,8 +263,10 @@ func TestCrossCompile_MatrixFiles(t *testing.T) {
 		t.Fatalf("package.json files missing bin/")
 	}
 	scripts, _ := pkg["scripts"].(map[string]interface{})
-	if _, ok := scripts["build:webui"]; !ok {
-		t.Fatalf("missing build:webui")
+	for _, retired := range []string{"build:webui", "dev:webui", "test:webui"} {
+		if _, ok := scripts[retired]; ok {
+			t.Fatalf("retired script %q remains", retired)
+		}
 	}
 	if _, ok := scripts["build:go"]; !ok {
 		t.Fatalf("missing build:go")

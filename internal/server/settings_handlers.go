@@ -19,11 +19,12 @@ func handleBuildInfo(c *gin.Context) {
 		"commit":    BuildCommit,
 		"target":    BuildTarget,
 		"dirty":     BuildDirty,
+		// Preserve the API shape for clients of the retired build metadata.
 		"webui": gin.H{
-			"embedded":   webuiEmbedded,
-			"indexHash":  webuiIndexHash,
-			"script":     webuiScript,
-			"assetCount": webuiAssetCount,
+			"embedded":   false,
+			"indexHash":  "",
+			"script":     "",
+			"assetCount": 0,
 		},
 	})
 }

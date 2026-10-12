@@ -38,27 +38,6 @@ LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.BuildTime=${BUILD_
 LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.BuildCommit=${COMMIT}"
 LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.BuildTarget=${TARGET}"
 LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.BuildDirty=${DIRTY}"
-mapfile -t WEBUI_BUILD_INFO < <(node <<'NODE'
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const indexPath = 'webui/dist/index.html';
-const placeholder = '<!doctype html><html><head><meta charset="utf-8"><title>pi-switch</title></head><body><div id="root">pi-switch WebUI placeholder</div><p>embed.FS placeholder for webui/dist</p></body></html>';
-const index = fs.existsSync(indexPath) ? fs.readFileSync(indexPath) : Buffer.alloc(0);
-const assetsDir = 'webui/dist/assets';
-const assets = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).sort() : [];
-let script = assets.find(name => name.startsWith('index-') && name.endsWith('.js'));
-script ??= assets.find(name => name.endsWith('.js'));
-if (!script && index.length) script = index.toString().match(/\/assets\/[^"' >]+\.js/)?.[0];
-console.log(index.length > 0);
-console.log(crypto.createHash('sha256').update(index.length ? index : placeholder).digest('hex'));
-console.log(script ? (script.startsWith('/assets/') ? script : `/assets/${script}`) : '');
-console.log(assets.length);
-NODE
-)
-LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.webuiEmbeddedBuild=${WEBUI_BUILD_INFO[0]}"
-LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.webuiIndexHashBuild=${WEBUI_BUILD_INFO[1]}"
-LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.webuiScriptBuild=${WEBUI_BUILD_INFO[2]}"
-LDFLAGS+=" -X github.com/heihei0299/pi-switch/internal/server.webuiAssetCountBuild=${WEBUI_BUILD_INFO[3]}"
 
 # Serial Package Build: -p 1 keeps one compile job in flight so a build on a
 # shared machine does not saturate every core. GO_MAXPROCS caps the toolchain's

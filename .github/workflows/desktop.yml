@@ -24,8 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
@@ -34,12 +32,6 @@ jobs:
           cache-dependency-path: |
             desktop/go.sum
             go.sum
-
-      - name: Install WebUI dependencies
-        run: npm ci --prefix webui
-
-      - name: Build WebUI for Go embed
-        run: npm --prefix webui run build
 
       - name: Test and vet desktop module
         working-directory: desktop
@@ -75,8 +67,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
@@ -85,12 +75,6 @@ jobs:
           cache-dependency-path: |
             desktop/go.sum
             go.sum
-
-      - name: Install WebUI dependencies
-        run: npm ci --prefix webui
-
-      - name: Build WebUI for the retained Go embed
-        run: npm --prefix webui run build
 
       - name: Build matching CLI resource
         env:
@@ -135,6 +119,7 @@ jobs:
           echo "ROLLBACK_SHA=$rollback_sha" >> "$GITHUB_ENV"
           previous="$RUNNER_TEMP/pi-switch-previous"
           git worktree add --detach "$previous" "$rollback_sha"
+          # Rebuild this historical source with its own WebUI lockfile for rollback coverage.
           npm ci --prefix "$previous/webui"
           npm --prefix "$previous/webui" run build
           (

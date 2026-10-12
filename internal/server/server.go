@@ -27,24 +27,6 @@ var (
 	BuildDirty  = "unknown"
 )
 
-var (
-	webuiEmbedded        bool
-	webuiIndexHash       string
-	webuiScript          string
-	webuiAssetCount      int
-	webuiEmbeddedBuild   = "false"
-	webuiIndexHashBuild  = "8b174df572d29e07bf94378556508b41b4d8d6f426db768df4842d63a2d3e37c"
-	webuiScriptBuild     = ""
-	webuiAssetCountBuild = "0"
-)
-
-func init() {
-	webuiEmbedded = webuiEmbeddedBuild == "true"
-	webuiIndexHash = webuiIndexHashBuild
-	webuiScript = webuiScriptBuild
-	webuiAssetCount, _ = strconv.Atoi(webuiAssetCountBuild)
-}
-
 // configPath is the server's single config path helper. All read-modify-write
 // management mutations use config.UpdateAtPath directly so the latest file is
 // loaded while holding the cross-process write lock.

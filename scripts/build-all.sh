@@ -3,11 +3,6 @@ set -euo pipefail
 # Cross-compile Linux for amd64/arm64 (pure Go, -s -w)
 # Output: bin/pi-switch-<goos>-<goarch>
 
-if [ ! -d "webui/dist" ] || [ -z "$(ls -A webui/dist 2>/dev/null)" ]; then
-  echo "Building webui..."
-  npm run build:webui
-fi
-
 mkdir -p bin
 for GOARCH in amd64 arm64; do
   OUT="bin/pi-switch-linux-${GOARCH}"

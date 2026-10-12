@@ -1,6 +1,6 @@
 # legacy/ — 旧的 Node/TypeScript 实现（已归档，不发布）
 
-这两个目录是 pi-switch 早期 Node/TypeScript 实现，**不属于当前产品**：Go 重写后它们既没有构建入口，也不在 npm 的 `files` 列表（`bin/`、`webui/dist/`、两个 README）内，因此发布包中从来没有它们。
+这两个目录是 pi-switch 早期 Node/TypeScript 实现，**不属于当前产品**：Go 重写后它们既没有构建入口，也不在 npm 的 `files` 列表（`bin/` 和两个 README）内，因此发布包中从来没有它们。
 
 - `legacy/extensions/` — `pi` 扩展入口；它 `import` 下面的 `src/commands.js`
 - `legacy/src/` — 旧的命令/core/proxy/stats/presets 实现

@@ -32,7 +32,7 @@ const bin = resolveBin();
 if (!bin) {
   console.error(`Error: Go binary not found for Linux/${process.arch}.`);
   console.error(`Expected: bin/pi-switch-linux-${archMap[process.arch]}`);
-  console.error(`Build with: npm run build:webui && npm run build:go:current`);
+  console.error(`Build with: npm run build:go:current`);
   console.error(`Or set PI_SWITCH_GO_BIN=/path/to/binary`);
   process.exit(1);
 }

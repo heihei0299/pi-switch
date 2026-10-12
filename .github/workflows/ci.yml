@@ -18,7 +18,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    name: verify / go and webui
+    name: verify / Go, API, CLI and Proxy
     permissions:
       contents: read
     steps:
@@ -29,18 +29,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build WebUI
-        run: npm run build:webui
 
       - name: Vet Go
         run: go vet ./...
@@ -49,18 +42,6 @@ jobs:
         run: go test ./...
         env:
           PI_SWITCH_DB: ${{ runner.temp }}/pi-switch-requests.db
-
-      - name: Typecheck WebUI
-        run: npm --prefix webui run typecheck
-
-      - name: Test WebUI
-        run: npm run test:webui
-
-      - name: Install Playwright Chromium
-        run: cd webui && npx playwright install --with-deps chromium
-
-      - name: Test WebUI responsive baseline
-        run: npm --prefix webui run test:e2e
 
       - name: Secret scan
         run: bash scripts/check-secrets.sh
@@ -97,7 +78,6 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
-          cache: npm
 
       - name: Validate release identity
         env:
@@ -124,13 +104,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build WebUI
-        run: npm run build:webui
 
       - name: Download Linux binaries
         uses: actions/download-artifact@v4
@@ -168,18 +141,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build WebUI
-        run: npm run build:webui
 
       - name: Build Go binary
         shell: bash
@@ -209,18 +175,11 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
-          cache: npm
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build WebUI
-        run: npm run build:webui
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

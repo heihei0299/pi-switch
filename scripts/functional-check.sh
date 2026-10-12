@@ -97,21 +97,15 @@ NODE
 test "$(stat -c '%a' "$PI_SWITCH_CONFIG")" = 600
 root_status=$(curl -sS -o "$workdir/root" -w '%{http_code}' "http://127.0.0.1:$port/")
 test "$root_status" = 410
+grep -q "WebUI has been retired" "$workdir/root"
 curl -fsS "http://127.0.0.1:$port/api/buildInfo" >"$workdir/build-info.json"
-node - "$workdir/build-info.json" <<'NODE'
+node - "$workdir/build-info.json" "$version" <<'NODE'
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const info = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const index = fs.readFileSync('webui/dist/index.html');
-const assets = fs.readdirSync('webui/dist/assets').sort();
-let script = assets.find(name => name.startsWith('index-') && name.endsWith('.js'));
-script ??= assets.find(name => name.endsWith('.js'));
-if (!script && index.length) script = index.toString().match(/\/assets\/[^"' >]+\.js/)?.[0];
-assert.equal(info.webui.embedded, index.length > 0);
-assert.equal(info.webui.indexHash, crypto.createHash('sha256').update(index).digest('hex'));
-assert.equal(info.webui.script, script ? (script.startsWith('/assets/') ? script : `/assets/${script}`) : '');
-assert.equal(info.webui.assetCount, assets.length);
+assert.equal(info.version, process.argv[3]);
+assert.equal(info.status, 'ok');
+assert.deepEqual(info.webui, { embedded: false, indexHash: '', script: '', assetCount: 0 });
 NODE
 legacy_stats_ready=false
 for _ in $(seq 1 50); do
