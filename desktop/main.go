@@ -10,7 +10,11 @@ import (
 
 func main() {
 	mygo.App.SetName("pi-switch")
-	if !mygo.App.RequestSingleInstanceLock() {
+	locked, err := validateDesktopArgsBeforeLock(os.Args[1:], mygo.App.RequestSingleInstanceLock)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !locked {
 		return
 	}
 	shell, err := prepareDesktopShell(os.Args[1:])
@@ -42,11 +46,25 @@ func main() {
 	}
 }
 
-func prepareDesktopShell(args []string) (*desktopShell, error) {
+func validateDesktopArgsBeforeLock(args []string, requestLock func() bool) (bool, error) {
+	if err := validateDesktopArgs(args); err != nil {
+		return false, err
+	}
+	return requestLock(), nil
+}
+
+func validateDesktopArgs(args []string) error {
 	for _, arg := range args {
 		if arg == "--web" {
-			return nil, errors.New("--web is no longer supported; Desktop always uses the Native GUI")
+			return errors.New("--web is no longer supported; Desktop always uses the Native GUI")
 		}
+	}
+	return nil
+}
+
+func prepareDesktopShell(args []string) (*desktopShell, error) {
+	if err := validateDesktopArgs(args); err != nil {
+		return nil, err
 	}
 	shell := &desktopShell{startMinimized: startsMinimized(args), proxyMessage: "Checking proxy status…"}
 	shell.complexPreview = newNativeComplexPreview()
