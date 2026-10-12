@@ -119,9 +119,15 @@ jobs:
           echo "ROLLBACK_SHA=$rollback_sha" >> "$GITHUB_ENV"
           previous="$RUNNER_TEMP/pi-switch-previous"
           git worktree add --detach "$previous" "$rollback_sha"
-          # Rebuild this historical source with its own WebUI lockfile for rollback coverage.
-          npm ci --prefix "$previous/webui"
-          npm --prefix "$previous/webui" run build
+          if [[ -f "$previous/webui/package.json" && -f "$previous/webui/package-lock.json" ]]; then
+            npm ci --prefix "$previous/webui"
+            npm --prefix "$previous/webui" run build
+          elif [[ -f "$previous/webui/embed.go" ]]; then
+            echo "rollback baseline has embedded WebUI but incomplete npm manifests" >&2
+            exit 1
+          else
+            echo "rollback baseline has no legacy WebUI; skipping React build"
+          fi
           (
             cd "$previous"
             GOOS=linux GOARCH="$DESKTOP_ARCH" bash scripts/build-go.sh desktop/resources/pi-switch
