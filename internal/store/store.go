@@ -3,8 +3,10 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -36,14 +38,60 @@ func DBPath() string {
 	return filepath.Join(home, ".pi-switch", "requests.db")
 }
 
+func databaseFilename(path string) (string, bool, error) {
+	if path == ":memory:" {
+		return "", false, nil
+	}
+	if !strings.HasPrefix(path, "file:") {
+		return path, true, nil
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		return "", false, err
+	}
+	if u.Host != "" && u.Host != "localhost" {
+		return "", false, fmt.Errorf("unsupported SQLite file URI host %q", u.Host)
+	}
+	if strings.EqualFold(u.Query().Get("mode"), "memory") {
+		return "", false, nil
+	}
+	filename := u.Path
+	if filename == "" {
+		filename, err = url.PathUnescape(u.Opaque)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if filename == "" || filename == ":memory:" {
+		return "", false, nil
+	}
+	return filename, true, nil
+}
+
 // Open opens or creates the SQLite DB, ensures table exists and migrates columns.
 func Open(path string) (*sql.DB, error) {
 	if path == "" {
 		path = DBPath()
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	filename, fileBacked, err := databaseFilename(path)
+	if err != nil {
 		return nil, err
+	}
+	if fileBacked {
+		if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
+			return nil, err
+		}
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Chmod(0600); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
