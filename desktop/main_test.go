@@ -1,18 +1,15 @@
 package main
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/egoist/mygo"
 )
 
-func TestDefaultStartupUsesNativeWithoutRegisteringLegacyUI(t *testing.T) {
-	calls := 0
-	register := func() (string, error) { calls++; return "", errors.New("legacy UI deliberately unavailable") }
-	app, err := prepareDesktopShell([]string{"--start-minimized"}, register)
-	if err != nil || calls != 0 || app == nil || !app.nativeOnly || !app.startMinimized || app.uiURL != "" {
-		t.Fatalf("Native required legacy initialization: app=%+v calls=%d err=%v", app, calls, err)
+func TestDefaultStartupUsesNativeUI(t *testing.T) {
+	app, err := prepareDesktopShell([]string{"--start-minimized"})
+	if err != nil || app == nil || !app.startMinimized {
+		t.Fatalf("Native startup failed: app=%+v err=%v", app, err)
 	}
 	if app.complexPreview == nil || app.complexPreview.refreshGateway == nil || app.complexPreview.refreshStats == nil {
 		t.Fatal("Native feature pages were not attached to the main shell")
@@ -27,25 +24,14 @@ func TestDefaultStartupUsesNativeWithoutRegisteringLegacyUI(t *testing.T) {
 	}
 }
 
-func TestLegacyWebViewRequiresExplicitRollbackFlag(t *testing.T) {
-	calls := 0
-	register := func() (string, error) { calls++; return "pi-switch-ui://fixture/", nil }
-	app, err := prepareDesktopShell([]string{"--web"}, register)
-	if err != nil || calls != 1 || app.nativeOnly {
-		t.Fatal("explicit WebView fallback did not register the legacy UI")
-	}
-	opts := app.primaryWindowOptions()
-	if opts.Content != nil || opts.URL != "pi-switch-ui://fixture/" {
-		t.Fatal("WebView fallback lost its management URL")
-	}
-	expected := errors.New("registration failed")
-	if app, err := prepareDesktopShell([]string{"--web"}, func() (string, error) { return "", expected }); app != nil || !errors.Is(err, expected) {
-		t.Fatal("WebView fallback registration failure was hidden")
+func TestWebFlagIsRejected(t *testing.T) {
+	if app, err := prepareDesktopShell([]string{"--web"}); app != nil || err == nil {
+		t.Fatal("retired WebView flag did not fail clearly")
 	}
 }
 
 func TestNativePrimaryCloseUsesMainWindowPolicy(t *testing.T) {
-	app := &desktopShell{nativeOnly: true}
+	app := &desktopShell{}
 	event := &mygo.CloseEvent{}
 	if !app.onWindowClose(event) || event.DefaultPrevented() {
 		t.Fatal("Native primary window hid without a tray recovery path")

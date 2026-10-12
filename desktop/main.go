@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 
@@ -12,7 +13,7 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
-	shell, err := prepareDesktopShell(os.Args[1:], registerManagementUI)
+	shell, err := prepareDesktopShell(os.Args[1:])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,23 +42,20 @@ func main() {
 	}
 }
 
-func prepareDesktopShell(args []string, registerUI func() (string, error)) (*desktopShell, error) {
-	shell := &desktopShell{nativeOnly: startsNative(args), startMinimized: startsMinimized(args), proxyMessage: "Checking proxy status…"}
-	if !shell.nativeOnly {
-		url, err := registerUI()
-		if err != nil {
-			return nil, err
+func prepareDesktopShell(args []string) (*desktopShell, error) {
+	for _, arg := range args {
+		if arg == "--web" {
+			return nil, errors.New("--web is no longer supported; Desktop always uses the Native GUI")
 		}
-		shell.uiURL = url
-	} else {
-		shell.complexPreview = newNativeComplexPreview()
-		shell.complexPreview.refreshGateway = shell.refreshNativeGatewayPreview
-		shell.complexPreview.publishGateway = shell.publishNativeGatewaySelection
-		shell.complexPreview.publishGatewayDraft = shell.publishNativeGatewayDraft
-		shell.complexPreview.runPackageTask = shell.runNativePackageTask
-		shell.complexPreview.refreshStats = shell.refreshNativeStats
-		shell.complexPreview.exportStats = shell.exportNativeStats
-		shell.complexPreview.refreshConversationRequests = shell.refreshNativeConversationRequests
 	}
+	shell := &desktopShell{startMinimized: startsMinimized(args), proxyMessage: "Checking proxy status…"}
+	shell.complexPreview = newNativeComplexPreview()
+	shell.complexPreview.refreshGateway = shell.refreshNativeGatewayPreview
+	shell.complexPreview.publishGateway = shell.publishNativeGatewaySelection
+	shell.complexPreview.publishGatewayDraft = shell.publishNativeGatewayDraft
+	shell.complexPreview.runPackageTask = shell.runNativePackageTask
+	shell.complexPreview.refreshStats = shell.refreshNativeStats
+	shell.complexPreview.exportStats = shell.exportNativeStats
+	shell.complexPreview.refreshConversationRequests = shell.refreshNativeConversationRequests
 	return shell, nil
 }

@@ -1,6 +1,6 @@
 # MyGo desktop shell — test distribution only
 
-This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Current CI build targets are Linux amd64 and arm64; Windows and macOS desktop builds are not supported. This target list is not a Linux-distribution support promise. The MyGo Native window is now the default and combines the standard management pages with Gateway, JSON Editor, Stats/Sessions, and Packages. `--web` explicitly selects the legacy React WebView rollback; `--native` remains accepted. The T02 and Task 1/2 functional and real-GUI gates are not all complete, so this entry switch is not release acceptance. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
+This is still the isolated app `com.heihei0299.piswitch.mygo-spike`, not a public desktop release. Current CI build targets are Linux amd64 and arm64; Windows and macOS desktop builds are not supported. This target list is not a Linux-distribution support promise. The MyGo Native window is the only Desktop UI and combines the standard management pages with Gateway, JSON Editor, Stats/Sessions, and Packages. The old Desktop WebView and its protocol have been removed; `--web` now fails with a migration message. Functional and real-GUI acceptance gates remain separate from this code change. CI artifacts are uploaded only as short-lived GitHub Actions artifacts and are never published to npm or a GitHub Release.
 
 The desktop package embeds a platform-matched `pi-switch` CLI resource. The app reuses the existing daemon service; closing its windows does not stop Proxy. Linux GTK 3 and WebKitGTK are required. AppIndicator is optional because the File menu is the fallback. New CLI/npm versions support Linux amd64 and arm64 only; macOS and Windows are retired for new versions.
 
@@ -10,15 +10,13 @@ No automatic-update channel is configured. Linux tarball install/reinstall/unins
 
 The [Desktop CI workflow](../.github/workflows/desktop.yml) builds Linux amd64 and arm64 test targets from a clean checkout. It bundles the matching CLI and retains outputs as Actions artifacts for seven days; it does not publish them.
 
-Build the shared WebUI first, then run MyGo from `desktop`; the Go module pins the MyGo CLI version, so no desktop npm/Bun toolchain is needed:
+Run MyGo from `desktop`; the Go module pins the MyGo CLI version, so no desktop npm/Bun toolchain is needed:
 
 ```bash
-npm ci --prefix webui
-npm --prefix webui run build
 go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo build -skip-notarize
 ```
 
-The WebUI build remains necessary because the Go server package embeds it for the retained `--web` rollback. The Native window itself has no MyGo web frontend; MyGo writes only `desktop/build` (plus its normal temporary build files), not `desktop/dist`. Build in a disposable worktree if generated outputs must be isolated.
+The Desktop binary uses MyGo Native widgets and does not load the React WebUI. MyGo writes only `desktop/build` (plus its normal temporary build files), not `desktop/dist`. Build in a disposable worktree if generated outputs must be isolated.
 
 For development without touching real data, use a CLI from this checkout and fresh temporary paths. Keep the same isolated environment for both the desktop app and CLI invocation:
 
@@ -36,11 +34,11 @@ go -C desktop run -mod=readonly github.com/egoist/mygo/cmd/mygo dev
 
 Do not point test builds at real user paths. Desktop CI run `38151349388` passed on commit `79f994e`: linux-amd64 and linux-arm64 packages built, and the archive-level install/reinstall/uninstall smoke passed for both architectures in isolated homes. The smoke does not run either packaged binary. A separate Ubuntu 24.04 Xvfb/Openbox smoke confirmed window visibility and basic Tab input only; current CI also verifies both current and downgraded Native packages appear under Xvfb on native arm64 (run `38168886741`). Debian lifecycle and rollback to a dynamically selected, source-different executable pass on both architectures, with an isolated SQLite sentinel row integrity-checked throughout. Old GUI interaction parity and actual user-data migration remain unverified. Isolated runtime smoke covers legacy v1 config, old SQLite schema, and legacy request-log import; real-user migration remains unverified. Formal Arch+niri/Wayland, real IME/high-DPI, tray, and managed-Proxy GUI lifecycle remain unverified.
 
-## Native default and legacy rollback (T03)
+## Native-only Desktop
 
-The default launch creates a MyGo widget window without registering the legacy management router/protocol or creating a React WebView window. Start with `--web` only to use the old WebView rollback. Exit any previous desktop instance normally first: a second invocation is forwarded to the existing process. File/tray show, second-instance activation, and hide/quit operate on that one primary window. `--start-minimized` still requires a working tray; without one, the window stays visible.
+Desktop always creates a MyGo widget window; it does not register a management protocol or create a React WebView. The retired `--web` option exits with an error. Exit any previous desktop instance normally first: a second invocation is forwarded to the existing process. File/tray show, second-instance activation, and hide/quit operate on that one primary window. `--start-minimized` still requires a working tray; without one, the window stays visible.
 
-With the existing Go module/build caches and Linux runtime dependencies present, the Go entry below does not build a MyGo web frontend. The desktop Go module still links the transitional server package and its `webui/dist` embed for the explicit `--web` rollback, so build the shared WebUI before running it. It deliberately disables dependency downloads; if Go dependencies are missing, stop rather than install them without approval.
+With the existing Go module/build caches and Linux runtime dependencies present, this Go entry does not build a MyGo web frontend. It deliberately disables dependency downloads; if Go dependencies are missing, stop rather than install them without approval.
 
 Run from the repository root in a real Linux GUI session. Replace the CLI path with an existing, platform-matched CLI from this checkout, and leave the isolated directory intact for evidence/recovery:
 
@@ -57,7 +55,7 @@ Run from the repository root in a real Linux GUI session. Replace the CLI path w
   export PI_SWITCH_CONFIG_DIR="$data_dir/config" PI_SWITCH_CONFIG="$data_dir/config/config.json"
   export PI_SWITCH_DB="$data_dir/config/requests.db" PI_SWITCH_MODELS="$data_dir/models.json"
   export PI_SWITCH_CLI_PATH=/absolute/path/to/existing/pi-switch
-  go -C desktop run . --native
+  go -C desktop run .
 )
 ```
 

@@ -9,7 +9,7 @@
 
 **面向 pi agent、以 Native Desktop 为主，并提供 Linux CLI 与 TUI 的控制面板。**
 
-管理 provider 配置并发布本地模型名网关。Native Desktop 是主要 GUI；旧 WebView 暂通过 Desktop `--web` 回退入口保留。
+管理 provider 配置并发布本地模型名网关。Desktop 仅使用 MyGo Native GUI；CLI、TUI、管理 API 和无头 Proxy 可独立运行。
 
 [English](README.md) | [中文](#)
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 旧 WebView 截图（Desktop `--web` 回退）
+## 历史 WebUI 截图（非当前 Desktop 界面）
 
 <div align="center">
 
@@ -36,7 +36,7 @@
 - 管理 provider 配置、模型列表和各渠道暴露的模型。
 - 在 Gateway 页面预览并发布模型到 Pi。
 - 通过本地代理按模型名路由请求。
-- 在 Native Desktop 或旧 WebView 中查看请求与 token 用量，并管理 pi packages。
+- 在 Native Desktop 中查看请求与 token 用量，并管理 pi packages。
 - Native Desktop、CLI、TUI 与管理 API 共用同一套 Go 核心。
 
 架构与详细行为见 [WebUI 指南](./WEBUI_GUIDE.md)、[后端架构](./docs/architecture.md) 和[系统契约](./docs/system-contract.md)。
@@ -74,7 +74,7 @@ node bin/pi-switch.js webui start --daemon
 pi-switch webui start --daemon
 ~~~
 
-管理 API 仍位于 `/api/*`，根路径 `/` 会显示 WebUI 退役说明。正式 GUI 门禁与弃用步骤完成前，Desktop `--web` 回退仍保留。运行 <code>pi-switch doctor</code> 检查环境，用 <code>pi-switch webui stop</code> 停止 API；也可以使用终端界面 <code>pi-switch tui</code> 或其他 CLI 命令。
+管理 API 仍位于 `/api/*`，根路径 `/` 会显示 WebUI 退役说明。此命令不再打开浏览器界面，Desktop 始终使用 MyGo Native（`--web` 已不支持）。运行 <code>pi-switch doctor</code> 检查环境，用 <code>pi-switch webui stop</code> 停止 API；也可以使用终端界面 <code>pi-switch tui</code> 或其他 CLI 命令。
 
 ### 在 Pi 中使用模型
 

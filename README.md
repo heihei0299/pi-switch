@@ -9,7 +9,7 @@
 
 **A Native Desktop control plane for pi agent, with Linux CLI and TUI support.**
 
-Manage provider profiles and publish a local model-name gateway. The Native Desktop app is the primary GUI; the legacy WebView remains available through its `--web` rollback option.
+Manage provider profiles and publish a local model-name gateway. The MyGo Native Desktop app is the only Desktop GUI; the CLI, TUI, management API, and headless Proxy remain available independently.
 
 [English](#) | [中文](README_ZH.md)
 
@@ -19,7 +19,7 @@ Manage provider profiles and publish a local model-name gateway. The Native Desk
 
 ## Screenshots
 
-The screenshots show the legacy WebView retained for Desktop `--web` rollback.
+Historical WebUI screenshots; the Desktop app now uses only the MyGo Native interface.
 
 <div align="center">
 
@@ -38,7 +38,7 @@ The screenshots show the legacy WebView retained for Desktop `--web` rollback.
 - Manage provider profiles, model lists, and per-channel model exposure.
 - Preview and publish models to Pi through the Gateway page.
 - Route requests through a local proxy using the model name.
-- View request and token usage, and manage pi packages from Native Desktop or the legacy WebView.
+- View request and token usage, and manage pi packages from Native Desktop.
 - Use the same Go core through Native Desktop, CLI, TUI, and the management API.
 
 For architecture and detailed behavior, see [WEBUI_GUIDE.md](./WEBUI_GUIDE.md), [docs/architecture.md](./docs/architecture.md), and [docs/system-contract.md](./docs/system-contract.md).
@@ -76,7 +76,7 @@ Start the management API (the legacy `webui` command name remains; its browser U
 pi-switch webui start --daemon
 ~~~
 
-The management API remains available under `/api/*`; `/` displays the WebUI retirement notice. This command no longer opens a browser UI. The Desktop `--web` rollback path remains available while the formal GUI gate and deprecation steps are pending. Run environment checks with <code>pi-switch doctor</code> and stop the API with <code>pi-switch webui stop</code>. The terminal interfaces are also available: <code>pi-switch tui</code> or other <code>pi-switch</code> commands.
+The management API remains available under `/api/*`; `/` displays the WebUI retirement notice. This command does not open a browser UI, and Desktop always uses MyGo Native (`--web` is no longer supported). Run environment checks with <code>pi-switch doctor</code> and stop the API with <code>pi-switch webui stop</code>. The terminal interfaces are also available: <code>pi-switch tui</code> or other <code>pi-switch</code> commands.
 
 ### Use a model in Pi
 

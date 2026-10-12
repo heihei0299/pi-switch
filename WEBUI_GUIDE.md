@@ -1,16 +1,15 @@
 # pi-switch WebUI Guide — the thick reference
 
-> **Status:** Native Desktop is the primary GUI. The legacy React WebView is retained through Desktop's `--web` rollback option. `pi-switch webui start|stop|status` is API-only; `/api/*` remains available and `/` returns a WebUI retirement notice. This guide documents the retained UI implementation and management API, not a browser launch path.
-> See the [Desktop guide](./desktop/README.md) for the rollback entry and the [README](./README.md) for current CLI behavior.
+> **Status:** MyGo Native is the only Desktop GUI. `pi-switch webui start|stop|status` is API-only; `/api/*` remains available and `/` returns a WebUI retirement notice. React source remains temporarily pending C02 but is no longer launched by Desktop. This guide is a transitional reference for that source and the management API.
+> See the [Desktop guide](./desktop/README.md) and [README](./README.md) for current behavior.
 
-The supported Native/terminal entry points and the retained legacy rollback are:
+The supported Native/terminal entry points are:
 
 | Priority | Interface | Entry | Lives in |
 |----------|-----------|-------|----------|
 | **① Primary** | **Native Desktop** | packaged MyGo app | `desktop/` (Native UI) |
 | ② CLI / management API | `pi-switch <cmd>` / `pi-switch webui start` | `bin/pi-switch.js` → Go binary; `/api/*` | Go CLI and `internal/server` |
 | ③ TUI | `pi-switch tui` | `internal/tui/` (bubbletea) | |
-| Legacy rollback | Desktop WebView | Desktop `--web` → `pi-switch-ui://` | `internal/server` + `webui/` (React, `embed.FS`) |
 
 Native Desktop, CLI, TUI and HTTP are **adapters over the same Go core** (`internal/config` +
 `internal/gateway` + `internal/proxy` + `internal/server` + `internal/store`). No business logic lives in the UI
@@ -45,11 +44,11 @@ TUI screenshot remains at `assets/main.png` for terminal reference.
    React SPA            (Go binary)            (bubbletea)
 ```
 
-The retained legacy WebUI uses a **gin router** that serves the React SPA from
-`embed.FS` and exposes `REST /api/*`. The CLI's historical `webui` daemon now
-uses an API-only router; the Desktop `--web` rollback uses the legacy router.
-Both share management handlers and the existing bind/auth rules. The daemon
-service name, pid/log handling and port remain for CLI compatibility.
+The React WebUI source remains temporarily in the repository, but Desktop no
+longer launches it or registers its custom protocol. The CLI's historical
+`webui` daemon uses an API-only router: `/api/*` remains available and `/`
+returns the retirement notice. The daemon service name, pid/log handling and
+port remain for CLI compatibility.
 
 ---
 
@@ -80,11 +79,10 @@ pi-switch webui status
 pi-switch webui stop
 ```
 
-The command now starts the management API only. Its bind defaults still come from
+The command starts the management API only. Its bind defaults still come from
 `settings.web` in `~/.pi-switch/config.json` (host `127.0.0.1`, port `43110`);
 `/api/*` remains available and `/` returns the retirement notice rather than the
-React app. The retained WebView rollback is launched from the Desktop app with
-`--web`, not through this HTTP command.
+React app. The Desktop app uses MyGo Native and does not provide a WebView entry.
 
 ### Dev workflow (hot reload)
 

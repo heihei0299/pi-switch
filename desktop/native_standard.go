@@ -129,14 +129,14 @@ func (a *desktopShell) proxyControls(c *ui.Context) {
 
 // Each page owns its state. This only bridges workers to the window UI thread.
 func (a *desktopShell) runStandardTask(name string, run func() (interface{}, error), apply func(interface{}, error)) bool {
-	if a.exiting || a.nativeWindow == nil {
+	if a.exiting || a.window == nil {
 		return false
 	}
 	ctx, token, ok := a.tasks.begin(name)
 	if !ok {
 		return false
 	}
-	window := a.nativeWindow
+	window := a.window
 	window.Invalidate()
 	go func() {
 		result, err := run()

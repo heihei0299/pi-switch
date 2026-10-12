@@ -18,7 +18,7 @@ unset WAYLAND_DISPLAY
 xvfb-run -a -s '-screen 0 1600x1000x24' bash -euo pipefail -c '
   app=$1
   log=$2
-  "$app" --native >"$log" 2>&1 &
+  "$app" >"$log" 2>&1 &
   pid=$!
   cleanup() {
     kill -TERM "$pid" 2>/dev/null || true
