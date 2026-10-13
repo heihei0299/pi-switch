@@ -24,6 +24,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/translator"
 	"github.com/heihei0299/pi-switch/internal/usage"
+	"github.com/heihei0299/pi-switch/internal/usecase/inference"
 )
 
 func handleModels(c *gin.Context) {
@@ -51,37 +52,6 @@ func handleModels(c *gin.Context) {
 }
 
 // --- proxy helpers ---
-func resolveRoute(cfg config.PiSwitchConfig, requested string) ([]string, string, string) {
-	// Bare model ids are resolved across all exposed channels. The caller
-	// rejects slash-containing ids before this function is reached.
-	matches := []struct {
-		supplier string
-		channel  string
-	}{}
-	for name, prof := range cfg.Profiles {
-		for i := range prof.Upstreams {
-			channel := prof.Upstreams[i]
-			for _, eid := range channel.ExposedModels {
-				if eid == requested {
-					matches = append(matches, struct {
-						supplier string
-						channel  string
-					}{name, prof.ChannelName(i)})
-					break
-				}
-			}
-		}
-	}
-	if len(matches) == 0 {
-		return nil, requested, ""
-	}
-	if len(matches) == 1 {
-		return []string{matches[0].supplier}, requested, matches[0].channel
-	}
-	// 多处暴露 => ambiguous，需显式消解
-	return nil, requested, "ambiguous"
-}
-
 // pinChannelAttempts keeps only attempts hitting the pinned channel of its
 // supplier. Empty pin (legacy/bare ids) keeps everything: failover, weight
 // order and retry rounds are untouched.
@@ -354,11 +324,12 @@ func handleChatCompletions(c *gin.Context) {
 		c.JSON(400, inferenceError("model must not contain \"/\"", "invalid_request_error"))
 		return
 	}
-	candidates, realModel, pinnedChannel := resolveRoute(cfg, requestedModel)
-	if pinnedChannel == "ambiguous" {
+	route := inference.ResolveRoute(cfg, requestedModel)
+	if route.Ambiguous {
 		c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "ambiguous"))
 		return
 	}
+	candidates, realModel, pinnedChannel := route.Candidates, route.Model, route.Channel
 	if len(candidates) == 0 {
 		c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
 		return
