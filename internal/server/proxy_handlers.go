@@ -195,151 +195,69 @@ func handleChatCompletions(c *gin.Context) {
 		handleStream(c, cfg, prepared, convID, convName, start)
 		return
 	}
-	// Transitional passthrough: single candidate, no retry, no cooling.
-	// retained for per-conversation breaker, not used in transitional passthrough
 	name, realModel := prepared.Supplier, prepared.Model
 	prof, upstream := prepared.Profile, prepared.Upstream
-	plan, needRespConvert := prepared.ProtocolPlan, prepared.ProtocolPlan.NeedsConvert()
-	bbytes, _ := json.Marshal(prepared.Body)
+	plan := prepared.ProtocolPlan
 	outboundPlan := OutboundRequestPlan{
 		Context:          c.Request.Context(),
 		Upstream:         upstream,
 		Path:             plan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
 		IncomingHeaders:  c.Request.Header,
-		Body:             bbytes,
 		ContentType:      "application/json",
 		ProfileUserAgent: prof.UserAgent,
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          30 * time.Second,
 	}
-	outbound, err := BuildOutboundRequest(outboundPlan)
-	if err != nil {
-		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
-		return
-	}
-	resp, err := outbound.Client.Do(outbound.Request)
-	if err != nil {
-		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
-		if status != 499 {
-			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
+	buildOutbound := func(body []byte) (inference.OutboundRequest, error) {
+		requestPlan := outboundPlan
+		requestPlan.Body = body
+		request, err := BuildOutboundRequest(requestPlan)
+		if err != nil {
+			return inference.OutboundRequest{}, err
 		}
-		return
+		return inference.OutboundRequest{Request: request.Request, Client: request.Client, URL: request.Metadata.URL}, nil
 	}
-	respBody, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if ctxErr := c.Request.Context().Err(); ctxErr != nil {
-		readErr = ctxErr
-	}
-	if readErr != nil {
-		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr.Error(), outbound.Metadata.URL)
-		if status != 499 {
-			c.JSON(status, inferenceError(readErr.Error(), "upstream_error"))
+	outcome := inference.ExecuteNonStream(c.Request.Context(), prepared, buildOutbound)
+	logOutcome := func() {
+		if outcome.ShouldLog {
+			logRequest(name, realModel, outcome.Kind == inference.NonStreamOutcomeSuccess, outcome.Usage, outcome.Cost, convID, convName,
+				time.Since(start).Milliseconds(), outcome.Status, outcome.Error, outcome.URL)
 		}
-		return
 	}
-	if resp.StatusCode >= 400 {
-		bodyStr := string(respBody)
-		shouldRetry := resp.StatusCode == 400 && strings.Contains(bodyStr, "invalid_request_error")
-		if shouldRetry {
-			// Retry once with max_output_tokens=16 (and other max keys) to recover from context overflow.
-			retryBody, retryErr := prepared.MinTokenRetryBody()
-			if retryErr == nil {
-				bbytes2, _ := json.Marshal(retryBody)
-				retryPlan := outboundPlan
-				retryPlan.Body = bbytes2
-				outbound2, err2 := BuildOutboundRequest(retryPlan)
-				if err2 == nil {
-					resp2, err2 := outbound2.Client.Do(outbound2.Request)
-					if err2 == nil {
-						respBody2, readErr2 := io.ReadAll(resp2.Body)
-						resp2.Body.Close()
-						if ctxErr := c.Request.Context().Err(); ctxErr != nil {
-							readErr2 = ctxErr
-						}
-						if readErr2 != nil {
-							status := upstreamErrorStatus(c.Request.Context())
-							logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, readErr2.Error(), outbound2.Metadata.URL)
-							if status != 499 {
-								c.JSON(status, inferenceError(readErr2.Error(), "upstream_error"))
-							}
-							return
-						}
-						if resp2.StatusCode < 400 {
-							// Success on retry: handle as normal success
-							result, resultErr := inference.ProcessNonStreamResponse(prepared, respBody2)
-							if resultErr != nil {
-								logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, resultErr.Error(), outbound2.Metadata.URL)
-								c.JSON(502, inferenceError(resultErr.Error(), "conversion_error"))
-								return
-							}
-							finalBody2 := result.Body
-							finalHeaders2 := resp2.Header
-							if needRespConvert {
-								finalHeaders2 = http.Header{}
-								finalHeaders2.Set("Content-Type", "application/json")
-							}
-							usageSum, cost := result.Usage, result.Cost
-							latMs := time.Since(start).Milliseconds()
-							logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
-							for k, vv := range finalHeaders2 {
-								for _, v := range vv {
-									if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
-										continue
-									}
-									c.Header(k, v)
-								}
-							}
-							ct := finalHeaders2.Get("Content-Type")
-							if ct == "" {
-								ct = "application/json"
-							}
-							c.Data(resp2.StatusCode, ct, finalBody2)
-							return
-						}
-						// Retry also failed: fall through to original 400 handling but log retry body
-						_ = respBody2
-					} else if c.Request.Context().Err() != nil {
-						logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), 499, err2.Error(), outbound2.Metadata.URL)
-						return
-					}
-				}
-			}
-		}
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), outbound.Metadata.URL)
+	switch outcome.Kind {
+	case inference.NonStreamOutcomeCanceled:
+		logOutcome()
 		return
-	}
-	result, resultErr := inference.ProcessNonStreamResponse(prepared, respBody)
-	if resultErr != nil {
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, resultErr.Error(), outbound.Metadata.URL)
-		c.JSON(502, inferenceError(resultErr.Error(), "conversion_error"))
+	case inference.NonStreamOutcomeError:
+		logOutcome()
+		c.JSON(outcome.Status, inferenceError(outcome.Error, outcome.ErrorType))
 		return
+	case inference.NonStreamOutcomeUpstreamResponse:
+		c.Data(outcome.Status, outcome.Headers.Get("Content-Type"), outcome.Body)
+		logOutcome()
+		return
+	case inference.NonStreamOutcomeSuccess:
+		logOutcome()
 	}
-	finalBody := result.Body
-	finalHeaders := resp.Header
-	if needRespConvert {
+	finalHeaders := outcome.Headers
+	if prepared.ProtocolPlan.NeedsConvert() {
 		finalHeaders = http.Header{}
 		finalHeaders.Set("Content-Type", "application/json")
 	}
-	usageSum, cost := result.Usage, result.Cost
-	latMs := time.Since(start).Milliseconds()
-	logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
-	for k, vv := range finalHeaders {
-		for _, v := range vv {
-			if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+	for key, values := range finalHeaders {
+		for _, value := range values {
+			if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Connection") {
 				continue
 			}
-			c.Header(k, v)
+			c.Header(key, value)
 		}
 	}
-	ct := finalHeaders.Get("Content-Type")
-	if ct == "" {
-		ct = "application/json"
+	contentType := finalHeaders.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
 	}
-	c.Data(resp.StatusCode, ct, finalBody)
+	c.Data(outcome.Status, contentType, outcome.Body)
 }
 
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.PreparedRequest, convID, convName string, start time.Time) {

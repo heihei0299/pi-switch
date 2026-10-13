@@ -24,7 +24,7 @@ func TestProcessNonStreamResponseConvertsAndCalculatesUsage(t *testing.T) {
 	}
 	raw := []byte(`{"id":"resp_a","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":10,"output_tokens":2,"input_tokens_details":{"cached_tokens":0}}}`)
 
-	result, err := ProcessNonStreamResponse(prepared, raw)
+	result, err := processNonStreamResponse(prepared, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestProcessNonStreamResponsePassesThroughBytesAndUnknownUsage(t *testing.T)
 		t.Fatal(err)
 	}
 	raw := []byte("not JSON")
-	result, err := ProcessNonStreamResponse(PreparedRequest{ProtocolPlan: plan}, raw)
+	result, err := processNonStreamResponse(PreparedRequest{ProtocolPlan: plan}, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestProcessNonStreamResponseReportsConversionDecodeErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ProcessNonStreamResponse(PreparedRequest{Model: "m", ProtocolPlan: plan}, []byte("not JSON"))
+	_, err = processNonStreamResponse(PreparedRequest{Model: "m", ProtocolPlan: plan}, []byte("not JSON"))
 	if err == nil || !strings.HasPrefix(err.Error(), "upstream response is not valid JSON:") {
 		t.Fatalf("conversion error = %v", err)
 	}
