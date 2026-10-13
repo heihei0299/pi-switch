@@ -188,6 +188,40 @@ func (p Profile) PrimaryHeaders() map[string]string {
 	return MergeHeaders(p.Headers, nil)
 }
 
+func (p Profile) PrimaryUpstream() Upstream {
+	upstreams := p.ResolvedUpstreams()
+	if len(upstreams) == 0 {
+		return Upstream{}
+	}
+	u := upstreams[0]
+	if u.BaseURL == "" {
+		u.BaseURL = p.BaseURL
+	}
+	if u.APIKey == "" {
+		u.APIKey = p.APIKey
+	}
+	if u.Headers == nil {
+		u.Headers = p.Headers
+	}
+	return u
+}
+
+func (p Profile) NarrowToChannel(upsIdx int) Profile {
+	upstreams := p.ResolvedUpstreams()
+	if upsIdx < 0 || upsIdx >= len(upstreams) {
+		return p
+	}
+	upstream := upstreams[upsIdx]
+	if upstream.API != "" {
+		p.API = upstream.API
+	}
+	if upstream.ResponsesMode != "" {
+		p.ResponsesMode = upstream.ResponsesMode
+	}
+	p.Upstreams = []Upstream{upstream}
+	return p
+}
+
 // ResolvedUpstreams preserves legacy flat profiles as one runtime upstream.
 func (p Profile) ResolvedUpstreams() []Upstream {
 	if len(p.Upstreams) > 0 {

@@ -82,24 +82,6 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 	}, nil
 }
 
-func selectedOutboundUpstream(prof config.ProviderProfile) config.Upstream {
-	upstreams := prof.ResolvedUpstreams()
-	if len(upstreams) == 0 {
-		return config.Upstream{}
-	}
-	u := upstreams[0]
-	if u.BaseURL == "" {
-		u.BaseURL = prof.BaseURL
-	}
-	if u.APIKey == "" {
-		u.APIKey = prof.APIKey
-	}
-	if u.Headers == nil {
-		u.Headers = prof.Headers
-	}
-	return u
-}
-
 func resolveUserAgentValues(profile, global *string) string {
 	return config.ResolveUserAgentValues(profile, global)
 }

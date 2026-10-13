@@ -139,19 +139,7 @@ func primaryChannel(prof *config.ProviderProfile) *config.Upstream {
 // Out-of-range idx returns prof unchanged; base resolution below then
 // reports missing baseUrl as before.
 func narrowToChannel(prof config.ProviderProfile, upsIdx int) config.ProviderProfile {
-	ups := prof.ResolvedUpstreams()
-	if upsIdx < 0 || upsIdx >= len(ups) {
-		return prof
-	}
-	ch := ups[upsIdx]
-	if ch.API != "" {
-		prof.API = ch.API
-	}
-	if ch.ResponsesMode != "" {
-		prof.ResponsesMode = ch.ResponsesMode
-	}
-	prof.Upstreams = []config.Upstream{ch}
-	return prof
+	return prof.NarrowToChannel(upsIdx)
 }
 
 func channelWeight(u config.Upstream) uint32 {

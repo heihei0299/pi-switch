@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +18,6 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/domain/protocol"
-	"github.com/heihei0299/pi-switch/internal/limit"
 	"github.com/heihei0299/pi-switch/internal/proxy"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/usage"
@@ -114,17 +112,6 @@ func conversationIDFrom(headers http.Header, body map[string]interface{}, source
 	return result.ID, result.Name
 }
 
-func findModelEntry(prof config.ProviderProfile, realModel string) *config.ModelEntry {
-	for i := range prof.Upstreams {
-		for j := range prof.Upstreams[i].Models {
-			if prof.Upstreams[i].Models[j].ID == realModel {
-				return &prof.Upstreams[i].Models[j]
-			}
-		}
-	}
-	return nil
-}
-
 func incomingProtocol(path string) string {
 	switch path {
 	case "/v1/responses":
@@ -133,61 +120,6 @@ func incomingProtocol(path string) string {
 		return "messages"
 	default:
 		return "chat"
-	}
-}
-
-func estimateEffectiveLen(body map[string]interface{}, rawLen int) int {
-	// For reasoning.encrypted_content base64 dense (≈2.5 chars/token vs 3 for normal text),
-	// effectiveLen = rawLen + 0.2*encryptedLen so that est = effectiveLen/3 = (raw-encrypted)/3 + encrypted/2.5
-	var encryptedLen int
-	var walk func(v interface{})
-	walk = func(v interface{}) {
-		switch vv := v.(type) {
-		case map[string]interface{}:
-			for k, val := range vv {
-				if k == "encrypted_content" {
-					if s, ok := val.(string); ok {
-						encryptedLen += len(s)
-					}
-				}
-				walk(val)
-			}
-		case []interface{}:
-			for _, e := range vv {
-				walk(e)
-			}
-		}
-	}
-	walk(body)
-	if encryptedLen > 0 {
-		extra := int(math.Ceil(float64(encryptedLen) * 0.2))
-		return rawLen + extra
-	}
-	return rawLen
-}
-
-func clampBody(body map[string]interface{}, modelEntry *config.ModelEntry, rawLen int) {
-	if modelEntry == nil || modelEntry.ContextWindow == 0 || modelEntry.MaxTokens == 0 {
-		return
-	}
-	effectiveLen := estimateEffectiveLen(body, rawLen)
-	for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
-		if v, ok := body[key]; ok {
-			var req int
-			switch vv := v.(type) {
-			case float64:
-				req = int(vv)
-			case int:
-				req = vv
-			default:
-				continue
-			}
-			reqCopy := req
-			clamped := limit.ClampMaxTokens(modelEntry.ContextWindow, modelEntry.MaxTokens, effectiveLen, &reqCopy)
-			if clamped != req {
-				body[key] = float64(clamped)
-			}
-		}
 	}
 }
 
@@ -245,103 +177,36 @@ func handleChatCompletions(c *gin.Context) {
 		c.JSON(400, inferenceError("model must not contain \"/\"", "invalid_request_error"))
 		return
 	}
-	route := inference.ResolveRoute(cfg, requestedModel)
-	if route.Ambiguous {
-		c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s': exposed in multiple channels", requestedModel), "ambiguous"))
-		return
-	}
-	candidates, realModel, pinnedChannel := route.Candidates, route.Model, route.Channel
-	if len(candidates) == 0 {
-		c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
-		return
-	}
-	convID, convName := conversationIDFrom(c.Request.Header, body, cfg.Settings.ConversationSource)
 	proto := incomingProtocol(c.Request.URL.Path)
 	isStream := false
 	if v, ok := body["stream"].(bool); ok && v {
 		isStream = true
 	}
+	prepared, err := inference.PrepareRequest(cfg, requestedModel, proto, body, rawLen, isStream)
+	if err != nil {
+		var preparationError *inference.PreparationError
+		if errors.As(err, &preparationError) {
+			c.JSON(http.StatusBadGateway, inferenceError(preparationError.Message, preparationError.Type))
+		} else {
+			c.JSON(http.StatusBadGateway, inferenceError("request preparation failed", "no_route"))
+		}
+		return
+	}
+	convID, convName := conversationIDFrom(c.Request.Header, body, cfg.Settings.ConversationSource)
 	if isStream {
-		handleStream(c, cfg, candidates, body, realModel, pinnedChannel, convID, convName, proto, rawLen, start)
+		handleStream(c, cfg, prepared, convID, convName, start)
 		return
 	}
 	// Transitional passthrough: single candidate, no retry, no cooling.
 	// retained for per-conversation breaker, not used in transitional passthrough
-	name := candidates[0]
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
-		return
-	}
-	if pinnedChannel != "" {
-		found := false
-		for i, ups := range prof.ResolvedUpstreams() {
-			chName := ""
-			if ups.Name != nil {
-				chName = *ups.Name
-			}
-			if chName == pinnedChannel {
-				prof = narrowToChannel(prof, i)
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.JSON(502, inferenceError(fmt.Sprintf("No upstream exposes model '%s'", requestedModel), "no_route"))
-			return
-		}
-	}
-	if pinnedChannel == "" {
-		matched := -1
-		matchCount := 0
-		for i, ups := range prof.ResolvedUpstreams() {
-			for _, eid := range ups.ExposedModels {
-				if eid == realModel {
-					if matched == -1 {
-						matched = i
-					}
-					matchCount++
-					break
-				}
-			}
-		}
-		if matchCount > 1 {
-			c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", requestedModel, name, matchCount, name, realModel), "ambiguous"))
-			return
-		}
-		if matched != -1 {
-			prof = narrowToChannel(prof, matched)
-		}
-	}
-	upstream := selectedOutboundUpstream(prof)
-	base := upstream.BaseURL
-	if base == "" {
-		c.JSON(502, inferenceError("missing baseUrl", "no_route"))
-		return
-	}
-	modelEntry := findModelEntry(prof, realModel)
-	bcopy := cloneMap(body)
-	bcopy["model"] = realModel
-	clampBody(bcopy, modelEntry, rawLen)
-	plan, planErr := protocol.PlanRequest(proto, prof.API, prof.ResponsesMode)
-	if planErr != nil {
-		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
-		return
-	}
-	convBody, convErr := plan.TransformRequest(realModel, bcopy)
-	if convErr != nil {
-		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
-		return
-	}
-	clampBody(convBody, modelEntry, rawLen)
-	upstreamBody := convBody
-	upstreamPath := plan.UpstreamPath
-	needRespConvert := plan.NeedsConvert()
-	bbytes, _ := json.Marshal(upstreamBody)
+	name, realModel := prepared.Supplier, prepared.Model
+	prof, upstream, modelEntry := prepared.Profile, prepared.Upstream, prepared.ModelEntry
+	plan, needRespConvert := prepared.ProtocolPlan, prepared.ProtocolPlan.NeedsConvert()
+	bbytes, _ := json.Marshal(prepared.Body)
 	outboundPlan := OutboundRequestPlan{
 		Context:          c.Request.Context(),
 		Upstream:         upstream,
-		Path:             upstreamPath,
+		Path:             plan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
 		IncomingHeaders:  c.Request.Header,
 		Body:             bbytes,
@@ -382,23 +247,9 @@ func handleChatCompletions(c *gin.Context) {
 		shouldRetry := resp.StatusCode == 400 && strings.Contains(bodyStr, "invalid_request_error")
 		if shouldRetry {
 			// Retry once with max_output_tokens=16 (and other max keys) to recover from context overflow.
-			bcopy2 := cloneMap(bcopy)
-			for _, k := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
-				bcopy2[k] = float64(16)
-			}
-			convBody2, convErr2 := plan.TransformRequest(realModel, bcopy2)
-			if convErr2 == nil {
-				for _, k := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
-					if _, ok := convBody2[k]; ok {
-						convBody2[k] = float64(16)
-					}
-				}
-				// Also ensure max_output_tokens is present for Responses
-				if _, ok := convBody2["max_output_tokens"]; !ok {
-					convBody2["max_output_tokens"] = float64(16)
-				}
-				clampBody(convBody2, modelEntry, rawLen)
-				bbytes2, _ := json.Marshal(convBody2)
+			retryBody, retryErr := prepared.MinTokenRetryBody()
+			if retryErr == nil {
+				bbytes2, _ := json.Marshal(retryBody)
 				retryPlan := outboundPlan
 				retryPlan.Body = bbytes2
 				outbound2, err2 := BuildOutboundRequest(retryPlan)
@@ -501,92 +352,16 @@ func handleChatCompletions(c *gin.Context) {
 	c.Data(resp.StatusCode, ct, finalBody)
 }
 
-func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string, body map[string]interface{}, realModel, pinnedChannel, convID, convName, proto string, rawLen int, start time.Time) {
+func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.PreparedRequest, convID, convName string, start time.Time) {
 	// Transitional passthrough: single candidate, no retry, no cooling.
-	if len(candidates) == 0 {
-		c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
-		return
-	}
-	name := candidates[0]
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
-		return
-	}
-	if pinnedChannel != "" {
-		found := false
-		for i, ups := range prof.ResolvedUpstreams() {
-			chName := ""
-			if ups.Name != nil {
-				chName = *ups.Name
-			}
-			if chName == pinnedChannel {
-				prof = narrowToChannel(prof, i)
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.JSON(502, inferenceError("No upstream exposes model", "no_route"))
-			return
-		}
-	}
-	if pinnedChannel == "" {
-		matched := -1
-		matchCount := 0
-		for i, ups := range prof.ResolvedUpstreams() {
-			for _, eid := range ups.ExposedModels {
-				if eid == realModel {
-					if matched == -1 {
-						matched = i
-					}
-					matchCount++
-					break
-				}
-			}
-		}
-		if matchCount > 1 {
-			c.JSON(502, inferenceError(fmt.Sprintf("Ambiguous model '%s/%s' in supplier '%s': exposed in %d channels, use '%s/<channel>/%s'", name, realModel, name, matchCount, name, realModel), "ambiguous"))
-			return
-		}
-		if matched != -1 {
-			prof = narrowToChannel(prof, matched)
-		}
-	}
-	upstream := selectedOutboundUpstream(prof)
-	base := upstream.BaseURL
-	if base == "" {
-		c.JSON(502, inferenceError("missing baseUrl", "no_route"))
-		return
-	}
-	modelEntry := findModelEntry(prof, realModel)
-	bcopy := cloneMap(body)
-	bcopy["model"] = realModel
-	bcopy["stream"] = true
-	clampBody(bcopy, modelEntry, rawLen)
-	plan, planErr := protocol.PlanRequest(proto, prof.API, prof.ResponsesMode)
-	if planErr != nil {
-		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
-		return
-	}
-	if !plan.Passthrough && plan.StreamConverter(realModel) == nil {
-		c.JSON(502, inferenceError(fmt.Sprintf("streaming conversion from %s to %s is not supported", plan.To, plan.From), "not_supported"))
-		return
-	}
-	convBody, convErr := plan.TransformRequest(realModel, bcopy)
-	if convErr != nil {
-		c.JSON(502, inferenceError(convErr.Error(), "no_route"))
-		return
-	}
-	convBody["stream"] = true
-	clampBody(convBody, modelEntry, rawLen)
-	upstreamBody := convBody
-	upstreamPath := plan.UpstreamPath
-	bbytes, _ := json.Marshal(upstreamBody)
+	name, realModel := prepared.Supplier, prepared.Model
+	prof, upstream, modelEntry := prepared.Profile, prepared.Upstream, prepared.ModelEntry
+	plan := prepared.ProtocolPlan
+	bbytes, _ := json.Marshal(prepared.Body)
 	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
 		Context:          c.Request.Context(),
 		Upstream:         upstream,
-		Path:             upstreamPath,
+		Path:             plan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
 		IncomingHeaders:  c.Request.Header,
 		Body:             bbytes,
@@ -633,13 +408,6 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	}, c.Writer)
 	logRequest(name, realModel, facts.Success, facts.Usage, facts.Cost, convID, convName,
 		time.Since(start).Milliseconds(), facts.Status, facts.Error, requestURLOf(resp))
-}
-
-func cloneMap(m map[string]interface{}) map[string]interface{} {
-	b, _ := json.Marshal(m)
-	var out map[string]interface{}
-	_ = json.Unmarshal(b, &out)
-	return out
 }
 
 // An aborted downstream request has no upstream HTTP status to return.
