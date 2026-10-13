@@ -1,6 +1,5 @@
-// Package protocol owns the channel API identifiers and which surfaces support
-// each one. It is a leaf package (no internal imports) so config, gateway and
-// translator can all agree on one list instead of keeping a copy each.
+// Package protocol owns channel API identifiers, capabilities, and wire-format
+// conversion rules shared by inference and configuration workflows.
 package protocol
 
 import "fmt"
@@ -25,7 +24,7 @@ func IsKnown(api string) bool {
 	}
 }
 
-// CanProxy reports whether the translator can route an upstream with this api.
+// CanProxy reports whether a protocol plan can route an upstream with this api.
 func CanProxy(api string) bool {
 	switch api {
 	case OpenAIChat, OpenAIResponses, AnthropicMessages:
@@ -80,7 +79,7 @@ func DefaultResponsesMode(api string) string {
 }
 
 // ValidateResponsesMode is the single responsesMode compatibility rule shared by
-// config, profile and translator. An empty mode is the "auto" default.
+// config, profile, and inference planning. An empty mode is the "auto" default.
 func ValidateResponsesMode(api, mode string) error {
 	if mode == "" {
 		mode = ResponsesAuto

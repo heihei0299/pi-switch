@@ -1,7 +1,7 @@
-package translator_test
+package protocol_test
 
 import (
-	"github.com/heihei0299/pi-switch/internal/translator"
+	"github.com/heihei0299/pi-switch/internal/domain/protocol"
 	"testing"
 )
 
@@ -10,7 +10,7 @@ func TestResponsesIncompleteReasonReachesChat(t *testing.T) {
 		{"max_output_tokens", "length"}, {"content_filter", "content_filter"}, {"", "length"},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
-			plan, err := translator.PlanRequest("chat", "openai-responses", "auto")
+			plan, err := protocol.PlanRequest("chat", "openai-responses", "auto")
 			if err != nil {
 				t.Fatal(err)
 			}

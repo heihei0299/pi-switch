@@ -1,4 +1,4 @@
-package translator
+package protocol
 
 import "testing"
 
@@ -89,7 +89,7 @@ func TestAnthropicChatPreservesToolExchange(t *testing.T) {
 				"type": "tool_result", "tool_use_id": "call-1", "content": "done",
 			}}},
 		},
-		"tools": []interface{}{map[string]interface{}{"name": "lookup", "input_schema": map[string]interface{}{"type": "object"}}},
+		"tools":       []interface{}{map[string]interface{}{"name": "lookup", "input_schema": map[string]interface{}{"type": "object"}}},
 		"tool_choice": map[string]interface{}{"type": "tool", "name": "lookup"},
 	})
 	if err != nil {

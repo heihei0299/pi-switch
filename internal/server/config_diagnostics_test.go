@@ -12,7 +12,7 @@ import (
 )
 
 // 后续审查 P2（a）：整文件门必须按每个 channel 的 effective api/mode 判定，否则能存下
-// 一个运行期必然被 translator.PlanRequest 拒绝的配置（channel 显式 api + 不兼容 mode）。
+// 一个运行期必然被 protocol.PlanRequest 拒绝的配置（channel 显式 api + 不兼容 mode）。
 func TestPutConfig_ChecksChannelEffectiveResponsesMode(t *testing.T) {
 	isolateConfig(t)
 	r := NewMgmtRouter()

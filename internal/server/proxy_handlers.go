@@ -19,10 +19,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
+	"github.com/heihei0299/pi-switch/internal/domain/protocol"
 	"github.com/heihei0299/pi-switch/internal/limit"
 	"github.com/heihei0299/pi-switch/internal/proxy"
 	"github.com/heihei0299/pi-switch/internal/store"
-	"github.com/heihei0299/pi-switch/internal/translator"
 	"github.com/heihei0299/pi-switch/internal/usage"
 	"github.com/heihei0299/pi-switch/internal/usecase/inference"
 )
@@ -234,16 +234,16 @@ func consumeSSEFrames(buf *bytes.Buffer, chunk []byte, onData func(string)) {
 	}
 }
 
-func isSSEFailure(data string, format translator.Format) bool {
+func isSSEFailure(data string, format protocol.Format) bool {
 	var event map[string]interface{}
 	if json.Unmarshal([]byte(data), &event) != nil {
 		return false
 	}
 	typ, _ := event["type"].(string)
 	switch format {
-	case translator.FormatOpenAIResponses:
+	case protocol.FormatOpenAIResponses:
 		return typ == "response.failed"
-	case translator.FormatAnthropic:
+	case protocol.FormatAnthropic:
 		return typ == "error"
 	default:
 		_, ok := event["error"]
@@ -251,8 +251,8 @@ func isSSEFailure(data string, format translator.Format) bool {
 	}
 }
 
-func isSSETerminal(data string, format translator.Format) bool {
-	if format == translator.FormatOpenAIChat {
+func isSSETerminal(data string, format protocol.Format) bool {
+	if format == protocol.FormatOpenAIChat {
 		return data == "[DONE]"
 	}
 	var event map[string]interface{}
@@ -261,9 +261,9 @@ func isSSETerminal(data string, format translator.Format) bool {
 	}
 	typ, _ := event["type"].(string)
 	switch format {
-	case translator.FormatOpenAIResponses:
+	case protocol.FormatOpenAIResponses:
 		return typ == "response.completed" || typ == "response.incomplete" || typ == "response.failed"
-	case translator.FormatAnthropic:
+	case protocol.FormatAnthropic:
 		return typ == "message_stop"
 	default:
 		return false
@@ -402,7 +402,7 @@ func handleChatCompletions(c *gin.Context) {
 	bcopy := cloneMap(body)
 	bcopy["model"] = realModel
 	clampBody(bcopy, modelEntry, rawLen)
-	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+	plan, planErr := protocol.PlanRequest(proto, prof.API, prof.ResponsesMode)
 	if planErr != nil {
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
@@ -643,7 +643,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 	bcopy["model"] = realModel
 	bcopy["stream"] = true
 	clampBody(bcopy, modelEntry, rawLen)
-	plan, planErr := translator.PlanRequest(proto, prof.API, prof.ResponsesMode)
+	plan, planErr := protocol.PlanRequest(proto, prof.API, prof.ResponsesMode)
 	if planErr != nil {
 		c.JSON(502, inferenceError(fmt.Sprintf("profile %s: %s", name, planErr.Error()), "no_route"))
 		return
@@ -701,13 +701,13 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, candidates []string
 		return
 	}
 	if conv := plan.StreamConverter(realModel); conv != nil {
-		streamConvert(c, resp, conv, plan.From == translator.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
+		streamConvert(c, resp, conv, plan.From == protocol.FormatOpenAIResponses, name, realModel, modelEntry, convID, convName, start)
 		return
 	}
 	streamPassthrough(c, resp, plan.To, name, realModel, modelEntry, convID, convName, start)
 }
 
-func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat translator.Format, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat protocol.Format, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
 	defer resp.Body.Close()
 	parser := usage.NewSseUsageParser()
 	for k, vv := range resp.Header {
@@ -800,7 +800,7 @@ func streamPassthrough(c *gin.Context, resp *http.Response, upstreamFormat trans
 // streamConvert relays an upstream SSE stream through a registry converter.
 // responsesStyle selects Responses event lines ("event: <type>") versus Chat
 // bare data lines (terminated with "data: [DONE]").
-func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEventConverter, responsesStyle bool, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
+func streamConvert(c *gin.Context, resp *http.Response, conv protocol.StreamEventConverter, responsesStyle bool, provider, realModel string, modelEntry *config.ModelEntry, convID, convName string, start time.Time) {
 	defer resp.Body.Close()
 	parser := usage.NewSseUsageParser()
 	for k, vv := range resp.Header {
@@ -820,9 +820,9 @@ func streamConvert(c *gin.Context, resp *http.Response, conv translator.StreamEv
 	clientCanceled := false
 	var streamErr error
 	terminalSeen := false
-	upstreamFormat := translator.FormatOpenAIResponses
+	upstreamFormat := protocol.FormatOpenAIResponses
 	if responsesStyle {
-		upstreamFormat = translator.FormatOpenAIChat
+		upstreamFormat = protocol.FormatOpenAIChat
 	}
 	write := func(line string) {
 		if clientCanceled {
@@ -964,7 +964,7 @@ func upstreamErrorStatus(ctx context.Context) int {
 	return http.StatusBadGateway
 }
 
-func transformResponseBody(plan translator.Plan, raw []byte, model string) ([]byte, error) {
+func transformResponseBody(plan protocol.Plan, raw []byte, model string) ([]byte, error) {
 	var upstream map[string]interface{}
 	if err := json.Unmarshal(raw, &upstream); err != nil {
 		return nil, fmt.Errorf("upstream response is not valid JSON: %w", err)

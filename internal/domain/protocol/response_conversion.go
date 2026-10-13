@@ -1,4 +1,4 @@
-package translator
+package protocol
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heihei0299/pi-switch/internal/usage"
+	"github.com/heihei0299/pi-switch/internal/domain/usage"
 )
 
 // OpenAIToAnthropicResponse converts Chat completion output to Messages output.

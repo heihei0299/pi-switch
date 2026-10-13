@@ -18,13 +18,13 @@ type ProviderProfile = provider.Profile
 
 // ValidateEffectiveChannelAPI checks the api/mode pair a channel will actually be
 // called with — effective api, effective mode — which is exactly what the request
-// path resolves before translator.PlanRequest (narrowToChannel over
+// path resolves before protocol.PlanRequest (narrowToChannel over
 // ResolvedUpstreams). It does not demand that the channel declare its own api, but a
 // pair with no api anywhere is not "nothing to judge": every request through that
 // channel fails, so it is an error like any other incompatible pair.
 //
 // A known-but-unproxyable api is rejected too: protocol.CanProxy is the one
-// capability source, translator.upstreamFormat refuses every request for such an api
+// capability source, protocol.upstreamFormat refuses every request for such an api
 // (google-generative-ai today), and the write doors therefore refuse to store a
 // profile that cannot run instead of surfacing the failure at request time.
 func ValidateEffectiveChannelAPI(u Upstream, profile ProviderProfile) error {
@@ -77,7 +77,7 @@ func ValidateResolvedCapability(profile ProviderProfile) error {
 // ValidateUpstreamAPI checks one channel of a profile that is being authored, so it
 // additionally requires the channel to name its own api. It reports exactly what the
 // effective rule reports: an explicit per-channel api with an incompatible mode is
-// the combination translator.PlanRequest rejects at request time.
+// the combination protocol.PlanRequest rejects at request time.
 func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	if u.API == "" {
 		return fmt.Errorf("api is required for each upstream")

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/heihei0299/pi-switch/internal/domain/protocol"
 	"github.com/heihei0299/pi-switch/internal/store"
-	"github.com/heihei0299/pi-switch/internal/translator"
 )
 
 type scriptedBody struct {
@@ -43,7 +43,7 @@ func runConvertedStream(t *testing.T, payload string, readErr error) (*httptest.
 		Body:       &scriptedBody{payload: []byte(payload), err: readErr},
 		Request:    c.Request,
 	}
-	streamConvert(c, resp, translator.NewResponsesSseToChat("model"), false, "provider", "model", nil, "", "", time.Now())
+	streamConvert(c, resp, protocol.NewResponsesSseToChat("model"), false, "provider", "model", nil, "", "", time.Now())
 
 	db, err := store.GetDB()
 	if err != nil {
@@ -127,7 +127,7 @@ func TestStreamPassthrough_UnexpectedEOFIsFailure(t *testing.T) {
 		Body:       &scriptedBody{payload: []byte("data: {\"choices\":[]}\n\n"), err: io.ErrUnexpectedEOF},
 		Request:    c.Request,
 	}
-	streamPassthrough(c, resp, translator.FormatOpenAIChat, "provider", "model", nil, "", "", time.Now())
+	streamPassthrough(c, resp, protocol.FormatOpenAIChat, "provider", "model", nil, "", "", time.Now())
 	if lastRequestSuccess(t) {
 		t.Fatal("unexpected EOF was recorded as success")
 	}
@@ -145,7 +145,7 @@ func TestStreamPassthrough_ResponseFailedIsFailure(t *testing.T) {
 		Body:       &scriptedBody{payload: []byte("event: response.failed\ndata: {\"type\":\"response.failed\"}\n\n"), err: io.EOF},
 		Request:    c.Request,
 	}
-	streamPassthrough(c, resp, translator.FormatOpenAIResponses, "provider", "model", nil, "", "", time.Now())
+	streamPassthrough(c, resp, protocol.FormatOpenAIResponses, "provider", "model", nil, "", "", time.Now())
 	if lastRequestSuccess(t) {
 		t.Fatal("response.failed was recorded as success")
 	}

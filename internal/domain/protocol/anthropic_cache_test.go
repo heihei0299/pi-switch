@@ -1,9 +1,9 @@
-package translator
+package protocol
 
 import (
 	"testing"
 
-	"github.com/heihei0299/pi-switch/internal/usage"
+	"github.com/heihei0299/pi-switch/internal/domain/usage"
 )
 
 func TestAnthropicCacheTotalsSurviveResponseConversion(t *testing.T) {

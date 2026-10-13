@@ -34,7 +34,7 @@ func TestChannelAPI_EffectiveRulesForTheTolerantDoor(t *testing.T) {
 	if err := ValidateEffectiveChannelAPI(Upstream{}, ProviderProfile{}); err == nil {
 		t.Fatal("no api anywhere must be rejected (every request through that channel fails)")
 	}
-	// 显式声明 api 但 mode 不兼容：请求期必被 translator.PlanRequest 拒绝。
+	// 显式声明 api 但 mode 不兼容：请求期必被 protocol.PlanRequest 拒绝。
 	if err := ValidateEffectiveChannelAPI(Upstream{API: "openai-completions"}, ProviderProfile{ResponsesMode: "passthrough"}); err == nil {
 		t.Fatal("openai-completions + passthrough must be rejected")
 	}
@@ -46,7 +46,7 @@ func TestChannelAPI_EffectiveRulesForTheTolerantDoor(t *testing.T) {
 	if err := ValidateEffectiveChannelAPI(Upstream{API: "invalid-api"}, prof); err == nil {
 		t.Fatal("unknown api must be rejected")
 	}
-	// FINAL-01：已知但当前不可代理的 api 同样是运行期必失败（translator.upstreamFormat
+	// FINAL-01：已知但当前不可代理的 api 同样是运行期必失败（protocol.upstreamFormat
 	// 拒绝它的每个请求），因此也拒收，且消息要同时说明 api 与 proxy。
 	err := ValidateEffectiveChannelAPI(Upstream{API: protocol.GoogleGenerativeAI}, prof)
 	if err == nil {
