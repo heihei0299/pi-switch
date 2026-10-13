@@ -50,7 +50,7 @@ func TestLoadNativeOverviewUsesSharedConfigAndOmitsCredentials(t *testing.T) {
 		t.Fatalf("profiles summary = %#v", overview.profiles)
 	}
 
-	app := &desktopShell{overview: overview, proxyMessage: "Proxy daemon is not running"}
+	app := &desktopShell{overview: nativeOverviewController{snapshot: overview}, proxy: nativeProxyController{message: "Proxy daemon is not running"}}
 	tester := ui.NewTester(app.view, 760, 600)
 	text := strings.Join(tester.Texts(), " ")
 	if !tester.HasText(current+" (current)") || !tester.HasText("API: openai-completions") || !tester.HasText("Upstream: https://supplier.example:8443") || !tester.HasText("Models: 2 (1 exposed) · 1 channel(s)") {
@@ -111,15 +111,12 @@ func TestNativeOverviewRefreshErrorKeepsLastGoodSnapshot(t *testing.T) {
 		proxyAddress: "127.0.0.1:43112",
 		webAddress:   "127.0.0.1:43110",
 	}
-	app := &desktopShell{
-		overview:        previous,
-		overviewBusy:    true,
-		selectedProfile: 1,
-		overviewError:   "old error",
-	}
-	app.updateNativeOverview(nativeOverview{}, fmt.Errorf("reload failed"))
-	if !reflect.DeepEqual(app.overview, previous) || app.overviewError != "reload failed" || app.overviewBusy || app.selectedProfile != 1 {
-		t.Fatalf("failed refresh discarded prior state: overview=%#v error=%q busy=%v selected=%d", app.overview, app.overviewError, app.overviewBusy, app.selectedProfile)
+	app := &desktopShell{overview: nativeOverviewController{
+		snapshot: previous, busy: true, selected: 1, error: "old error",
+	}}
+	app.overview.update(nativeOverview{}, fmt.Errorf("reload failed"))
+	if !reflect.DeepEqual(app.overview.snapshot, previous) || app.overview.error != "reload failed" || app.overview.busy || app.overview.selected != 1 {
+		t.Fatalf("failed refresh discarded prior state: overview=%#v error=%q busy=%v selected=%d", app.overview.snapshot, app.overview.error, app.overview.busy, app.overview.selected)
 	}
 	tester := ui.NewTester(app.view, 760, 600)
 	if !tester.HasText("supplier (current)") || !tester.HasText("reload failed") {
@@ -127,28 +124,28 @@ func TestNativeOverviewRefreshErrorKeepsLastGoodSnapshot(t *testing.T) {
 	}
 
 	updated := nativeOverview{profiles: []overviewProfile{{name: "new supplier"}}}
-	app.updateNativeOverview(updated, nil)
-	if !reflect.DeepEqual(app.overview, updated) || app.overviewError != "" || app.overviewBusy || app.selectedProfile != -1 {
-		t.Fatalf("successful refresh did not replace/reset state: overview=%#v error=%q busy=%v selected=%d", app.overview, app.overviewError, app.overviewBusy, app.selectedProfile)
+	app.overview.update(updated, nil)
+	if !reflect.DeepEqual(app.overview.snapshot, updated) || app.overview.error != "" || app.overview.busy || app.overview.selected != -1 {
+		t.Fatalf("successful refresh did not replace/reset state: overview=%#v error=%q busy=%v selected=%d", app.overview.snapshot, app.overview.error, app.overview.busy, app.overview.selected)
 	}
 }
 
 func TestNativeOverviewFiltersProfilesWithIMEComposition(t *testing.T) {
-	app := &desktopShell{overview: nativeOverview{profiles: []overviewProfile{
+	app := &desktopShell{overview: nativeOverviewController{snapshot: nativeOverview{profiles: []overviewProfile{
 		{name: "English supplier"},
 		{name: "中文供应商", current: true},
-	}}}
+	}}}}
 	tester := ui.NewTester(app.view, 760, 600)
 	if err := tester.Click("Filter profiles"); err != nil {
 		t.Fatal(err)
 	}
 	tester.Compose("zhong", 5)
-	if app.profileQuery != "" {
-		t.Fatalf("uncommitted IME composition changed the query to %q", app.profileQuery)
+	if app.overview.profileQuery != "" {
+		t.Fatalf("uncommitted IME composition changed the query to %q", app.overview.profileQuery)
 	}
 	tester.Type("中文")
-	if app.profileQuery != "中文" || !tester.HasText("中文供应商 (current)") || tester.HasText("English supplier") {
-		t.Fatalf("IME-filtered profiles = %q, text %q", app.profileQuery, tester.Texts())
+	if app.overview.profileQuery != "中文" || !tester.HasText("中文供应商 (current)") || tester.HasText("English supplier") {
+		t.Fatalf("IME-filtered profiles = %q, text %q", app.overview.profileQuery, tester.Texts())
 	}
 	tester.SetDark(true)
 	tester.Frame()
@@ -163,7 +160,7 @@ func TestNativeOverviewVirtualizesAndNavigatesLongProfileList(t *testing.T) {
 		profiles[i] = overviewProfile{name: fmt.Sprintf("Profile %04d", i)}
 	}
 	profiles[0].name = strings.Repeat("Long供应商", 24)
-	app := &desktopShell{overview: nativeOverview{profiles: profiles}}
+	app := &desktopShell{overview: nativeOverviewController{snapshot: nativeOverview{profiles: profiles}}}
 	tester := ui.NewTester(app.view, 760, 600)
 	if !tester.HasText(profiles[0].name) || tester.HasText(profiles[len(profiles)-1].name) {
 		t.Fatalf("list did not render only the visible rows: %q", tester.Texts())
@@ -177,20 +174,20 @@ func TestNativeOverviewVirtualizesAndNavigatesLongProfileList(t *testing.T) {
 		t.Fatal(err)
 	}
 	tester.Key(0, ui.KeyEnd)
-	if app.selectedProfile != len(profiles)-1 || !tester.HasText(profiles[len(profiles)-1].name) {
-		t.Fatalf("End did not focus the last row: selected=%d text=%q", app.selectedProfile, tester.Texts())
+	if app.overview.selected != len(profiles)-1 || !tester.HasText(profiles[len(profiles)-1].name) {
+		t.Fatalf("End did not focus the last row: selected=%d text=%q", app.overview.selected, tester.Texts())
 	}
 	tester.Key(0, ui.KeyHome)
-	if app.selectedProfile != 0 || !tester.HasText(profiles[0].name) {
-		t.Fatalf("Home did not focus the first row: selected=%d text=%q", app.selectedProfile, tester.Texts())
+	if app.overview.selected != 0 || !tester.HasText(profiles[0].name) {
+		t.Fatalf("Home did not focus the first row: selected=%d text=%q", app.overview.selected, tester.Texts())
 	}
 	tester.Key(0, ui.KeyDown)
-	if app.selectedProfile != 1 || !tester.HasText(profiles[1].name) {
-		t.Fatalf("Down did not focus the next row: selected=%d text=%q", app.selectedProfile, tester.Texts())
+	if app.overview.selected != 1 || !tester.HasText(profiles[1].name) {
+		t.Fatalf("Down did not focus the next row: selected=%d text=%q", app.overview.selected, tester.Texts())
 	}
 	tester.Key(0, ui.KeyUp)
-	if app.selectedProfile != 0 || !tester.HasText(profiles[0].name) {
-		t.Fatalf("Up did not focus the previous row: selected=%d text=%q", app.selectedProfile, tester.Texts())
+	if app.overview.selected != 0 || !tester.HasText(profiles[0].name) {
+		t.Fatalf("Up did not focus the previous row: selected=%d text=%q", app.overview.selected, tester.Texts())
 	}
 }
 
@@ -209,7 +206,7 @@ func TestNativeOverviewEmptyAndInvalidConfigStates(t *testing.T) {
 	if _, err := loadNativeOverview(); err == nil {
 		t.Fatal("invalid config was accepted as an empty overview")
 	}
-	app.overviewError = "invalid config"
+	app.overview.error = "invalid config"
 	tester.Frame()
 	if !tester.HasText("invalid config") {
 		t.Fatalf("config error missing from %q", tester.Texts())

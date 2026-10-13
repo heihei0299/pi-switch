@@ -17,12 +17,11 @@ type nativeDoctorPage struct {
 	message      string
 }
 
-func (a *desktopShell) runNativeDoctor() {
-	p := &a.standardPages().doctor
+func (p *nativeDoctorPage) run(shell *desktopShell) {
 	if p.busy {
 		return
 	}
-	p.busy = a.runStandardTask("doctor", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("doctor", func() (interface{}, error) {
 		checks, issues := application.DiagnoseConfig(config.ResolvePath())
 		return nativeDoctorResult{checks: checks, issues: issues}, nil
 	}, func(result interface{}, err error) {
@@ -35,12 +34,11 @@ func (a *desktopShell) runNativeDoctor() {
 	})
 }
 
-func (a *desktopShell) doctorView(c *ui.Context) {
-	p := &a.standardPages().doctor
+func (p *nativeDoctorPage) view(shell *desktopShell, c *ui.Context) {
 	ui.Column(c).Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "Doctor").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
 		if ui.Button(c, "Run diagnostics").Disabled(p.busy).Clicked() {
-			a.runNativeDoctor()
+			p.run(shell)
 		}
 		if p.busy {
 			ui.Text(c, "Checking config…").Role(ui.RoleStatus)

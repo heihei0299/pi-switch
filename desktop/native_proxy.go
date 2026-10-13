@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/daemon"
@@ -35,5 +36,108 @@ func (p nativeProxyStatus) view(c *ui.Context) {
 	}
 	if p.result.Host != nil && p.result.Port != nil {
 		ui.Text(c, "Actual listener: "+net.JoinHostPort(*p.result.Host, strconv.Itoa(int(*p.result.Port))))
+	}
+}
+
+type nativeProxyController struct {
+	status      nativeProxyStatus
+	busy        bool
+	message     string
+	stopConfirm bool
+}
+
+func (p *nativeProxyController) service() (daemon.Service, error) {
+	executable, err := proxyExecutable()
+	if err != nil {
+		return daemon.Service{}, err
+	}
+	service := daemon.Proxy
+	service.Executable = executable
+	return service, nil
+}
+
+func (p *nativeProxyController) start(shell *desktopShell) {
+	p.runTask(shell, func() (daemon.DaemonResult, error) {
+		status, err := daemon.Status(daemon.Proxy)
+		if err != nil || status.Running {
+			return status, err
+		}
+		host, port, err := desktopProxyAddress()
+		if err != nil {
+			return daemon.DaemonResult{}, err
+		}
+		service, err := p.service()
+		if err != nil {
+			return daemon.DaemonResult{}, err
+		}
+		return daemon.Start(service, host, port)
+	})
+}
+
+func (p *nativeProxyController) stop(shell *desktopShell) {
+	p.runTask(shell, func() (daemon.DaemonResult, error) { return daemon.Stop(daemon.Proxy) })
+}
+
+func (p *nativeProxyController) refresh(shell *desktopShell) {
+	p.runTask(shell, func() (daemon.DaemonResult, error) { return daemon.Status(daemon.Proxy) })
+}
+
+func (p *nativeProxyController) runTask(shell *desktopShell, run func() (daemon.DaemonResult, error)) {
+	if p.busy || shell.exiting || shell.window == nil || shell.window.IsDestroyed() {
+		return
+	}
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("proxy")
+	if !ok {
+		return
+	}
+	p.busy = true
+	window.Invalidate()
+	go func() {
+		result, err := run()
+		if ctx.Err() != nil {
+			return
+		}
+		message := result.Message
+		if err != nil {
+			message = nativeManagementError(err)
+		}
+		checkedAt := time.Now().Format(time.RFC3339)
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("proxy", token) {
+				shell.tasks.finish("proxy", token)
+				return
+			}
+			defer shell.tasks.finish("proxy", token)
+			p.busy = false
+			p.message = message
+			p.status = nativeProxyStatus{result: result, checked: true, failed: err != nil, checkedAt: checkedAt}
+			if shell.window != nil {
+				shell.window.Invalidate()
+			}
+		})
+	}()
+}
+
+func (p *nativeProxyController) controls(shell *desktopShell, c *ui.Context) {
+	message := p.message
+	if message == "" {
+		message = "Status not checked yet."
+	}
+	ui.Text(c, message).Role(ui.RoleStatus)
+	p.status.view(c)
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, "Start Proxy").Disabled(p.busy).Clicked() {
+			p.start(shell)
+		}
+		if ui.Button(c, "Stop Proxy").Disabled(p.busy).Clicked() {
+			p.stopConfirm = true
+		}
+		if ui.Button(c, "Refresh Status").Disabled(p.busy).Clicked() {
+			p.refresh(shell)
+		}
+	})
+	if ui.AlertDialog(c, &p.stopConfirm, "Stop managed Proxy?", "In-flight requests may fail. Unknown processes will not be stopped.", "Cancel", "Stop") == 1 {
+		p.stop(shell)
 	}
 }

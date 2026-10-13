@@ -17,7 +17,6 @@ type nativeStandardPages struct {
 	settings  nativeSettingsPage
 	backups   nativeBackupsPage
 	doctor    nativeDoctorPage
-	stopProxy bool
 }
 
 func (a *desktopShell) standardPages() *nativeStandardPages {
@@ -45,21 +44,25 @@ func (a *desktopShell) standardView(c *ui.Context) {
 							a.refreshNativeOverview()
 						case "Proxy":
 							a.refreshNativeOverview()
-							a.refreshProxy()
+							a.proxy.refresh(a)
 						case "Gateway":
-							a.refreshNativeGatewayPreview(nativeGatewaySelections(&a.complexPreview.nativeGatewayState))
+							gateway := &a.complexPreview.nativeGatewayState
+							if gateway.refreshGateway != nil {
+								gateway.refreshGateway(nativeGatewaySelections(gateway))
+							}
 						case "Stats & Sessions":
-							if !a.complexPreview.statsLoaded {
-								a.refreshNativeStats(0, 0, a.complexPreview.statsFilters, a.complexPreview.sessionsFilters)
+							stats := &a.complexPreview.nativeStatsState
+							if !stats.statsLoaded && stats.refreshStats != nil {
+								stats.refreshStats(0, 0, stats.statsFilters, a.complexPreview.nativeSessionsState.sessionsFilters)
 							}
 						case "Settings":
 							if !pages.settings.loaded {
-								a.loadNativeSettings()
+								pages.settings.load(a)
 							}
 						case "Backups":
-							a.loadNativeBackups()
+							pages.backups.load(a)
 						case "Doctor":
-							a.runNativeDoctor()
+							pages.doctor.run(a)
 						}
 					}
 				}
@@ -68,23 +71,24 @@ func (a *desktopShell) standardView(c *ui.Context) {
 
 		switch pages.page {
 		case "Profiles", "Providers":
-			ui.Scroll(c).Fill().Children(func() { a.providersView(c) })
+			ui.Scroll(c).Fill().Children(func() { pages.providers.view(a, c) })
 		case "Proxy":
 			ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
 				ui.Text(c, "Proxy").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
 				ui.Text(c, "Only identity-verified, managed processes can be stopped. Hiding or quitting the GUI leaves Proxy running.")
-				ui.Text(c, "Configured address: "+a.overview.proxyAddress)
-				if a.overviewError != "" {
-					ui.Text(c, a.overviewError).Role(ui.RoleStatus)
+				proxyAddress, overviewError := a.overview.proxyData()
+				ui.Text(c, "Configured address: "+proxyAddress)
+				if overviewError != "" {
+					ui.Text(c, overviewError).Role(ui.RoleStatus)
 				}
-				a.proxyControls(c)
+				a.proxy.controls(a, c)
 			})
 		case "Settings":
-			ui.Scroll(c).Fill().Children(func() { a.settingsView(c) })
+			ui.Scroll(c).Fill().Children(func() { pages.settings.view(a, c) })
 		case "Backups":
-			ui.Scroll(c).Fill().Children(func() { a.backupsView(c) })
+			ui.Scroll(c).Fill().Children(func() { pages.backups.view(a, c) })
 		case "Doctor":
-			ui.Scroll(c).Fill().Children(func() { a.doctorView(c) })
+			ui.Scroll(c).Fill().Children(func() { pages.doctor.view(a, c) })
 		case "Gateway", "JSON Editor", "Stats & Sessions", "Packages":
 			ui.Scroll(c).Fill().Gap(12).Padding(20).Children(func() {
 				switch pages.page {
@@ -102,29 +106,6 @@ func (a *desktopShell) standardView(c *ui.Context) {
 			a.view(c)
 		}
 	})
-}
-
-func (a *desktopShell) proxyControls(c *ui.Context) {
-	message := a.proxyMessage
-	if message == "" {
-		message = "Status not checked yet."
-	}
-	ui.Text(c, message).Role(ui.RoleStatus)
-	a.proxyStatus.view(c)
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, "Start Proxy").Disabled(a.busy).Clicked() {
-			a.startProxy()
-		}
-		if ui.Button(c, "Stop Proxy").Disabled(a.busy).Clicked() {
-			a.standardPages().stopProxy = true
-		}
-		if ui.Button(c, "Refresh Status").Disabled(a.busy).Clicked() {
-			a.refreshProxy()
-		}
-	})
-	if ui.AlertDialog(c, &a.standardPages().stopProxy, "Stop managed Proxy?", "In-flight requests may fail. Unknown processes will not be stopped.", "Cancel", "Stop") == 1 {
-		a.stopProxy()
-	}
 }
 
 // Each page owns its state. This only bridges workers to the window UI thread.

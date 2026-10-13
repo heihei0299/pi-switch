@@ -184,3 +184,49 @@ func (a *nativePackagesState) packagesSection(c *ui.Context) {
 		})
 	}
 }
+
+func (p *nativePackagesState) runTask(shell *desktopShell, task func() (string, error)) {
+	if shell.window == nil || p.packagesLoading || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("packages")
+	if !ok {
+		return
+	}
+	preview.packagesLoading = true
+	preview.packagesError = ""
+	window.Invalidate()
+	go func() {
+		message, err := task()
+		if ctx.Err() != nil {
+			return
+		}
+		var packages []nativePackage
+		var listErr error
+		if err == nil {
+			packages, listErr = loadNativePackages()
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("packages", token) {
+				shell.tasks.finish("packages", token)
+				return
+			}
+			defer shell.tasks.finish("packages", token)
+			preview.packagesLoading = false
+			preview.packagesLoaded = true
+			if err != nil {
+				preview.packagesError = err.Error()
+				return
+			}
+			if listErr != nil {
+				preview.packagesError = listErr.Error()
+				return
+			}
+			preview.packages = packages
+			preview.packagesError = ""
+			preview.packagesMessage = message
+		})
+	}()
+}

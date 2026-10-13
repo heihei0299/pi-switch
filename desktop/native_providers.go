@@ -46,12 +46,11 @@ func (p *nativeProvidersPage) newDraft() {
 	p.message = "New provider draft. No models are exposed until you explicitly select them."
 }
 
-func (a *desktopShell) loadNativeProvider(name string) {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) load(shell *desktopShell, name string) {
 	if p.busy {
 		return
 	}
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return application.LoadProviderDraft(config.ResolvePath(), name)
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -72,10 +71,9 @@ func (a *desktopShell) loadNativeProvider(name string) {
 	})
 }
 
-func (a *desktopShell) saveNativeProvider() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) save(shell *desktopShell) {
 	original, name, raw, expected, key, channel := p.original, p.name, p.draft, p.revision, p.key, p.keyChannel
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		prof, err := application.ProviderFromDraft(config.ResolvePath(), original, raw, expected, map[string]string{channel: key})
 		if err != nil {
 			return nil, err
@@ -89,14 +87,13 @@ func (a *desktopShell) saveNativeProvider() {
 		}
 		p.cancelDraft()
 		p.message = "Provider saved with a pre-write backup. Gateway was not published."
-		a.refreshNativeOverview()
+		shell.refreshNativeOverview()
 	})
 }
 
-func (a *desktopShell) deleteNativeProvider() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) delete(shell *desktopShell) {
 	name, expected := p.original, p.revision
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return nil, application.DeleteProvider(config.ResolvePath(), name, expected)
 	}, func(_ interface{}, err error) {
 		p.busy = false
@@ -106,14 +103,13 @@ func (a *desktopShell) deleteNativeProvider() {
 		}
 		p.cancelDraft()
 		p.message = "Provider deleted with a pre-write backup. Existing models.json and running Proxy are unchanged."
-		a.refreshNativeOverview()
+		shell.refreshNativeOverview()
 	})
 }
 
-func (a *desktopShell) validateNativeProvider() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) validate(shell *desktopShell) {
 	original, raw, expected, key, channel := p.original, p.draft, p.revision, p.key, p.keyChannel
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		_, err := application.ProviderFromDraft(config.ResolvePath(), original, raw, expected, map[string]string{channel: key})
 		return nil, err
 	}, func(_ interface{}, err error) {
@@ -126,19 +122,19 @@ func (a *desktopShell) validateNativeProvider() {
 	})
 }
 
-func (a *desktopShell) providersView(c *ui.Context) {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) view(shell *desktopShell, c *ui.Context) {
+	profiles, overviewError, overviewBusy, profileSwitching, profileSwitchMessage := shell.overview.providerData()
 	ui.Column(c).Padding(24).Gap(12).Children(func() {
-		ui.Text(c, a.standardPages().page).FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
+		ui.Text(c, shell.standardPages().page).FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
 		ui.Text(c, "Profiles and Providers share config.json; channels, model metadata and exposure are edited in the same provider draft.")
-		if a.overviewError != "" {
-			ui.Text(c, a.overviewError).TextColor(c.Theme().Warning).Role(ui.RoleStatus)
+		if overviewError != "" {
+			ui.Text(c, overviewError).TextColor(c.Theme().Warning).Role(ui.RoleStatus)
 		}
 		if ui.SearchField(c, &p.query).Label("Find provider").Disabled(p.busy || p.confirm).Changed() {
 			p.selected = -1
 		}
 		var names []string
-		for _, prof := range a.overview.profiles {
+		for _, prof := range profiles {
 			if strings.Contains(strings.ToLower(prof.name), strings.ToLower(p.query)) {
 				names = append(names, prof.name)
 			}
@@ -163,13 +159,13 @@ func (a *desktopShell) providersView(c *ui.Context) {
 				p.newDraft()
 			}
 			if ui.Button(c, "Edit selected provider").Disabled(locked || selected == "").Clicked() {
-				a.loadNativeProvider(selected)
+				p.load(shell, selected)
 			}
-			if ui.Button(c, "Switch selected profile").Disabled(locked || selected == "" || a.profileSwitching || a.overviewBusy).Clicked() {
-				a.switchProfile(selected)
+			if ui.Button(c, "Switch selected profile").Disabled(locked || selected == "" || profileSwitching || overviewBusy).Clicked() {
+				shell.overview.switchProfile(shell, selected)
 			}
 			if ui.Button(c, "Refresh providers").Disabled(p.busy).Clicked() {
-				a.refreshNativeOverview()
+				shell.refreshNativeOverview()
 			}
 		})
 		if !p.editing {
@@ -184,8 +180,8 @@ func (a *desktopShell) providersView(c *ui.Context) {
 				p.newPresetDraft()
 			}
 		}
-		if a.profileSwitchMessage != "" {
-			ui.Text(c, a.profileSwitchMessage).Role(ui.RoleStatus)
+		if profileSwitchMessage != "" {
+			ui.Text(c, profileSwitchMessage).Role(ui.RoleStatus)
 		}
 		if p.editing {
 			nameInput := ui.TextInput(c, &p.name).Label("Provider name").Disabled(p.busy || p.confirm)
@@ -197,14 +193,14 @@ func (a *desktopShell) providersView(c *ui.Context) {
 			if !json.Valid([]byte(p.draft)) {
 				ui.Text(c, "Invalid JSON; draft retained and Save disabled.").TextColor(c.Theme().Warning)
 			}
-			a.providerNetworkControls(c)
+			p.networkControls(shell, c)
 			ui.Row(c).Gap(8).HandleInput(blockComposingPress(p.composing)).Children(func() {
 				if ui.Button(c, "Cancel provider draft").Disabled(p.busy || p.confirm).Clicked() {
 					p.cancelDraft()
 					p.message = "Draft discarded. No config or backup was written."
 				}
 				if ui.Button(c, "Validate provider").Disabled(p.busy || p.confirm || p.composing).Clicked() {
-					a.validateNativeProvider()
+					p.validate(shell)
 				}
 				if ui.PrimaryButton(c, "Save provider…").Disabled(p.busy || p.confirm || p.composing || strings.TrimSpace(p.name) == "" || !json.Valid([]byte(p.draft))).Clicked() {
 					p.action, p.confirm = "save", true
@@ -234,11 +230,11 @@ func (a *desktopShell) providersView(c *ui.Context) {
 		if ui.AlertDialog(c, &p.confirm, title, message, "Cancel", action) == 1 {
 			switch p.action {
 			case "delete":
-				a.deleteNativeProvider()
+				p.delete(shell)
 			case "duplicate":
-				a.duplicateNativeProvider()
+				p.duplicate(shell)
 			default:
-				a.saveNativeProvider()
+				p.save(shell)
 			}
 		}
 	})

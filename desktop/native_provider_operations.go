@@ -20,10 +20,9 @@ func (p *nativeProvidersPage) newPresetDraft() {
 	p.message = "Preset draft loaded. Credentials are empty and no models are exposed. Validate and save explicitly."
 }
 
-func (a *desktopShell) duplicateNativeProvider() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) duplicate(shell *desktopShell) {
 	source, name, expected := p.original, p.copyName, p.revision
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return nil, application.DuplicateProvider(config.ResolvePath(), source, name, expected)
 	}, func(_ interface{}, err error) {
 		p.busy = false
@@ -32,14 +31,13 @@ func (a *desktopShell) duplicateNativeProvider() {
 			return
 		}
 		p.message = "Saved provider duplicated with a pre-write backup. Unsaved edits were not copied; Gateway and current profile are unchanged."
-		a.refreshNativeOverview()
+		shell.refreshNativeOverview()
 	})
 }
 
-func (a *desktopShell) testNativeProvider() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) test(shell *desktopShell) {
 	original, raw, expected, key, channel := p.original, p.draft, p.revision, p.key, p.keyChannel
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return application.TestProviderDraft(config.ResolvePath(), original, raw, expected, map[string]string{channel: key})
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -56,10 +54,9 @@ func (a *desktopShell) testNativeProvider() {
 	})
 }
 
-func (a *desktopShell) fetchNativeProviderModels() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) fetchModels(shell *desktopShell) {
 	original, raw, expected, key, channel, fetchChannel := p.original, p.draft, p.revision, p.key, p.keyChannel, p.fetchChannel
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return application.FetchProviderDraftModels(config.ResolvePath(), original, raw, expected, map[string]string{channel: key}, fetchChannel)
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -76,10 +73,9 @@ func (a *desktopShell) fetchNativeProviderModels() {
 	})
 }
 
-func (a *desktopShell) refreshNativeProviderUsage() {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) refreshUsage(shell *desktopShell) {
 	name, expected := p.original, p.revision
-	p.busy = a.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
 		return application.LoadProviderUsage(config.ResolvePath(), name, expected)
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -105,8 +101,7 @@ func nativeUsageWindowText(window application.ProviderUsageWindow) string {
 	return text
 }
 
-func (a *desktopShell) providerNetworkControls(c *ui.Context) {
-	p := &a.standardPages().providers
+func (p *nativeProvidersPage) networkControls(shell *desktopShell, c *ui.Context) {
 	fetchInput := ui.TextInput(c, &p.fetchChannel).Label("Fetch models for channel").Disabled(p.busy || p.confirm)
 	p.composing = p.composing || fetchInput.Composing()
 	if p.original != "" {
@@ -116,15 +111,15 @@ func (a *desktopShell) providerNetworkControls(c *ui.Context) {
 	blocked := p.busy || p.confirm || p.composing || !json.Valid([]byte(p.draft))
 	ui.Row(c).Gap(8).HandleInput(blockComposingPress(p.composing)).Children(func() {
 		if ui.Button(c, "Test draft connection").Disabled(blocked).Clicked() {
-			a.testNativeProvider()
+			p.test(shell)
 		}
 		if ui.Button(c, "Refresh saved provider usage").Disabled(p.busy || p.confirm || p.composing || p.original == "").Clicked() {
-			a.refreshNativeProviderUsage()
+			p.refreshUsage(shell)
 		}
 	})
 	ui.Row(c).HandleInput(blockComposingPress(p.composing)).Children(func() {
 		if ui.Button(c, "Fetch models into draft").Disabled(blocked || p.fetchChannel == "").Clicked() {
-			a.fetchNativeProviderModels()
+			p.fetchModels(shell)
 		}
 	})
 	for _, window := range p.usage {

@@ -199,3 +199,118 @@ func joinNativeNames(names []string) string {
 	}
 	return fmt.Sprint(names)
 }
+
+func (p *nativeGatewayState) refresh(shell *desktopShell, selections []gateway.GatewaySelection) {
+	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("gateway")
+	if !ok {
+		return
+	}
+	preview.gatewayLoading = true
+	preview.gatewayError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeGatewayPreviewForSelection(selections)
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("gateway", token) {
+				shell.tasks.finish("gateway", token)
+				return
+			}
+			defer shell.tasks.finish("gateway", token)
+			preview.gatewayLoading = false
+			if err != nil {
+				preview.gatewayError = err.Error()
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = selections != nil
+			preview.gatewayError = ""
+		})
+	}()
+}
+
+func (p *nativeGatewayState) publishSelection(shell *desktopShell, selections []gateway.GatewaySelection) {
+	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("gateway")
+	if !ok {
+		return
+	}
+	preview.gatewayPublishing = true
+	preview.gatewayPublishMessage = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := publishNativeGatewaySelection(selections)
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("gateway", token) {
+				shell.tasks.finish("gateway", token)
+				return
+			}
+			defer shell.tasks.finish("gateway", token)
+			preview.gatewayPublishing = false
+			if err != nil {
+				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = selections != nil
+			preview.gatewayPublishMessage = "Published selected Gateway models."
+		})
+	}()
+}
+
+func (p *nativeGatewayState) publishDraft(shell *desktopShell, jsonState *nativeJSONState, raw string) {
+	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("gateway")
+	if !ok {
+		return
+	}
+	preview.gatewayPublishing = true
+	preview.gatewayPublishMessage = ""
+	jsonState.jsonStatus = "Publishing Gateway draft…"
+	window.Invalidate()
+	go func() {
+		loaded, err := publishNativeGatewayDraft(raw)
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("gateway", token) {
+				shell.tasks.finish("gateway", token)
+				return
+			}
+			defer shell.tasks.finish("gateway", token)
+			preview.gatewayPublishing = false
+			if err != nil {
+				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
+				jsonState.jsonStatus = preview.gatewayPublishMessage
+				return
+			}
+			preview.gateway = loaded
+			preview.gatewayLoaded = true
+			preview.gatewaySelectionExplicit = false
+			preview.gatewayPublishMessage = "Published Gateway draft."
+			jsonState.jsonStatus = preview.gatewayPublishMessage
+			jsonState.invalidateJSONDraftValidation()
+		})
+	}()
+}

@@ -192,3 +192,39 @@ func (a *nativeSessionsState) section(c *ui.Context, stats *nativeStatsState) {
 		}
 	}
 }
+
+func (p *nativeSessionsState) refreshRequests(shell *desktopShell, id string, page int) {
+	if shell.window == nil || p.conversationRequestsLoading || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("conversation")
+	if !ok {
+		return
+	}
+	preview.conversationRequests = nativeConversationPage{id: id, page: page}
+	preview.conversationRequestsLoading = true
+	preview.conversationRequestsError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeConversationPage(id, page, 10)
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("conversation", token) {
+				shell.tasks.finish("conversation", token)
+				return
+			}
+			defer shell.tasks.finish("conversation", token)
+			preview.conversationRequestsLoading = false
+			if err != nil {
+				preview.conversationRequestsError = err.Error()
+				return
+			}
+			preview.conversationRequests = loaded
+			preview.conversationRequestsError = ""
+		})
+	}()
+}

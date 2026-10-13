@@ -175,13 +175,13 @@ func TestNativeStopProxyRequiresConfirmation(t *testing.T) {
 	if err := tester.Click("Stop Proxy"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("Stop managed Proxy?") || !app.standardPages().stopProxy {
+	if !tester.HasText("Stop managed Proxy?") || !app.proxy.stopConfirm {
 		t.Fatal("stop bypassed confirmation")
 	}
 	if err := tester.Click("Cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if app.standardPages().stopProxy || app.busy {
+	if app.proxy.stopConfirm || app.proxy.busy {
 		t.Fatal("cancel attempted to stop Proxy")
 	}
 }

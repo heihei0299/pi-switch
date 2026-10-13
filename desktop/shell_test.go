@@ -144,14 +144,14 @@ func TestDesktopProxyAddressUsesConfigAndDefaults(t *testing.T) {
 
 func TestOverviewRefreshAfterWriteIsCoalescedNotDropped(t *testing.T) {
 	for _, switching := range []bool{false, true} {
-		app := &desktopShell{window: &mygo.Window{}, overviewBusy: !switching, profileSwitching: switching}
+		app := &desktopShell{window: &mygo.Window{}, overview: nativeOverviewController{busy: !switching, switching: switching}}
 		app.refreshNativeOverview()
-		if !app.overviewRefreshPending {
+		if !app.overview.refreshPending {
 			t.Fatal("refresh during an in-flight snapshot/switch was dropped")
 		}
 		app.exiting = true
-		app.flushOverviewRefresh()
-		if app.overviewRefreshPending {
+		app.overview.flushRefresh(app)
+		if app.overview.refreshPending {
 			t.Fatal("quit retained pending refresh")
 		}
 	}

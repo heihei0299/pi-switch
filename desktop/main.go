@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/egoist/mygo"
+	"github.com/heihei0299/pi-switch/internal/gateway"
 )
 
 func main() {
@@ -66,14 +67,20 @@ func prepareDesktopShell(args []string) (*desktopShell, error) {
 	if err := validateDesktopArgs(args); err != nil {
 		return nil, err
 	}
-	shell := &desktopShell{startMinimized: startsMinimized(args), proxyMessage: "Checking proxy status…"}
+	shell := &desktopShell{startMinimized: startsMinimized(args), proxy: nativeProxyController{message: "Checking proxy status…"}}
 	shell.complexPreview = newNativeComplexPreview()
-	shell.complexPreview.refreshGateway = shell.refreshNativeGatewayPreview
-	shell.complexPreview.publishGateway = shell.publishNativeGatewaySelection
-	shell.complexPreview.publishGatewayDraft = shell.publishNativeGatewayDraft
-	shell.complexPreview.runPackageTask = shell.runNativePackageTask
-	shell.complexPreview.refreshStats = shell.refreshNativeStats
-	shell.complexPreview.exportStats = shell.exportNativeStats
-	shell.complexPreview.refreshConversationRequests = shell.refreshNativeConversationRequests
+	complex := shell.complexPreview
+	gatewayState := &complex.nativeGatewayState
+	gatewayState.refreshGateway = func(selections []gateway.GatewaySelection) { gatewayState.refresh(shell, selections) }
+	gatewayState.publishGateway = func(selections []gateway.GatewaySelection) { gatewayState.publishSelection(shell, selections) }
+	complex.nativeJSONState.publishGatewayDraft = func(raw string) { gatewayState.publishDraft(shell, &complex.nativeJSONState, raw) }
+	complex.nativePackagesState.runPackageTask = func(task func() (string, error)) { complex.nativePackagesState.runTask(shell, task) }
+	complex.nativeStatsState.refreshStats = func(requestPage, conversationPage int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) {
+		complex.nativeStatsState.refresh(shell, &complex.nativeSessionsState, requestPage, conversationPage, statsFilters, sessionsFilters)
+	}
+	complex.nativeStatsState.exportStats = func(format string) { complex.nativeStatsState.export(shell, format) }
+	complex.nativeSessionsState.refreshConversationRequests = func(id string, page int) {
+		complex.nativeSessionsState.refreshRequests(shell, id, page)
+	}
 	return shell, nil
 }

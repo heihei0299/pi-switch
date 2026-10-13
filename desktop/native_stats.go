@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
@@ -497,4 +498,110 @@ func (a *nativeStatsState) section(c *ui.Context, sessions *nativeSessionsState)
 		}).Label("Recent requests").Height(180)
 	}
 	return true
+}
+
+func (p *nativeStatsState) refresh(shell *desktopShell, sessions *nativeSessionsState, requestPage, conversationPage int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) {
+	if shell.window == nil || p.statsLoading || shell.exiting {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("stats")
+	if !ok {
+		return
+	}
+	preview.statsLoading = true
+	preview.statsError = ""
+	window.Invalidate()
+	go func() {
+		loaded, err := loadNativeStats(requestPage, conversationPage, 10, statsFilters, sessionsFilters)
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("stats", token) {
+				shell.tasks.finish("stats", token)
+				return
+			}
+			nextRequestPage, nextConversationPage, filtersChanged := nativeStatsPagesForLatestFilters(requestPage, conversationPage, statsFilters, sessionsFilters, preview.statsFilters, sessions.sessionsFilters)
+			if filtersChanged {
+				preview.statsLoading = false
+				shell.tasks.finish("stats", token)
+				p.refresh(shell, sessions, nextRequestPage, nextConversationPage, preview.statsFilters, sessions.sessionsFilters)
+				return
+			}
+			defer shell.tasks.finish("stats", token)
+			preview.statsLoading = false
+			if err != nil {
+				preview.statsError = err.Error()
+				return
+			}
+			preview.stats = loaded.nativeStatsPage
+			sessions.sessions = loaded.nativeSessionsPage
+			preview.statsLoaded = true
+			preview.statsError = ""
+			preview.selectedUsage = -1
+		})
+	}()
+}
+
+func (p *nativeStatsState) export(shell *desktopShell, format string) {
+	if shell.window == nil || p.statsExporting || shell.exiting || (format != "json" && format != "csv") {
+		return
+	}
+	preview := p
+	window := shell.window
+	ctx, token, ok := shell.tasks.begin("stats-export")
+	if !ok {
+		return
+	}
+	preview.statsExporting = true
+	preview.statsExportStatus = "Preparing request history export…"
+	window.Invalidate()
+	go func() {
+		var status string
+		if _, err := os.Stat(store.DBPath()); errors.Is(err, os.ErrNotExist) {
+			status = "No request history to export."
+		} else if err != nil {
+			status = "Export failed: inspect request history: " + err.Error()
+		} else {
+			db, err := store.GetDB()
+			if err != nil {
+				status = "Export failed: " + err.Error()
+			} else {
+				service := statsservice.Service{DB: db}
+				filter := mygo.FileFilter{Name: "JSON", Extensions: []string{"json"}}
+				if format == "csv" {
+					filter = mygo.FileFilter{Name: "CSV", Extensions: []string{"csv"}}
+				}
+				path, saveErr := mygo.Dialog.Save(mygo.SaveDialogOptions{
+					Parent: window, Title: "Export request history", DefaultPath: "pi-switch-logs." + format,
+					Filters: []mygo.FileFilter{filter},
+				})
+				if saveErr != nil {
+					status = "Export failed: " + saveErr.Error()
+				} else if path == "" {
+					status = "Export canceled."
+				} else if ctx.Err() == nil {
+					if err := writeNativeStatsExport(path, format, service); err != nil {
+						status = "Export failed: " + err.Error()
+					} else {
+						status = "Exported request history to " + filepath.Base(path)
+					}
+				}
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		window.Update(func() {
+			if window.IsDestroyed() || !shell.tasks.accept("stats-export", token) {
+				shell.tasks.finish("stats-export", token)
+				return
+			}
+			defer shell.tasks.finish("stats-export", token)
+			preview.statsExporting = false
+			preview.statsExportStatus = status
+		})
+	}()
 }
