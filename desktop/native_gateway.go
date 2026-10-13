@@ -57,7 +57,7 @@ func loadNativeGatewaySelectionPlan(selections []gateway.GatewaySelection) (nati
 	if err != nil {
 		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
 	}
-	current, err := gateway.ReadCurrent()
+	current, err := application.ReadCurrentGateway()
 	if err != nil {
 		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
 	}

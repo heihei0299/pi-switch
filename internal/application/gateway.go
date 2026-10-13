@@ -1,58 +1,71 @@
 package application
 
 import (
+	"context"
+
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/catalog"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/gateway"
+	gatewayusecase "github.com/heihei0299/pi-switch/internal/usecase/gateway"
 )
 
-// BuildGeneratedGatewayPlan is the shared generated Gateway use case.
+func ReadCurrentGatewayContext(ctx context.Context) (map[string]interface{}, error) {
+	return bootstrap.NewGatewayService().ReadCurrent(ctx)
+}
+
+func ReadCurrentGateway() (map[string]interface{}, error) {
+	return ReadCurrentGatewayContext(context.Background())
+}
+
+// BuildGeneratedGatewayPlanContext returns the exact enriched plan used by publish.
+func BuildGeneratedGatewayPlanContext(ctx context.Context, cfg config.PiSwitchConfig, current map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary, error) {
+	return bootstrap.NewGatewayService().BuildGeneratedPlan(ctx, cfg, current)
+}
+
 func BuildGeneratedGatewayPlan(cfg config.PiSwitchConfig, current map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	return gateway.BuildEnrichedGeneratedPlan(cfg, current)
+	plan, summary, _ := BuildGeneratedGatewayPlanContext(context.Background(), cfg, current)
+	return plan, summary
 }
 
-// BuildDraftGatewayPlan is the shared draft Gateway use case. Draft metadata is
-// filled only when absent; explicit draft values remain authoritative.
+// BuildDraftGatewayPlanContext leaves stated draft metadata authoritative.
+func BuildDraftGatewayPlanContext(ctx context.Context, cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary, error) {
+	return bootstrap.NewGatewayService().BuildDraftPlan(ctx, cfg, current, draft)
+}
+
 func BuildDraftGatewayPlan(cfg config.PiSwitchConfig, current, draft map[string]interface{}) (gateway.CanonicalGatewayPlan, catalog.EnrichSummary) {
-	summary := gateway.EnrichDraftModels(cfg, draft)
-	return gateway.BuildDraftPlan(cfg, current, draft), summary
+	plan, summary, _ := BuildDraftGatewayPlanContext(context.Background(), cfg, current, draft)
+	return plan, summary
 }
 
-// SelectedGatewayPlan contains the generated candidate groups and the plan for
-// the selected models, so Native and HTTP callers can share the same rules.
-type SelectedGatewayPlan struct {
-	Generated gateway.CanonicalGatewayPlan
-	Plan      gateway.CanonicalGatewayPlan
-	Selected  []gateway.GatewaySelection
+// SelectedGatewayPlan is the result used by the Native selection page.
+type SelectedGatewayPlan = gatewayusecase.SelectedPlan
+
+func BuildSelectedGatewayPlanContext(ctx context.Context, cfg config.PiSwitchConfig, current map[string]interface{}, selections []gateway.GatewaySelection) (SelectedGatewayPlan, error) {
+	selected, _, err := bootstrap.NewGatewayService().BuildSelectedPlan(ctx, cfg, current, selections)
+	return selected, err
 }
 
-// BuildSelectedGatewayPlan builds the selection preview used by the Native UI.
-// A nil selection means the currently published Gateway models remain selected.
 func BuildSelectedGatewayPlan(cfg config.PiSwitchConfig, current map[string]interface{}, selections []gateway.GatewaySelection) (SelectedGatewayPlan, error) {
-	generated, _ := BuildGeneratedGatewayPlan(cfg, current)
-	selected := selections
-	if selected == nil {
-		selected = make([]gateway.GatewaySelection, 0)
-		for _, group := range generated.Groups {
-			for _, model := range group.Models {
-				if model.Status == "published" {
-					selected = append(selected, gateway.GatewaySelection{Supplier: group.Supplier, Channel: group.Channel, Model: model.ID})
-				}
-			}
-		}
-	}
-	proposed, err := gateway.BuildSelectedGatewayEntry(cfg, selected)
-	if err != nil {
-		return SelectedGatewayPlan{}, err
-	}
-	gateway.EnrichDraftModels(cfg, proposed)
-	return SelectedGatewayPlan{
-		Generated: generated,
-		Plan:      gateway.BuildDraftPlan(cfg, current, proposed),
-		Selected:  selected,
-	}, nil
+	return BuildSelectedGatewayPlanContext(context.Background(), cfg, current, selections)
+}
+
+func BuildProposedGatewayEntry(cfg config.PiSwitchConfig) map[string]interface{} {
+	return gateway.BuildProposedGatewayEntry(cfg)
+}
+
+func BuildSelectedGatewayEntry(cfg config.PiSwitchConfig, selections []gateway.GatewaySelection) (map[string]interface{}, error) {
+	return gateway.BuildSelectedGatewayEntry(cfg, selections)
+}
+
+func ApplyGatewaySelectionToDraft(cfg config.PiSwitchConfig, draft map[string]interface{}, selections []gateway.GatewaySelection) (map[string]interface{}, error) {
+	return gateway.ApplyGatewaySelectionToDraft(cfg, draft, selections)
+}
+
+func PublishGatewayPlanContext(ctx context.Context, plan gateway.CanonicalGatewayPlan) error {
+	return bootstrap.NewGatewayService().Publish(ctx, plan)
 }
 
 func PublishGatewayPlan(plan gateway.CanonicalGatewayPlan) error {
-	return gateway.PublishPlan(plan)
+	return PublishGatewayPlanContext(context.Background(), plan)
 }

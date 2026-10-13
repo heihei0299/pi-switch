@@ -79,7 +79,7 @@ flowchart TB
 | `internal/adapters/outbound/**` | `internal/domain/**`、`internal/usecase/**`、本 outbound 子树 | 可用标准库和 IO 所需外部库；不得依赖 inbound |
 | `internal/bootstrap/**` | 可装配各内部包 | 根模块不得依赖独立 `desktop` 模块 |
 
-检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W02 将 config schema 放入 `internal/domain/config`、文件事务放入 `outbound/fileconfig`；旧 `internal/config` 入口仅保留委托给 adapter 的兼容包装。W01 的 Provider 校验迁移桥接仍仅允许 `outbound/profilevalidation` 依赖现有 `internal/profile`，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
+检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W02 将 config schema 放入 `internal/domain/config`、文件事务放入 `outbound/fileconfig`；旧 `internal/config` 入口仅保留委托给 adapter 的兼容包装。W03 将 Gateway 规则和 catalog 快照/补齐规则移入 domain、usecase，文件与远端缓存 IO 分别归 `outbound/filegateway`、`outbound/catalog`。W01 的 Provider 校验迁移桥接仍仅允许 `outbound/profilevalidation` 依赖现有 `internal/profile`，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
 
 ## 4. 按业务能力划分的目标包
 
@@ -93,11 +93,12 @@ internal/
     provider/                     Provider/Channel/Model 规则与值对象
     gateway/                      纯 canonical plan、验证、diff、merge
     protocol/                     API 能力、协议判定与限制
+    catalog/                      模型快照解析、查找与元数据补齐规则
     usage/                        Token/Cost 事实计算
     conversation/                 归属匹配规则
   usecase/
     providers/                    Draft / CRUD / 模型抓取 / 测试 / 版本冲突
-    gateway/                      Preview / Validate / Explicit Publish
+    gateway/                      Preview / Catalog enrich / Validate / Explicit Publish
     settings/                     设置、备份与恢复
     analytics/                    Stats / Sessions / Export
     packages/                     包列表、导入、修改
@@ -109,6 +110,7 @@ internal/
     httpinfer/                    OpenAI-compatible /v1 接入
     fileconfig/                   config.json 锁、版本、备份、原子写
     filegateway/                  models.json 锁、快照校验、原子 publish
+    catalog/                      models.dev 拉取与缓存读写
     sqlite/                       Requests 和 packages 存储实现
     piagent/                      只读 Session/包探测
     upstream/                     网络请求、超时、SSE 读取

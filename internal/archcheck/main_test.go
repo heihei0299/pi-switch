@@ -47,6 +47,13 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			wantViolation: module + "/internal/adapters/outbound/fileconfig",
 		},
 		{
+			name: "gateway usecase rejects legacy catalog package",
+			files: map[string]string{
+				"internal/usecase/gateway/service.go": "package gateway\nimport \"github.com/heihei0299/pi-switch/internal/catalog\"\n",
+			},
+			wantViolation: module + "/internal/catalog",
+		},
+		{
 			name: "inbound rejects outbound",
 			files: map[string]string{
 				"internal/adapters/inbound/httpmgmt/handler.go": "package httpmgmt\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
@@ -59,6 +66,13 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 				"internal/adapters/outbound/fileconfig/config.go": "package fileconfig\nimport \"github.com/heihei0299/pi-switch/internal/adapters/inbound/httpmgmt\"\n",
 			},
 			wantViolation: module + "/internal/adapters/inbound/httpmgmt",
+		},
+		{
+			name: "filegateway adapter rejects legacy gateway package",
+			files: map[string]string{
+				"internal/adapters/outbound/filegateway/store.go": "package filegateway\nimport \"github.com/heihei0299/pi-switch/internal/gateway\"\n",
+			},
+			wantViolation: module + "/internal/gateway",
 		},
 		{
 			name: "fileconfig adapter rejects legacy config dependency",

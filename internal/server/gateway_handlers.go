@@ -23,7 +23,7 @@ type gatewayPreviewRequest struct {
 // or corrupt models.json is an error — the server no longer invents a `gateway:
 // null` for both.
 func handleGetGateway(c *gin.Context) {
-	current, err := gateway.ReadCurrent()
+	current, err := application.ReadCurrentGatewayContext(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -51,9 +51,9 @@ func handleGatewayPreviewPost(c *gin.Context) {
 		}
 		var err error
 		if request.Draft != nil {
-			edited, err = gateway.ApplyGatewaySelectionToDraft(cfg, request.Draft, *request.Selected)
+			edited, err = application.ApplyGatewaySelectionToDraft(cfg, request.Draft, *request.Selected)
 		} else {
-			edited, err = gateway.BuildSelectedGatewayEntry(cfg, *request.Selected)
+			edited, err = application.BuildSelectedGatewayEntry(cfg, *request.Selected)
 		}
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
@@ -76,17 +76,22 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generate
 		c.JSON(500, gin.H{"error": configErr.Error()})
 		return
 	}
-	current, err := gateway.ReadCurrent()
+	current, err := application.ReadCurrentGatewayContext(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	var plan gateway.CanonicalGatewayPlan
 	var summary catalog.EnrichSummary
+	var planErr error
 	if generated {
-		plan, summary = buildGeneratedGatewayPlan(cfg, current)
+		plan, summary, planErr = application.BuildGeneratedGatewayPlanContext(c.Request.Context(), cfg, current)
 	} else {
-		plan, summary = buildDraftGatewayPlan(cfg, current, edited)
+		plan, summary, planErr = application.BuildDraftGatewayPlanContext(c.Request.Context(), cfg, current, edited)
+	}
+	if planErr != nil {
+		c.JSON(500, gin.H{"error": planErr.Error()})
+		return
 	}
 	currentForResp := interface{}(map[string]interface{}{})
 	if provs, ok := plan.Current["providers"].(map[string]interface{}); ok {
@@ -244,17 +249,21 @@ func handlePutGateway(c *gin.Context) {
 	if !ok {
 		return
 	}
-	current, currentErr := gateway.ReadCurrent()
+	current, currentErr := application.ReadCurrentGatewayContext(c.Request.Context())
 	if currentErr != nil {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
-	plan, _ := buildDraftGatewayPlan(cfg, current, gw)
+	plan, _, planErr := application.BuildDraftGatewayPlanContext(c.Request.Context(), cfg, current, gw)
+	if planErr != nil {
+		c.JSON(500, gin.H{"error": planErr.Error()})
+		return
+	}
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
 	}
-	if err := gateway.PublishPlan(plan); err != nil {
+	if err := application.PublishGatewayPlanContext(c.Request.Context(), plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -313,26 +322,31 @@ func handleGatewayPublish(c *gin.Context) {
 	if !ok {
 		return
 	}
-	current, currentErr := gateway.ReadCurrent()
+	current, currentErr := application.ReadCurrentGatewayContext(c.Request.Context())
 	if currentErr != nil {
 		c.JSON(500, gin.H{"error": currentErr.Error()})
 		return
 	}
 	var plan gateway.CanonicalGatewayPlan
+	var planErr error
 	if body != nil && len(body) > 0 {
 		if _, ok := body["providers"]; !ok {
 			c.JSON(400, gin.H{"error": "providers is required"})
 			return
 		}
-		plan, _ = buildDraftGatewayPlan(cfg, current, body)
+		plan, _, planErr = application.BuildDraftGatewayPlanContext(c.Request.Context(), cfg, current, body)
 	} else {
-		plan, _ = buildGeneratedGatewayPlan(cfg, current)
+		plan, _, planErr = application.BuildGeneratedGatewayPlanContext(c.Request.Context(), cfg, current)
+	}
+	if planErr != nil {
+		c.JSON(500, gin.H{"error": planErr.Error()})
+		return
 	}
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
 	}
-	if err := gateway.PublishPlan(plan); err != nil {
+	if err := application.PublishGatewayPlanContext(c.Request.Context(), plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

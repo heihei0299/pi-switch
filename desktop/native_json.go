@@ -32,7 +32,7 @@ func loadNativeGatewayDraft() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.MarshalIndent(gateway.BuildProposedGatewayEntry(cfg), "", "  ")
+	encoded, err := json.MarshalIndent(application.BuildProposedGatewayEntry(cfg), "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +47,7 @@ func nativeGatewayDraftPlan(raw string) (gateway.CanonicalGatewayPlan, error) {
 	if err != nil {
 		return gateway.CanonicalGatewayPlan{}, err
 	}
-	current, err := gateway.ReadCurrent()
+	current, err := application.ReadCurrentGateway()
 	if err != nil {
 		return gateway.CanonicalGatewayPlan{}, err
 	}

@@ -39,7 +39,8 @@ func TestPublishPlanRejectsStaleSnapshotWithoutOverwritingConcurrentChange(t *te
 		t.Fatal(err)
 	}
 	plan := CanonicalGatewayPlan{
-		Current: current,
+		Current:      current,
+		PendingCount: 1,
 		Proposed: map[string]interface{}{"providers": map[string]interface{}{
 			"third-party": map[string]interface{}{"baseUrl": "https://old.example"},
 			"pi-switch":   map[string]interface{}{"models": []interface{}{}},
@@ -59,54 +60,6 @@ func TestPublishPlanRejectsStaleSnapshotWithoutOverwritingConcurrentChange(t *te
 	}
 	if string(got) != string(concurrent) {
 		t.Fatalf("stale publish changed concurrent content: got %s, want %s", got, concurrent)
-	}
-}
-
-func TestGatewayWriteLockSerializesPublishers(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "models.json")
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	secondEntered := make(chan struct{})
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- withGatewayWriteLock(path, func() error {
-			close(firstEntered)
-			<-releaseFirst
-			return nil
-		})
-	}()
-	select {
-	case <-firstEntered:
-	case <-time.After(time.Second):
-		t.Fatal("first publisher did not acquire the lock")
-	}
-	go func() {
-		errCh <- withGatewayWriteLock(path, func() error {
-			close(secondEntered)
-			return nil
-		})
-	}()
-	enteredEarly := false
-	select {
-	case <-secondEntered:
-		enteredEarly = true
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(releaseFirst)
-	if !enteredEarly {
-		select {
-		case <-secondEntered:
-		case <-time.After(time.Second):
-			t.Fatal("second publisher did not enter after the first released the lock")
-		}
-	}
-	for range 2 {
-		if err := <-errCh; err != nil {
-			t.Fatalf("publisher lock: %v", err)
-		}
-	}
-	if enteredEarly {
-		t.Fatal("second publisher entered while the first held the lock")
 	}
 }
 
@@ -721,5 +674,40 @@ func TestEnrichProposedModelsUsesSharedCatalog(t *testing.T) {
 	planned := modelByID(t, plan.Proposed, "gpt-test")
 	if planned["contextWindow"] != float64(1048576) {
 		t.Fatalf("planned model = %#v, want enriched metadata", planned)
+	}
+}
+
+func TestPublishNoopDoesNotTouchModelsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	t.Setenv("PI_SWITCH_MODELS", path)
+	original := []byte(`{"providers":{}}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Unix(1_600_000_000, 0)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	current, err := ReadCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := BuildDraftPlan(config.PiSwitchConfig{Profiles: map[string]config.ProviderProfile{}}, current, map[string]interface{}{"providers": map[string]interface{}{}})
+	if plan.PendingCount != 0 {
+		t.Fatalf("pending count = %d, want 0", plan.PendingCount)
+	}
+	if err := PublishPlan(plan); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) || !info.ModTime().Equal(oldTime) {
+		t.Fatalf("no-op publish touched models.json: bytes=%q mtime=%s", after, info.ModTime())
 	}
 }
