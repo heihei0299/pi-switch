@@ -288,8 +288,9 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(unchangedModels) != string(publishedBytes) {
-		t.Fatal("valid no-op draft changed models.json")
+	unchangedConfig, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if string(unchangedModels) != string(publishedBytes) || string(unchangedConfig) != string(originalConfig) {
 		t.Fatal("valid no-op draft changed config.json or models.json")
