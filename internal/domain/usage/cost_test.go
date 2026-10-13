@@ -1,16 +1,15 @@
-package proxy
+package usage
 
 import (
 	"testing"
 
-	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/usage"
+	"github.com/heihei0299/pi-switch/internal/domain/provider"
 )
 
 func TestCalcCost_WithRates(t *testing.T) {
-	me := config.ModelEntry{
+	me := provider.ModelEntry{
 		ID:   "gpt-4o-mini",
-		Cost: &config.ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075},
+		Cost: &provider.ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.075},
 	}
 	// prompt 120, cached 10, completion 80
 	// nonCached 110*0.15/1e6=0.0000165, cached 10*0.075/1e6=0.00000075, completion 80*0.6/1e6=0.000048 -> total 0.00006525
@@ -27,11 +26,11 @@ func TestCalcCost_WithRates(t *testing.T) {
 }
 
 func TestCalcUsageCostPricesCacheWritesSeparately(t *testing.T) {
-	s := usage.ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
+	s := ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
 		"input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 700, "output_tokens": 50,
 	}})
 	for _, writeRate := range []float64{3.75, 0} {
-		entry := config.ModelEntry{Cost: &config.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: writeRate}}
+		entry := provider.ModelEntry{Cost: &provider.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: writeRate}}
 		cost := CalcUsageCost(&entry, s)
 		want := (100*3 + 200*writeRate + 700*0.3 + 50*15) / 1_000_000
 		if cost == nil || *cost < want-1e-10 || *cost > want+1e-10 {
@@ -41,8 +40,8 @@ func TestCalcUsageCostPricesCacheWritesSeparately(t *testing.T) {
 }
 
 func TestMissingAnthropicCacheWriteDoesNotInventZeroCost(t *testing.T) {
-	entry := config.ModelEntry{Cost: &config.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75}}
-	s := usage.ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
+	entry := provider.ModelEntry{Cost: &provider.ModelCost{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75}}
+	s := ExtractUsage(map[string]interface{}{"usage": map[string]interface{}{
 		"input_tokens": 100, "cache_read_input_tokens": 0, "output_tokens": 50,
 	}})
 	if cost := CalcUsageCost(&entry, s); cost != nil {
@@ -51,7 +50,7 @@ func TestMissingAnthropicCacheWriteDoesNotInventZeroCost(t *testing.T) {
 }
 
 func TestCalcCost_NilCostYieldsNil(t *testing.T) {
-	me := config.ModelEntry{ID: "no-cost"}
+	me := provider.ModelEntry{ID: "no-cost"}
 	cost := CalcCost(&me, 100, 100, 0)
 	if cost != nil {
 		t.Fatalf("cost = %v, want nil", *cost)
@@ -59,9 +58,9 @@ func TestCalcCost_NilCostYieldsNil(t *testing.T) {
 }
 
 func TestCalcCost_NegativeNonCachedClamped(t *testing.T) {
-	me := config.ModelEntry{
+	me := provider.ModelEntry{
 		ID:   "test",
-		Cost: &config.ModelCost{Input: 2.0, Output: 8.0, CacheRead: 1.0},
+		Cost: &provider.ModelCost{Input: 2.0, Output: 8.0, CacheRead: 1.0},
 	}
 	// prompt 5, cached 10 (more cached than prompt, edge)
 	cost := CalcCost(&me, 5, 10, 10)
