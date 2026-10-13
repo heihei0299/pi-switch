@@ -47,10 +47,10 @@ func (a *desktopShell) standardView(c *ui.Context) {
 							a.refreshNativeOverview()
 							a.refreshProxy()
 						case "Gateway":
-							a.refreshNativeGatewayPreview(nativeGatewaySelections(a.complexPreview))
+							a.refreshNativeGatewayPreview(nativeGatewaySelections(&a.complexPreview.nativeGatewayState))
 						case "Stats & Sessions":
 							if !a.complexPreview.statsLoaded {
-								a.refreshNativeStats(0, 0, a.complexPreview.statsFilters)
+								a.refreshNativeStats(0, 0, a.complexPreview.statsFilters, a.complexPreview.sessionsFilters)
 							}
 						case "Settings":
 							if !pages.settings.loaded {

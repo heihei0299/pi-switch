@@ -420,7 +420,7 @@ func (a *desktopShell) publishNativeGatewayDraft(raw string) {
 	}()
 }
 
-func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, filters nativeStatsFilters) {
+func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) {
 	if a.complexPreview == nil || a.window == nil || a.complexPreview.statsLoading || a.exiting {
 		return
 	}
@@ -434,7 +434,7 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 	preview.statsError = ""
 	window.Invalidate()
 	go func() {
-		loaded, err := loadNativeStats(requestPage, conversationPage, 10, filters)
+		loaded, err := loadNativeStats(requestPage, conversationPage, 10, statsFilters, sessionsFilters)
 		if ctx.Err() != nil {
 			return
 		}
@@ -443,11 +443,11 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 				a.tasks.finish("stats", token)
 				return
 			}
-			nextRequestPage, nextConversationPage, filtersChanged := nativeStatsPagesForLatestFilters(requestPage, conversationPage, filters, preview.statsFilters)
+			nextRequestPage, nextConversationPage, filtersChanged := nativeStatsPagesForLatestFilters(requestPage, conversationPage, statsFilters, sessionsFilters, preview.statsFilters, preview.sessionsFilters)
 			if filtersChanged {
 				preview.statsLoading = false
 				a.tasks.finish("stats", token)
-				a.refreshNativeStats(nextRequestPage, nextConversationPage, preview.statsFilters)
+				a.refreshNativeStats(nextRequestPage, nextConversationPage, preview.statsFilters, preview.sessionsFilters)
 				return
 			}
 			defer a.tasks.finish("stats", token)
@@ -456,7 +456,8 @@ func (a *desktopShell) refreshNativeStats(requestPage, conversationPage int, fil
 				preview.statsError = err.Error()
 				return
 			}
-			preview.stats = loaded
+			preview.stats = loaded.nativeStatsPage
+			preview.sessions = loaded.nativeSessionsPage
 			preview.statsLoaded = true
 			preview.statsError = ""
 			preview.selectedUsage = -1

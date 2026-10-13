@@ -169,6 +169,7 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if !strings.Contains(preview.jsonDraft, "pi-switch-chat") || !strings.Contains(preview.jsonDraft, "model-a") {
 		t.Fatalf("safe generated draft missing Gateway model: %s", preview.jsonDraft)
 	}
+	validDraft := preview.jsonDraft
 	text := strings.Join(tester.Texts(), " ")
 	for _, secret := range []string{"config-test-secret", "upstream-test-secret", "models-test-secret", "third-party"} {
 		if strings.Contains(preview.jsonDraft, secret) || strings.Contains(text, secret) {
@@ -184,6 +185,48 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if !tester.HasText("Added provider: pi-switch-chat") || tester.HasText("Removed provider: third-party") {
 		t.Fatalf("draft provider diff missing or third-party provider marked for removal: %q", tester.Texts())
 	}
+	if err := tester.Click("Draft JSON"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Command("selectAll")
+	tester.SetClipboard(`{"providers":{"pi-switch-extra":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[]}}}`)
+	tester.Key(ui.Cmd, ui.KeyV)
+	if err := tester.Click("Validate Gateway draft"); err != nil {
+		t.Fatal(err)
+	}
+	if !tester.HasText("Gateway draft has 2 conflict(s)") || !tester.HasText("unsupported third pi-switch provider") {
+		t.Fatalf("shared Gateway business validation did not report the conflict: %q", tester.Texts())
+	}
+	if err := tester.Click("Publish validated Gateway draft"); err != nil {
+		t.Fatal(err)
+	}
+	if preview.jsonPublishConfirm {
+		t.Fatal("conflicting draft opened the publish confirmation")
+	}
+	unchangedConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedModels, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unchangedConfig) != string(originalConfig) || string(updatedModels) != string(originalModels) {
+		t.Fatal("conflicting Gateway draft changed config.json or models.json")
+	}
+
+	if err := tester.Click("Draft JSON"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Command("selectAll")
+	tester.SetClipboard(validDraft)
+	tester.Key(ui.Cmd, ui.KeyV)
+	if err := tester.Click("Validate Gateway draft"); err != nil {
+		t.Fatal(err)
+	}
+	if !tester.HasText("Valid Gateway draft · 1 pending change(s)") {
+		t.Fatalf("resolved Gateway draft did not produce a pending plan: %q", tester.Texts())
+	}
 	if err := tester.Click("Publish validated Gateway draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +236,7 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if err := tester.Click("Cancel"); err != nil {
 		t.Fatal(err)
 	}
-	updatedModels, err := os.ReadFile(modelsPath)
+	updatedModels, err = os.ReadFile(modelsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,30 +291,8 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if string(unchangedModels) != string(publishedBytes) {
 		t.Fatal("valid no-op draft changed models.json")
 	}
-	preview.jsonDraft = `{"providers":{"pi-switch-extra":{"api":"openai-completions","baseUrl":"http://127.0.0.1:43112/v1","apiKey":"pi-switch-proxy","models":[]}}}`
-	tester.Frame()
-	if err := tester.Click("Validate Gateway draft"); err != nil {
-		t.Fatal(err)
-	}
-	if !tester.HasText("Gateway draft has 2 conflict(s)") || !tester.HasText("unsupported third pi-switch provider") {
-		t.Fatalf("shared Gateway business validation did not report the conflict: %q", tester.Texts())
-	}
-	if err := tester.Click("Publish validated Gateway draft"); err != nil {
-		t.Fatal(err)
-	}
-	if preview.jsonPublishConfirm {
-		t.Fatal("conflicting draft opened the publish confirmation")
-	}
-	updatedConfig, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updatedModels, err = os.ReadFile(modelsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(updatedConfig) != string(originalConfig) || string(updatedModels) != string(publishedBytes) {
-		t.Fatal("Gateway draft load/validation changed config.json or published models.json")
+	if string(unchangedModels) != string(publishedBytes) || string(unchangedConfig) != string(originalConfig) {
+		t.Fatal("valid no-op draft changed config.json or models.json")
 	}
 }
 
@@ -346,13 +367,14 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 	}
 
 	filters := newNativeStatsFilters(time.Now())
+	sessionsFilters := newNativeSessionsFilters(time.Now())
 	filters.requestRange = nativeRange7d
-	filters.conversationRange = nativeRange7d
+	sessionsFilters.conversationRange = nativeRange7d
 	filters.requestFrom = nativeCalendarDay(base)
 	filters.requestTo = filters.requestFrom.AddDate(0, 0, 1)
-	filters.conversationFrom = nativeCalendarDay(base)
-	filters.conversationTo = filters.conversationFrom.AddDate(0, 0, 1)
-	first, err := loadNativeStats(0, 0, 10, filters)
+	sessionsFilters.conversationFrom = nativeCalendarDay(base)
+	sessionsFilters.conversationTo = sessionsFilters.conversationFrom.AddDate(0, 0, 1)
+	first, err := loadNativeStats(0, 0, 10, filters, sessionsFilters)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,16 +382,16 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 	for i, row := range first.modelRows {
 		modelKeys[i] = row.key
 	}
-	if first.totalRequests != 1000 || first.requestTotal != 1000 || first.okRequests != 1000 || first.failedRequests != 0 || first.avgLatencyMs != 10 || first.totalTokens["input"] != 99900 || first.totalTokens["output"] != 49950 || first.totalTokens["total"] != 149850 || first.cacheHitRate != "0.0%" || first.costUnknown != 1 || first.conversationSource != "sessionScan" || first.conversationTotal != 51 || len(first.rows) != 10 || len(first.conversations) != 10 || len(first.providerRows) != 1 || len(first.modelRows) != 1000 || !sort.StringsAreSorted(modelKeys) || !strings.HasPrefix(first.modelRows[0].label, "model-000 ·") || first.modelRows[len(first.modelRows)-1].label != "unknown-model · requests: 1 · ok: 1 · input: - · output: - · cached: - · cache rate: - · cost: unknown" {
+	if first.nativeStatsPage.totalRequests != 1000 || first.nativeStatsPage.requestTotal != 1000 || first.nativeStatsPage.okRequests != 1000 || first.nativeStatsPage.failedRequests != 0 || first.nativeStatsPage.avgLatencyMs != 10 || first.nativeStatsPage.totalTokens["input"] != 99900 || first.nativeStatsPage.totalTokens["output"] != 49950 || first.nativeStatsPage.totalTokens["total"] != 149850 || first.nativeStatsPage.cacheHitRate != "0.0%" || first.nativeStatsPage.costUnknown != 1 || first.nativeSessionsPage.conversationSource != "sessionScan" || first.nativeSessionsPage.conversationTotal != 51 || len(first.nativeStatsPage.rows) != 10 || len(first.nativeSessionsPage.conversations) != 10 || len(first.nativeStatsPage.providerRows) != 1 || len(first.nativeStatsPage.modelRows) != 1000 || !sort.StringsAreSorted(modelKeys) || !strings.HasPrefix(first.nativeStatsPage.modelRows[0].label, "model-000 ·") || first.nativeStatsPage.modelRows[len(first.nativeStatsPage.modelRows)-1].label != "unknown-model · requests: 1 · ok: 1 · input: - · output: - · cached: - · cache rate: - · cost: unknown" {
 		t.Fatalf("first stats page = %+v", first)
 	}
 	if first.rows[0].name != "supplier / unknown-model" || first.rows[0].tokens != nil || first.rows[0].cost != nil {
 		t.Fatalf("unknown request facts were fabricated: %+v", first.rows[0])
 	}
 	var unknownConversation *nativeConversation
-	for i := range first.conversations {
-		if first.conversations[i].id == "session-scan-1" {
-			unknownConversation = &first.conversations[i]
+	for i := range first.nativeSessionsPage.conversations {
+		if first.nativeSessionsPage.conversations[i].id == "session-scan-1" {
+			unknownConversation = &first.nativeSessionsPage.conversations[i]
 			break
 		}
 	}
@@ -379,17 +401,20 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 
 	preview := newNativeComplexPreview()
 	preview.tab = 2
-	preview.stats = first
+	preview.stats = first.nativeStatsPage
+	preview.sessions = first.nativeSessionsPage
 	preview.statsLoaded = true
 	preview.statsFilters = filters
+	preview.sessionsFilters = sessionsFilters
 	preview.sessionOutline.Open.Add("session-scan-1")
-	preview.refreshStats = func(requestPage, conversationPage int, filters nativeStatsFilters) {
-		loaded, err := loadNativeStats(requestPage, conversationPage, 10, filters)
+	preview.refreshStats = func(requestPage, conversationPage int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) {
+		loaded, err := loadNativeStats(requestPage, conversationPage, 10, statsFilters, sessionsFilters)
 		if err != nil {
 			preview.statsError = err.Error()
 			return
 		}
-		preview.stats = loaded
+		preview.stats = loaded.nativeStatsPage
+		preview.sessions = loaded.nativeSessionsPage
 		preview.statsError = ""
 	}
 	preview.refreshConversationRequests = func(id string, page int) {
@@ -447,7 +472,7 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 	if err := tester.Click("All time"); err != nil {
 		t.Fatal(err)
 	}
-	if preview.stats.requestPage != 0 || preview.stats.totalRequests != 1001 || preview.stats.requestTotal != 1001 || !tester.HasText("Recent requests · page 1 of 101") || preview.stats.conversationTotal != 51 || !tester.HasText("Conversation page 1 of 6 · 51 conversations") {
+	if preview.stats.requestPage != 0 || preview.stats.totalRequests != 1001 || preview.stats.requestTotal != 1001 || !tester.HasText("Recent requests · page 1 of 101") || preview.sessions.conversationTotal != 51 || !tester.HasText("Conversation page 1 of 6 · 51 conversations") {
 		t.Fatalf("request range did not load independently: stats=%+v text=%q", preview.stats, tester.Texts())
 	}
 	if err := tester.Click("24h"); err != nil {
@@ -459,7 +484,7 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 	if err := tester.Click("Full history"); err != nil {
 		t.Fatal(err)
 	}
-	if preview.stats.conversationTotal != 52 || !tester.HasText("Conversation page 1 of 6 · 52 conversations") || preview.stats.totalRequests != 1000 {
+	if preview.sessions.conversationTotal != 52 || !tester.HasText("Conversation page 1 of 6 · 52 conversations") || preview.stats.totalRequests != 1000 {
 		t.Fatalf("conversation range did not load independently: stats=%+v text=%q", preview.stats, tester.Texts())
 	}
 	if err := tester.Click("Custom"); err != nil {
@@ -502,17 +527,17 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 	if err := tester.Click("Custom dates"); err != nil {
 		t.Fatal(err)
 	}
-	if preview.stats.conversationTotal != 51 || !tester.HasText("Conversation from") || !tester.HasText("Conversation to") {
+	if preview.sessions.conversationTotal != 51 || !tester.HasText("Conversation from") || !tester.HasText("Conversation to") {
 		t.Fatalf("conversation custom range failed: stats=%+v text=%q", preview.stats, tester.Texts())
 	}
 	if err := tester.Click("Conversation to"); err != nil {
 		t.Fatal(err)
 	}
-	nextConversationDay := preview.statsFilters.conversationTo.AddDate(0, 0, 1)
+	nextConversationDay := preview.sessionsFilters.conversationTo.AddDate(0, 0, 1)
 	if err := tester.Click(nextConversationDay.Format("January 2, 2006")); err != nil {
 		t.Fatal(err)
 	}
-	if preview.stats.conversationTotal != 51 || !nativeCalendarDay(preview.statsFilters.conversationTo).Equal(nativeCalendarDay(nextConversationDay)) {
+	if preview.sessions.conversationTotal != 51 || !nativeCalendarDay(preview.sessionsFilters.conversationTo).Equal(nativeCalendarDay(nextConversationDay)) {
 		t.Fatalf("conversation custom date did not filter/refresh: filters=%+v stats=%+v", preview.statsFilters, preview.stats)
 	}
 	invalidFrom := preview.statsFilters.requestTo.AddDate(0, 0, 1)
@@ -544,14 +569,14 @@ func TestNativeStatsReadsRealHistoryPagesUnknownFactsWithoutChangingRows(t *test
 func TestNativeStatsDoesNotCreateMissingHistoryDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing", "requests.db")
 	t.Setenv("PI_SWITCH_DB", path)
-	loaded, err := loadNativeStats(0, 0, 10, newNativeStatsFilters(time.Now()))
+	loaded, err := loadNativeStats(0, 0, 10, newNativeStatsFilters(time.Now()), newNativeSessionsFilters(time.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.requestTotal != 0 || loaded.successRate != "0%" || loaded.cacheHitRate != "-" {
 		t.Fatalf("missing history summary = %+v", loaded)
 	}
-	preview := &nativeComplexPreview{tab: 2, stats: loaded, statsLoaded: true}
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{stats: loaded.nativeStatsPage, statsLoaded: true}, nativeSessionsState: nativeSessionsState{sessions: loaded.nativeSessionsPage}}
 	tester := ui.NewTester(preview.view, 900, 900)
 	if !tester.HasText("Tokens: input - · output - · cached - · reasoning - · total - · cache rate: - · avg latency: -") {
 		t.Fatalf("missing-history metrics should remain unknown: %q", tester.Texts())
@@ -585,14 +610,22 @@ func TestNativeStatsAutoRefreshUsesConfiguredIntervalWithoutOverlap(t *testing.T
 
 	var refreshes, requestPage, conversationPage int
 	var filters nativeStatsFilters
+	var sessionsFilters nativeSessionsFilters
 	preview := &nativeComplexPreview{
-		tab:          2,
-		stats:        nativeStatsPage{requestPage: 2, conversationPage: 3},
-		statsFilters: nativeStatsFilters{requestRange: nativeRange7d, conversationRange: nativeRange24h},
+		tab: 2,
+		nativeStatsState: nativeStatsState{
+			stats:        nativeStatsPage{requestPage: 2},
+			statsFilters: nativeStatsFilters{requestRange: nativeRange7d},
+		},
+		nativeSessionsState: nativeSessionsState{
+			sessions:        nativeSessionsPage{conversationPage: 3},
+			sessionsFilters: nativeSessionsFilters{conversationRange: nativeRange24h},
+		},
 	}
-	preview.refreshStats = func(request, conversation int, current nativeStatsFilters) {
+	preview.refreshStats = func(request, conversation int, current nativeStatsFilters, currentSessions nativeSessionsFilters) {
 		refreshes++
 		requestPage, conversationPage, filters = request, conversation, current
+		sessionsFilters = currentSessions
 	}
 	tester := ui.NewTester(preview.view, 900, 1000)
 	if preview.statsRefreshTier != 0 || !tester.HasText("Auto-refresh") {
@@ -607,7 +640,7 @@ func TestNativeStatsAutoRefreshUsesConfiguredIntervalWithoutOverlap(t *testing.T
 
 	preview.statsRefreshAt = time.Now().Add(-time.Second)
 	tester.Frame()
-	if refreshes != 1 || preview.statsRefreshAt.Before(time.Now()) || requestPage != 2 || conversationPage != 3 || filters != preview.statsFilters {
+	if refreshes != 1 || preview.statsRefreshAt.Before(time.Now()) || requestPage != 2 || conversationPage != 3 || filters != preview.statsFilters || sessionsFilters != preview.sessionsFilters {
 		t.Fatalf("due auto-refresh count=%d pages=%d/%d filters=%+v next=%v", refreshes, requestPage, conversationPage, filters, preview.statsRefreshAt)
 	}
 
@@ -661,16 +694,17 @@ func TestNativeStatsSummaryShowsFailuresAndOnlyKnownUsage(t *testing.T) {
 	}
 
 	filters := newNativeStatsFilters(now)
+	sessionsFilters := newNativeSessionsFilters(now)
 	filters.requestRange = nativeRangeAll
-	filters.conversationRange = nativeRangeAll
-	loaded, err := loadNativeStats(0, 0, 10, filters)
+	sessionsFilters.conversationRange = nativeRangeAll
+	loaded, err := loadNativeStats(0, 0, 10, filters, sessionsFilters)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.totalRequests != 2 || loaded.okRequests != 1 || loaded.failedRequests != 1 || loaded.totalTokens["input"] != 10 || loaded.totalTokens["output"] != 5 || loaded.totalTokens["total"] != 15 || loaded.avgLatencyMs != 30 {
 		t.Fatalf("stats included failed-request usage or lost failure metrics: %+v", loaded)
 	}
-	preview := &nativeComplexPreview{tab: 2, stats: loaded, statsLoaded: true}
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{stats: loaded.nativeStatsPage, statsLoaded: true}, nativeSessionsState: nativeSessionsState{sessions: loaded.nativeSessionsPage}}
 	tester := ui.NewTester(preview.view, 900, 900)
 	for _, want := range []string{
 		"Requests: 2 · successful: 1 (50.0%) · failed: 1 · cost: $0.25 · unknown cost: 0",
@@ -691,10 +725,10 @@ func TestNativeStatsSummaryShowsFailuresAndOnlyKnownUsage(t *testing.T) {
 }
 
 func TestNativeStatsProviderRequestShareChart(t *testing.T) {
-	preview := &nativeComplexPreview{tab: 2, stats: nativeStatsPage{providerRows: []nativeStatsRow{
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{stats: nativeStatsPage{providerRows: []nativeStatsRow{
 		{key: "alpha", requests: 3},
 		{key: "beta", requests: 1},
-	}}, statsLoaded: true}
+	}}, statsLoaded: true}}
 	tester := ui.NewTester(preview.view, 900, 900)
 	if err := tester.Click("Requests by provider (2)"); err != nil {
 		t.Fatal(err)
@@ -707,7 +741,7 @@ func TestNativeStatsProviderRequestShareChart(t *testing.T) {
 }
 
 func TestNativeStatsProviderRequestShareChartWithNoRequests(t *testing.T) {
-	preview := &nativeComplexPreview{tab: 2, stats: nativeStatsPage{providerRows: []nativeStatsRow{{key: "empty"}}}, statsLoaded: true}
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{stats: nativeStatsPage{providerRows: []nativeStatsRow{{key: "empty"}}}, statsLoaded: true}}
 	tester := ui.NewTester(preview.view, 900, 900)
 	if err := tester.Click("Requests by provider (1)"); err != nil {
 		t.Fatal(err)
@@ -725,7 +759,7 @@ func TestNativeStatsModelSummaryVirtualizesAndNavigates(t *testing.T) {
 			label: fmt.Sprintf("model-%04d · requests: 1 · ok: 1 · input: 100 · output: 50 · cached: - · cache rate: 0.0%% · cost: $0.01", i),
 		}
 	}
-	preview := &nativeComplexPreview{tab: 2, stats: nativeStatsPage{modelRows: models}, statsLoaded: true}
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{stats: nativeStatsPage{modelRows: models}, statsLoaded: true}}
 	tester := ui.NewTester(preview.view, 900, 900)
 	tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
 	if err := tester.Click("By model (1000)"); err != nil {
@@ -1027,7 +1061,7 @@ func TestNativeGatewayPublishRejectsConflictWithoutWriting(t *testing.T) {
 
 func TestNativeStatsExportButtonsAndAtomicFileWrite(t *testing.T) {
 	format := ""
-	preview := &nativeComplexPreview{tab: 2, exportStats: func(selected string) { format = selected }}
+	preview := &nativeComplexPreview{tab: 2, nativeStatsState: nativeStatsState{exportStats: func(selected string) { format = selected }}}
 	tester := ui.NewTester(preview.view, 900, 1000)
 	if !tester.HasText("error text and upstream URLs may contain sensitive data") {
 		t.Fatalf("export sensitivity warning missing: %q", tester.Texts())

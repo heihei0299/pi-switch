@@ -140,7 +140,7 @@ func TestNativePackageListVirtualizesAndNavigates100And1000Items(t *testing.T) {
 			for i := range items {
 				items[i] = nativePackage{id: fmt.Sprintf("npm:pkg-%04d", i), typeName: "npm", name: fmt.Sprintf("package-%04d", i), version: "1.0.0", enabled: true}
 			}
-			preview := &nativeComplexPreview{tab: 3, packages: items, packagesLoaded: true}
+			preview := &nativeComplexPreview{tab: 3, nativePackagesState: nativePackagesState{packages: items, packagesLoaded: true}}
 			tester := ui.NewTester(preview.view, 900, 1000)
 			tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
 			first, last := preview.packageList.Visible()
