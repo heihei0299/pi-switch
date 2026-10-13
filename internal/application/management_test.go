@@ -129,6 +129,10 @@ func TestProviderValidationConflictAndCancelHaveNoWrites(t *testing.T) {
 	if err := SaveProvider(path, "", "supplier", cfg.Profiles["supplier"], ""); err == nil {
 		t.Fatal("duplicate overwrote supplier")
 	}
+	var validation *ManagementValidationError
+	if err := SaveProvider(path, "", "  ", cfg.Profiles["supplier"], ""); !errors.As(err, &validation) || validation.Error() != "name required" {
+		t.Fatalf("empty provider name error = %v", err)
+	}
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
 		t.Fatal("failed action wrote config")

@@ -1,9 +1,9 @@
 package application
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,80 +12,42 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/domain/revision"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
-var ErrManagementConflict = errors.New("configuration changed; reload before saving")
+var ErrManagementConflict = providerusecase.ErrRevisionConflict
 
 // Revision is a comparison token, never a second source of configuration.
-func Revision(value interface{}) string {
-	data, _ := json.Marshal(value)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
+func Revision(value interface{}) string { return revision.Of(value) }
 
 func updateWithBackup(path string, mutate func(*config.PiSwitchConfig) error) error {
-	return config.UpdateAtPath(path, func(cfg *config.PiSwitchConfig) error {
-		if err := mutate(cfg); err != nil {
-			return err
-		}
-		_, err := CreateConfigBackup(path)
-		return err
-	})
+	err := fileconfig.UpdateWithBackup(path, mutate)
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	return err
 }
 
 func validateBackupDirectory(path string) error {
-	info, err := os.Lstat(path + ".backups")
-	if err != nil {
-		return err
+	err := fileconfig.ValidateBackupDirectory(path)
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
 	}
-	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return &ManagementValidationError{Message: "backup directory must be a private, non-symlink directory"}
-	}
-	return nil
+	return err
 }
 
 // CreateConfigBackup keeps the exact pre-write bytes, including legacy fields.
 func CreateConfigBackup(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+	name, err := fileconfig.CreateConfigBackup(path)
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return "", &ManagementValidationError{Message: err.Error()}
 	}
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(path+".backups", 0700); err != nil {
-		return "", err
-	}
-	if err := validateBackupDirectory(path); err != nil {
-		return "", err
-	}
-	file, err := os.CreateTemp(path+".backups", "config-*.json")
-	if err != nil {
-		return "", err
-	}
-	complete := false
-	defer func() {
-		_ = file.Close()
-		if !complete {
-			_ = os.Remove(file.Name())
-		}
-	}()
-	if err := file.Chmod(0600); err != nil {
-		return "", err
-	}
-	if _, err := file.Write(data); err != nil {
-		return "", err
-	}
-	if err := file.Sync(); err != nil {
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	complete = true
-	return filepath.Base(file.Name()), nil
+	return name, err
 }
 
 type ConfigBackup struct {
@@ -196,50 +158,54 @@ func SaveSettings(path string, settings config.Settings, expected string) error 
 	})
 }
 
-func SaveProvider(path, original, name string, prof config.ProviderProfile, expected string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return &ManagementValidationError{Message: "name required"}
-	}
-	if err := profile.ValidateProfile(prof); err != nil {
-		return providerValidationError(prof, err)
-	}
-	return updateWithBackup(path, func(cfg *config.PiSwitchConfig) error {
-		if cfg.Profiles == nil {
-			cfg.Profiles = make(map[string]config.ProviderProfile)
-		}
-		if original != "" {
-			old, ok := cfg.Profiles[original]
-			if !ok || Revision(old) != expected {
-				return ErrManagementConflict
-			}
-		}
-		if _, exists := cfg.Profiles[name]; exists && name != original {
-			return profile.ErrProfileExists
-		}
-		if original != name {
-			delete(cfg.Profiles, original)
-			if cfg.Current != nil && *cfg.Current == original {
-				cfg.Current = &name
-			}
-		}
-		cfg.Profiles[name] = prof
-		return nil
+// shortcut: keep caller-compatible Provider facades until entrypoint wiring is folded in W08.
+// PutLegacyProvider preserves the historical HTTP overwrite and rename semantics.
+func PutLegacyProvider(ctx context.Context, path, name, renameFrom string, prof config.ProviderProfile) error {
+	_, err := bootstrap.NewProviderService(path).PutLegacy(ctx, providerusecase.PutLegacyCommand{
+		Name: name, RenameFrom: renameFrom, Profile: prof,
 	})
+	return err
+}
+
+func DeleteLegacyProvider(ctx context.Context, path, name string) error {
+	_, err := bootstrap.NewProviderService(path).DeleteLegacy(ctx, providerusecase.DeleteLegacyCommand{Name: name})
+	return err
+}
+
+func SaveProvider(path, original, name string, prof config.ProviderProfile, expected string) error {
+	return saveProviderContext(context.Background(), path, original, name, prof, expected)
+}
+
+func saveProviderContext(ctx context.Context, path, original, name string, prof config.ProviderProfile, expected string) error {
+	_, err := bootstrap.NewProviderService(path).Save(ctx, providerusecase.SaveCommand{
+		Original: original, Name: name, Profile: prof, ExpectedRevision: expected,
+	})
+	if errors.Is(err, providerusecase.ErrProfileExists) {
+		return profile.ErrProfileExists
+	}
+	if errors.Is(err, providerusecase.ErrNameRequired) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	var validation *providerusecase.ValidationError
+	if errors.As(err, &validation) {
+		return providerValidationError(prof, validation.Err)
+	}
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	return err
 }
 
 func DeleteProvider(path, name, expected string) error {
-	return updateWithBackup(path, func(cfg *config.PiSwitchConfig) error {
-		prof, ok := cfg.Profiles[name]
-		if !ok || Revision(prof) != expected {
-			return ErrManagementConflict
-		}
-		delete(cfg.Profiles, name)
-		if cfg.Current != nil && *cfg.Current == name {
-			cfg.Current = nil
-		}
-		return nil
-	})
+	return deleteProviderContext(context.Background(), path, name, expected)
+}
+
+func deleteProviderContext(ctx context.Context, path, name, expected string) error {
+	_, err := bootstrap.NewProviderService(path).Delete(ctx, providerusecase.DeleteCommand{Name: name, ExpectedRevision: expected})
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	return err
 }
 
 func SetCurrentProfile(path, name string) error {

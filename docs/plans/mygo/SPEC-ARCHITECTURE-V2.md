@@ -79,7 +79,7 @@ flowchart TB
 | `internal/adapters/outbound/**` | `internal/domain/**`、`internal/usecase/**`、本 outbound 子树 | 可用标准库和 IO 所需外部库；不得依赖 inbound |
 | `internal/bootstrap/**` | 可装配各内部包 | 根模块不得依赖独立 `desktop` 模块 |
 
-检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
+检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W01 迁移桥接仅允许 `outbound/fileconfig` 依赖现有 `internal/config`、`outbound/profilevalidation` 依赖现有 `internal/profile`；这是对旧持久化和唯一既有 Provider 校验规则的适配，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
 
 ## 4. 按业务能力划分的目标包
 

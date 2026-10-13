@@ -1,107 +1,22 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/heihei0299/pi-switch/internal/domain/provider"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 )
 
-type ModelCost struct {
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cacheRead"`
-	CacheWrite float64 `json:"cacheWrite,omitempty"`
-}
-
-type ModelEntry struct {
-	ID            string     `json:"id"`
-	ContextWindow uint32     `json:"contextWindow"`
-	MaxTokens     uint32     `json:"maxTokens"`
-	Name          *string    `json:"name,omitempty"`
-	Cost          *ModelCost `json:"cost,omitempty"`
-	Input         []string   `json:"input,omitempty"`
-	Reasoning     *bool      `json:"reasoning,omitempty"`
-}
-
-type RequestScopedError struct {
-	Status int      `json:"status"`
-	Match  []string `json:"match,omitempty"`
-	Action string   `json:"action"`
-}
-
-type Upstream struct {
-	BaseURL       string            `json:"baseUrl"`
-	APIKey        string            `json:"apiKey"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Weight        *uint32           `json:"weight,omitempty"`
-	Name          *string           `json:"name,omitempty"`
-	API           string            `json:"api,omitempty"`
-	ResponsesMode string            `json:"responsesMode,omitempty"`
-	// RequestRetry overrides the profile/global retry budget for attempts
-	// through this channel. Nil or negative inherits; explicit 0 admits round 0 only.
-	RequestRetry *int `json:"requestRetry,omitempty"`
-	// DisableCooling overrides cooling for this channel when non-nil.
-	DisableCooling *bool `json:"disableCooling,omitempty"`
-	// Models / ExposedModels are owned by this channel.
-	Models        []ModelEntry `json:"models,omitempty"`
-	ExposedModels []string     `json:"exposedModels,omitempty"`
-}
-
-// UnmarshalJSON rejects `exposedModels: null` at the boundary. encoding/json folds
-// null into a nil slice, but null is neither "missing" (legacy migration owns that)
-// nor "[]" (explicit zero exposure) — system-contract 2.2. Keeping the rule on the
-// field means the JSON name has one owner instead of a second schema walker.
-func (u *Upstream) UnmarshalJSON(data []byte) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	if v, ok := raw["exposedModels"]; ok && isJSONNull(v) {
-		return fmt.Errorf("exposedModels must not be null")
-	}
-	type upstreamAlias Upstream
-	return json.Unmarshal(data, (*upstreamAlias)(u))
-}
-
-func (u Upstream) MarshalJSON() ([]byte, error) {
-	type upstreamAlias Upstream
-	var exposed *[]string
-	if u.ExposedModels != nil {
-		exposed = &u.ExposedModels
-	}
-	return json.Marshal(struct {
-		upstreamAlias
-		ExposedModels *[]string `json:"exposedModels,omitempty"`
-	}{upstreamAlias: upstreamAlias(u), ExposedModels: exposed})
-}
-
-func isJSONNull(v json.RawMessage) bool {
-	return bytes.Equal(bytes.TrimSpace(v), []byte("null"))
-}
-
-func (u Upstream) EffectiveResponsesMode(fallback string) string {
-	if u.ResponsesMode != "" {
-		return u.ResponsesMode
-	}
-	return fallback
-}
-
-// EffectiveAPI resolves the api a channel really speaks: its own when it declares
-// one, otherwise the profile's. The runtime resolves the same way, so anything that
-// judges a channel must judge it by this value rather than by u.API alone.
-func (u Upstream) EffectiveAPI(fallback string) string {
-	if u.API != "" {
-		return u.API
-	}
-	return fallback
-}
+type ModelCost = provider.ModelCost
+type ModelEntry = provider.ModelEntry
+type RequestScopedError = provider.RequestScopedError
+type Upstream = provider.Upstream
+type ProviderProfile = provider.Profile
 
 // ValidateEffectiveChannelAPI checks the api/mode pair a channel will actually be
 // called with — effective api, effective mode — which is exactly what the request
@@ -174,80 +89,6 @@ func ValidateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 
 func validateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	return ValidateUpstreamAPI(u, profile)
-}
-
-type ProviderProfile struct {
-	API               string                 `json:"api"`
-	ResponsesMode     string                 `json:"responsesMode"`
-	BaseURL           string                 `json:"baseUrl"`
-	APIKey            string                 `json:"apiKey"`
-	Upstreams         []Upstream             `json:"upstreams,omitempty"`
-	Headers           map[string]string      `json:"headers,omitempty"`
-	ModelMap          map[string]interface{} `json:"modelMap,omitempty"`
-	UserAgent         *string                `json:"userAgent,omitempty"`
-	Preset            *string                `json:"preset,omitempty"`
-	ModelsDevProvider *string                `json:"modelsDevProvider,omitempty"`
-	Proxy             *bool                  `json:"proxy,omitempty"`
-	// RequestRetry overrides the global retry budget. Nil or negative inherits;
-	// explicit 0 admits round 0 only (no additional rounds).
-	RequestRetry *int `json:"requestRetry,omitempty"`
-	// DisableCooling overrides global cooling when non-nil.
-	DisableCooling *bool `json:"disableCooling,omitempty"`
-	// RequestScopedErrors classifies upstream errors for this profile.
-	// Non-empty overrides the global rules.
-	RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
-}
-
-// presetModelsDevProviders maps the built-in presets to their models.dev provider
-// id. It is the only place that translation lives, so profile metadata lookup and
-// model enrichment cannot drift apart.
-var presetModelsDevProviders = map[string]string{
-	"openai": "openai", "anthropic": "anthropic", "google": "google",
-	"deepseek": "deepseek", "xai": "xai", "moonshot": "moonshot",
-	"qwen": "qwen", "cohere": "cohere", "mistral": "mistral", "azure": "azure",
-}
-
-// ModelsDevProviderKey resolves the models.dev provider id for this profile: an
-// explicit modelsDevProvider wins, then the known preset mapping. "" means the
-// profile does not identify a models.dev provider.
-func (p ProviderProfile) ModelsDevProviderKey() string {
-	if p.ModelsDevProvider != nil && *p.ModelsDevProvider != "" {
-		return *p.ModelsDevProvider
-	}
-	if p.Preset != nil {
-		if v, ok := presetModelsDevProviders[*p.Preset]; ok {
-			return v
-		}
-	}
-	return ""
-}
-
-// UnmarshalJSON adds the channel index to an error raised while decoding an
-// upstream, so a bad channel field reports upstreams[i].<field> instead of losing
-// the position. The happy path decodes once; only a failed decode re-walks the
-// upstreams to find the index. The field rules themselves stay on Upstream.
-func (p *ProviderProfile) UnmarshalJSON(data []byte) error {
-	type providerProfileAlias ProviderProfile
-	if err := json.Unmarshal(data, (*providerProfileAlias)(p)); err == nil {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	if v, ok := raw["upstreams"]; ok {
-		var upstreams []json.RawMessage
-		if err := json.Unmarshal(v, &upstreams); err == nil {
-			for i, upstreamRaw := range upstreams {
-				var upstream Upstream
-				if err := json.Unmarshal(upstreamRaw, &upstream); err != nil {
-					return fmt.Errorf("upstreams[%d]: %w", i, err)
-				}
-			}
-		}
-	}
-	// The failure was not in an upstream; report the original decode error.
-	return json.Unmarshal(data, (*providerProfileAlias)(p))
 }
 
 type CircuitBreakerSettings struct {
@@ -600,27 +441,6 @@ func ReplaceAtPath(path string, prepare func([]byte) (PiSwitchConfig, error)) er
 	})
 }
 
-// ChannelName returns the stable key of the i-th upstream ("" when unnamed).
-func (p ProviderProfile) ChannelName(i int) string {
-	if i < 0 || i >= len(p.Upstreams) {
-		return ""
-	}
-	if p.Upstreams[i].Name == nil {
-		return ""
-	}
-	return *p.Upstreams[i].Name
-}
-
-// ChannelView returns the models and exposed ids owned by the named channel.
-func (p ProviderProfile) ChannelView(name string) ([]ModelEntry, []string) {
-	for i := range p.Upstreams {
-		if p.ChannelName(i) == name {
-			return p.Upstreams[i].Models, p.Upstreams[i].ExposedModels
-		}
-	}
-	return nil, nil
-}
-
 // ParseConfig parses config JSON with the same semantics every entry point uses:
 // fields default from DefaultConfig, a present "profiles" replaces the
 // placeholder profile (a config file without the key has no profiles), and any
@@ -691,61 +511,7 @@ func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
 	return cfg, path, nil
 }
 
-func (p ProviderProfile) PrimaryBaseURL() string {
-	if len(p.Upstreams) > 0 && p.Upstreams[0].BaseURL != "" {
-		return p.Upstreams[0].BaseURL
-	}
-	return p.BaseURL
-}
-
-func (p ProviderProfile) PrimaryAPIKey() string {
-	if len(p.Upstreams) > 0 && p.Upstreams[0].APIKey != "" {
-		return p.Upstreams[0].APIKey
-	}
-	return p.APIKey
-}
-
-func (p ProviderProfile) PrimaryHeaders() map[string]string {
-	if len(p.Upstreams) > 0 {
-		return MergeHeaders(p.Headers, p.Upstreams[0].Headers)
-	}
-	return MergeHeaders(p.Headers, nil)
-}
-
-// MergeHeaders applies channel overrides without treating header case as a
-// distinct key. Both proxy requests and provider probes use this policy.
-func MergeHeaders(profile, channel map[string]string) map[string]string {
-	merged := make(map[string]string, len(profile)+len(channel))
-	for _, source := range []map[string]string{profile, channel} {
-		for key, value := range source {
-			if key != "" {
-				merged[http.CanonicalHeaderKey(key)] = value
-			}
-		}
-	}
-	return merged
-}
-
-func (p ProviderProfile) ResolvedUpstreams() []Upstream {
-	if len(p.Upstreams) > 0 {
-		return p.Upstreams
-	}
-	if p.BaseURL != "" || p.APIKey != "" || p.Headers != nil {
-		return []Upstream{{BaseURL: p.BaseURL, APIKey: p.APIKey, Headers: p.Headers}}
-	}
-	return nil
-}
-
-func (m ModelEntry) EffectiveContextWindow() uint32 {
-	if m.ContextWindow == 0 {
-		return 128000
-	}
-	return m.ContextWindow
-}
-
-func (m ModelEntry) EffectiveMaxTokens() uint32 {
-	if m.MaxTokens == 0 {
-		return 16384
-	}
-	return m.MaxTokens
+// MergeHeaders preserves the existing config package entry point.
+func MergeHeaders(profileHeaders, channelHeaders map[string]string) map[string]string {
+	return provider.MergeHeaders(profileHeaders, channelHeaders)
 }

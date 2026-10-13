@@ -61,6 +61,25 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			wantViolation: module + "/internal/adapters/inbound/httpmgmt",
 		},
 		{
+			name: "fileconfig adapter may bridge current config storage",
+			files: map[string]string{
+				"internal/adapters/outbound/fileconfig/store.go": "package fileconfig\nimport \"github.com/heihei0299/pi-switch/internal/config\"\n",
+			},
+		},
+		{
+			name: "shared validator adapter may bridge current profile rules",
+			files: map[string]string{
+				"internal/adapters/outbound/profilevalidation/validator.go": "package profilevalidation\nimport \"github.com/heihei0299/pi-switch/internal/profile\"\n",
+			},
+		},
+		{
+			name: "unscoped outbound cannot bypass config adapter",
+			files: map[string]string{
+				"internal/adapters/outbound/other/store.go": "package other\nimport \"github.com/heihei0299/pi-switch/internal/config\"\n",
+			},
+			wantViolation: module + "/internal/config",
+		},
+		{
 			name: "adapters stay under inbound or outbound",
 			files: map[string]string{
 				"internal/adapters/adapter.go": "package adapters\n",
@@ -124,7 +143,11 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 }
 
 func TestCheckArchitectureDependenciesAcceptsLegacyTree(t *testing.T) {
-	violations, err := check("../..", "github.com/heihei0299/pi-switch", map[string]bool{})
+	stdlib, err := standardPackages("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	violations, err := check("../..", "github.com/heihei0299/pi-switch", stdlib)
 	if err != nil {
 		t.Fatal(err)
 	}

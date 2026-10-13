@@ -11,6 +11,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
+	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
 func handleGetConfig(c *gin.Context) {
@@ -157,23 +158,16 @@ func handlePutProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid profile: %v", err)})
 		return
 	}
-	// 业务规则只有一份（internal/profile，规则本身在 internal/protocol 唯一）：
-	// PUT 是覆写而不是新建，所以复用 ValidateProfile 而不是 CreateProfile。
-	if err := profile.ValidateProfile(prof); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
+	renameFrom := ""
+	if body.RenameFrom != nil {
+		renameFrom = *body.RenameFrom
 	}
-	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
-		if cfg.Profiles == nil {
-			cfg.Profiles = map[string]config.ProviderProfile{}
+	if err := application.PutLegacyProvider(c.Request.Context(), configPath(), name, renameFrom, prof); err != nil {
+		var validation *providerusecase.ValidationError
+		if errors.As(err, &validation) {
+			c.JSON(400, gin.H{"error": validation.Err.Error()})
+			return
 		}
-		if body.RenameFrom != nil && *body.RenameFrom != "" && *body.RenameFrom != name {
-			delete(cfg.Profiles, *body.RenameFrom)
-		}
-		cfg.Profiles[name] = prof
-		return nil
-	})
-	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -182,17 +176,8 @@ func handlePutProfile(c *gin.Context) {
 
 func handleDeleteProfile(c *gin.Context) {
 	name := c.Param("name")
-	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
-		if _, ok := cfg.Profiles[name]; !ok {
-			return profile.ErrProfileNotFound
-		}
-		delete(cfg.Profiles, name)
-		if cfg.Current != nil && *cfg.Current == name {
-			cfg.Current = nil
-		}
-		return nil
-	})
-	if errors.Is(err, profile.ErrProfileNotFound) {
+	err := application.DeleteLegacyProvider(c.Request.Context(), configPath(), name)
+	if errors.Is(err, providerusecase.ErrProfileNotFound) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
