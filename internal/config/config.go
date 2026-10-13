@@ -1,13 +1,11 @@
 package config
 
 import (
-	"encoding/json"
-	"errors"
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
 
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
 	"github.com/heihei0299/pi-switch/internal/domain/provider"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 )
@@ -91,140 +89,9 @@ func validateUpstreamAPI(u Upstream, profile ProviderProfile) error {
 	return ValidateUpstreamAPI(u, profile)
 }
 
-type CircuitBreakerSettings struct {
-	Enabled          bool `json:"enabled"`
-	FailureThreshold int  `json:"failureThreshold"`
-	CooldownSeconds  int  `json:"cooldownSeconds"`
-}
-type Settings struct {
-	WriteMode          string `json:"writeMode"`
-	ConversationSource string `json:"conversationSource"`
-	Proxy              struct {
-		Host           string                 `json:"host"`
-		Port           int                    `json:"port"`
-		UserAgent      *string                `json:"userAgent,omitempty"`
-		CircuitBreaker CircuitBreakerSettings `json:"circuitBreaker"`
-		// RequestRetry is the number of additional credential retry rounds after
-		// round 0 (nil = default 3, negative = default 3, 0 = no additional rounds).
-		RequestRetry *int `json:"requestRetry,omitempty"`
-		// MaxRetryCredentials caps distinct credentials tried per round (0 = all).
-		MaxRetryCredentials int `json:"maxRetryCredentials,omitempty"`
-		// MaxRetryInterval caps the cooldown wait between rounds in seconds
-		// (nil = default 30, <=0 = never wait).
-		MaxRetryInterval *int `json:"maxRetryInterval,omitempty"`
-		// DisableCooling disables cooldown scheduling globally when true.
-		DisableCooling *bool `json:"disableCooling,omitempty"`
-		// TransientErrorCooldownSeconds cools 408/5xx-class and transport failures
-		// (nil or 0 = legacy 60s, negative = disable).
-		TransientErrorCooldownSeconds *int `json:"transientErrorCooldownSeconds,omitempty"`
-		// RequestScopedErrors classifies upstream errors globally; a profile with
-		// non-empty rules overrides these.
-		RequestScopedErrors []RequestScopedError `json:"requestScopedErrors,omitempty"`
-	} `json:"proxy"`
-	Web struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
-	} `json:"web"`
-}
-
-func (s *Settings) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		s.WriteMode = "gateway"
-		s.ConversationSource = "sessionScan"
-		s.Proxy.Host = "127.0.0.1"
-		s.Proxy.Port = 43112
-		s.Proxy.CircuitBreaker = CircuitBreakerSettings{Enabled: true, FailureThreshold: 3, CooldownSeconds: 60}
-		s.Web.Host = "127.0.0.1"
-		s.Web.Port = 43110
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	if vv, ok := raw["writeMode"]; ok {
-		if err := json.Unmarshal(vv, &s.WriteMode); err != nil {
-			return fmt.Errorf("writeMode: %w", err)
-		}
-	}
-	if vv, ok := raw["conversationSource"]; ok {
-		var cs string
-		if err := json.Unmarshal(vv, &cs); err != nil {
-			return err
-		}
-		switch cs {
-		case "proxy", "off", "sessionScan":
-			s.ConversationSource = cs
-		default:
-			return fmt.Errorf("invalid conversationSource %q", cs)
-		}
-	} else if vv, ok := raw["injectOpenCodeAttribution"]; ok {
-		var bval bool
-		if err := json.Unmarshal(vv, &bval); err != nil {
-			return fmt.Errorf("injectOpenCodeAttribution: %w", err)
-		}
-		if bval {
-			s.ConversationSource = "proxy"
-		} else {
-			s.ConversationSource = "off"
-		}
-	}
-	if vv, ok := raw["proxy"]; ok {
-		if err := json.Unmarshal(vv, &s.Proxy); err != nil {
-			return fmt.Errorf("proxy: %w", err)
-		}
-	}
-	if vv, ok := raw["web"]; ok {
-		if err := json.Unmarshal(vv, &s.Web); err != nil {
-			return fmt.Errorf("web: %w", err)
-		}
-	}
-	if s.WriteMode == "" {
-		s.WriteMode = "gateway"
-	}
-	if s.ConversationSource == "" {
-		s.ConversationSource = "sessionScan"
-	}
-	if s.Proxy.Host == "" {
-		s.Proxy.Host = "127.0.0.1"
-	}
-	if s.Proxy.Port == 0 {
-		s.Proxy.Port = 43112
-	}
-	if s.Web.Host == "" {
-		s.Web.Host = "127.0.0.1"
-	}
-	if s.Web.Port == 0 {
-		// circuitBreaker defaults (legacy JS compat): when the whole object is zero, backfill
-		if s.Proxy.CircuitBreaker.FailureThreshold == 0 && s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-			// Distinguish explicit "disabled: false with 0 thresholds" from missing object
-			// by checking whether the raw JSON had a "circuitBreaker" key. The Unmarshal above
-			// already filled s.Proxy from the raw "proxy" object, so a missing key leaves zeros.
-			// We treat zeros as "missing" and backfill defaults; an explicit zero-threshold
-			// config is not a valid intentional setting (min 1), so this is safe.
-			if s.Proxy.CircuitBreaker.FailureThreshold == 0 {
-				s.Proxy.CircuitBreaker.FailureThreshold = 3
-			}
-			if s.Proxy.CircuitBreaker.CooldownSeconds == 0 {
-				s.Proxy.CircuitBreaker.CooldownSeconds = 60
-			}
-			// enabled defaults to true when the object was missing (zero value false would hide)
-			// but we cannot tell missing vs explicit false. Preserve explicit false only when
-			// thresholds were non-zero. Since we already decided thresholds were zero => missing,
-			// set enabled to true.
-			s.Proxy.CircuitBreaker.Enabled = true
-		}
-		s.Web.Port = 43110
-	}
-	return nil
-}
-
-type PiSwitchConfig struct {
-	Version  uint32                     `json:"version"`
-	Current  *string                    `json:"current"`
-	Profiles map[string]ProviderProfile `json:"profiles"`
-	Settings Settings                   `json:"settings"`
-}
+type CircuitBreakerSettings = domainconfig.CircuitBreakerSettings
+type Settings = domainconfig.Settings
+type PiSwitchConfig = domainconfig.PiSwitchConfig
 
 func DefaultConfig() PiSwitchConfig {
 	pp := "test-provider"
@@ -271,244 +138,35 @@ func DefaultConfig() PiSwitchConfig {
 	}
 }
 
-// normalizeConfigVersion is the single version floor shared by load and save, so
-// the v1→v2 rule has one source instead of one copy per entry point.
-func normalizeConfigVersion(v uint32) uint32 {
-	if v < 2 {
-		return 2
-	}
-	return v
-}
-
 func MigratedForSave(cfg PiSwitchConfig) PiSwitchConfig {
-	out := cfg
-	out.Version = normalizeConfigVersion(out.Version)
-	if out.Settings.ConversationSource == "" {
-		out.Settings.ConversationSource = "sessionScan"
-	}
-	switch out.Settings.ConversationSource {
-	case "proxy", "off", "sessionScan":
-	default:
-		out.Settings.ConversationSource = "sessionScan"
-	}
-	return out
+	return domainconfig.MigratedForSave(cfg)
 }
 
-// ResolvePath returns the config file location used by every entry point
-// (server, TUI, CLI). Precedence: PI_SWITCH_CONFIG > ~/.pi-switch/config.json,
-// falling back to /tmp when the home directory cannot be determined.
-func ResolvePath() string {
-	if p := os.Getenv("PI_SWITCH_CONFIG"); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "/tmp/pi-switch-config.json"
-	}
-	return filepath.Join(home, ".pi-switch", "config.json")
-}
+// ResolvePath preserves the legacy config entry point; fileconfig owns path resolution.
+func ResolvePath() string { return fileconfig.ResolvePath() }
 
-// writeFileAtomic writes data to path through a temp file in the same directory,
-// fsyncs it and renames it into place. Writing to a temp file means path either
-// keeps its previous content or holds the complete new content, and the rename
-// preserves the temp file's 0600 mode.
-func writeFileAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmp)
-		}
-	}()
-	// CreateTemp already uses 0600, but an unusual umask can only clear bits, so
-	// set the mode explicitly to keep the guarantee.
-	if err := f.Chmod(0600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
-}
+// ErrConfigWriteLockBusy preserves the legacy storage error identity.
+var ErrConfigWriteLockBusy = fileconfig.ErrConfigWriteLockBusy
 
-// ErrConfigWriteLockBusy reports that another process held the config lock
-// for the full bounded wait period. Callers can surface this as a transient
-// storage error without confusing it with malformed config data.
-var ErrConfigWriteLockBusy = errors.New("config write lock busy")
-
-const configWriteLockWait = 5 * time.Second
-
-// withConfigWriteLock locks a stable sidecar inode, so atomic replacement of
-// the config never changes the lock identity. The OS releases it on process exit.
-func withConfigWriteLock(path string, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	deadline := time.Now().Add(configWriteLockWait)
-	for {
-		locked, err := tryConfigWriteLock(f)
-		if err != nil {
-			return err
-		}
-		if locked {
-			defer unlockConfigWriteLock(f)
-			return fn()
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: %s", ErrConfigWriteLockBusy, path)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func saveAtPathUnlocked(cfg PiSwitchConfig, path string) error {
-	cfg = MigratedForSave(cfg)
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(path, append(b, '\n'))
-}
-
-// SaveAtPath applies the save-time migration and writes cfg to path atomically,
-// creating the parent directory as needed. Every entry point must go through
-// this so that no caller skips the migration or the 0600 atomic write.
+// SaveAtPath preserves the legacy config entry point while fileconfig owns persistence.
 func SaveAtPath(cfg PiSwitchConfig, path string) error {
-	return withConfigWriteLock(path, func() error {
-		return saveAtPathUnlocked(cfg, path)
-	})
+	return fileconfig.New(path, DefaultConfig).Save(cfg)
 }
 
-// UpdateAtPath loads the latest config while holding the cross-process write
-// lock, applies mutate, and persists the result atomically. All read-modify-
-// write mutation paths should use this entry point so concurrent CLI, server,
-// and TUI operations cannot overwrite one another with stale snapshots.
 func UpdateAtPath(path string, mutate func(*PiSwitchConfig) error) error {
-	if mutate == nil {
-		return errors.New("config mutation callback is nil")
-	}
-	return withConfigWriteLock(path, func() error {
-		cfg, _, err := LoadConfigAtPath(path)
-		if err != nil {
-			return err
-		}
-		if err := mutate(&cfg); err != nil {
-			return err
-		}
-		return saveAtPathUnlocked(cfg, path)
-	})
+	return fileconfig.New(path, DefaultConfig).UpdateConfig(context.Background(), false, mutate)
 }
 
-// ReplaceAtPath supports explicit recovery even when the current JSON is broken.
-// prepare runs under the same write lock as normal mutations and must check the
-// expected bytes and preserve a backup before returning a replacement.
 func ReplaceAtPath(path string, prepare func([]byte) (PiSwitchConfig, error)) error {
-	if prepare == nil {
-		return errors.New("config replacement callback is nil")
-	}
-	return withConfigWriteLock(path, func() error {
-		current, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		replacement, err := prepare(current)
-		if err != nil {
-			return err
-		}
-		return saveAtPathUnlocked(replacement, path)
-	})
+	return fileconfig.New(path, DefaultConfig).Replace(context.Background(), prepare)
 }
 
-// ParseConfig parses config JSON with the same semantics every entry point uses:
-// fields default from DefaultConfig, a present "profiles" replaces the
-// placeholder profile (a config file without the key has no profiles), and any
-// wrong field type is an error. Callers that write config back must parse through
-// here first so they never persist raw JSON that the loader would reject.
 func ParseConfig(b []byte) (PiSwitchConfig, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return PiSwitchConfig{}, err
-	}
-	cfg := DefaultConfig()
-	if v, ok := raw["version"]; ok {
-		if err := json.Unmarshal(v, &cfg.Version); err != nil {
-			return PiSwitchConfig{}, fmt.Errorf("version: %w", err)
-		}
-	}
-	if v, ok := raw["current"]; ok {
-		if err := json.Unmarshal(v, &cfg.Current); err != nil {
-			return PiSwitchConfig{}, fmt.Errorf("current: %w", err)
-		}
-	}
-	// A config file that names its profiles (even an empty object) replaces the
-	// DefaultConfig placeholder. A file without the key has no profiles at all —
-	// the placeholder only belongs to the missing-file default, never to an
-	// explicit config that happens to omit the key.
-	cfg.Profiles = map[string]ProviderProfile{}
-	if v, ok := raw["profiles"]; ok {
-		// Decode profile by profile so the map key is part of the error path
-		// (profiles.<name>.…), not just "profiles".
-		var byName map[string]json.RawMessage
-		if err := json.Unmarshal(v, &byName); err != nil {
-			return PiSwitchConfig{}, fmt.Errorf("profiles: %w", err)
-		}
-		for name, profileRaw := range byName {
-			var profile ProviderProfile
-			if err := json.Unmarshal(profileRaw, &profile); err != nil {
-				return PiSwitchConfig{}, fmt.Errorf("profiles.%s: %w", name, err)
-			}
-			cfg.Profiles[name] = profile
-		}
-	}
-	if v, ok := raw["settings"]; ok {
-		if err := json.Unmarshal(v, &cfg.Settings); err != nil {
-			return PiSwitchConfig{}, fmt.Errorf("settings: %w", err)
-		}
-	}
-	cfg.Version = normalizeConfigVersion(cfg.Version)
-	return cfg, nil
+	return domainconfig.ParseConfig(b, DefaultConfig())
 }
 
-// LoadConfigAtPath reads and parses the config file at path.
-//
-// A missing file is the only condition that yields DefaultConfig. Anything else
-// — an unreadable file, malformed JSON, a field with the wrong type — is
-// returned so a broken config can never masquerade as a default or empty one.
 func LoadConfigAtPath(path string) (PiSwitchConfig, string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return DefaultConfig(), "default (no file)", nil
-		}
-		return PiSwitchConfig{}, "", fmt.Errorf("read config %s: %w", path, err)
-	}
-	cfg, err := ParseConfig(b)
-	if err != nil {
-		return PiSwitchConfig{}, "", fmt.Errorf("parse config %s: %w", path, err)
-	}
-	return cfg, path, nil
+	return fileconfig.New(path, DefaultConfig).Load()
 }
 
 // MergeHeaders preserves the existing config package entry point.

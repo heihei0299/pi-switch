@@ -61,10 +61,11 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			wantViolation: module + "/internal/adapters/inbound/httpmgmt",
 		},
 		{
-			name: "fileconfig adapter may bridge current config storage",
+			name: "fileconfig adapter rejects legacy config dependency",
 			files: map[string]string{
 				"internal/adapters/outbound/fileconfig/store.go": "package fileconfig\nimport \"github.com/heihei0299/pi-switch/internal/config\"\n",
 			},
+			wantViolation: module + "/internal/config",
 		},
 		{
 			name: "shared validator adapter may bridge current profile rules",

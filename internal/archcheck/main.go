@@ -220,9 +220,6 @@ func forbiddenImport(file, importPath, module string, stdlib map[string]bool) st
 		allowed = !under(importPath, module+"/internal") || under(importPath, domain) || under(importPath, usecase) || under(importPath, inbound)
 	case "outbound":
 		allowed = !under(importPath, module+"/internal") || under(importPath, domain) || under(importPath, usecase) || under(importPath, outbound)
-		if under(rel, "internal/adapters/outbound/fileconfig") && under(importPath, module+"/internal/config") {
-			allowed = true
-		}
 		if under(rel, "internal/adapters/outbound/profilevalidation") && under(importPath, module+"/internal/profile") {
 			allowed = true
 		}

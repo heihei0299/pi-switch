@@ -2,41 +2,197 @@ package fileconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/heihei0299/pi-switch/internal/config"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
 	"github.com/heihei0299/pi-switch/internal/domain/revision"
 	"github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
-var ErrBackupDirectory = errors.New("backup directory must be a private, non-symlink directory")
+var ErrConfigWriteLockBusy = errors.New("config write lock busy")
 
-type Store struct{ path string }
+const configWriteLockWait = 5 * time.Second
 
-func New(path string) *Store { return &Store{path: path} }
+type Store struct {
+	path     string
+	defaults func() domainconfig.PiSwitchConfig
+}
 
-// shortcut: config.UpdateAtPath cannot cancel while waiting for its lock; add cancellable locking in W02.
-func (s *Store) Update(ctx context.Context, backup bool, mutate func(*providers.State) error) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func New(path string, defaults func() domainconfig.PiSwitchConfig) *Store {
+	return &Store{path: path, defaults: defaults}
+}
+
+func (s *Store) Load() (domainconfig.PiSwitchConfig, string, error) {
+	return loadConfigAtPath(s.path, s.defaults)
+}
+
+func (s *Store) Save(cfg domainconfig.PiSwitchConfig) error {
+	return withWriteLock(context.Background(), s.path, func() error {
+		return saveAtPathUnlocked(cfg, s.path)
+	})
+}
+
+func (s *Store) UpdateConfig(ctx context.Context, backup bool, mutate func(*domainconfig.PiSwitchConfig) error) error {
+	if mutate == nil {
+		return errors.New("config mutation callback is nil")
 	}
-	update := func(cfg *config.PiSwitchConfig) error {
+	return withWriteLock(ctx, s.path, func() error {
+		cfg, _, err := loadConfigAtPath(s.path, s.defaults)
+		if err != nil {
+			return err
+		}
+		if err := mutate(&cfg); err != nil {
+			return err
+		}
+		if backup {
+			if _, err := CreateConfigBackup(s.path); err != nil {
+				return err
+			}
+		}
+		return saveAtPathUnlocked(cfg, s.path)
+	})
+}
+
+func (s *Store) Replace(ctx context.Context, prepare func([]byte) (domainconfig.PiSwitchConfig, error)) error {
+	if prepare == nil {
+		return errors.New("config replacement callback is nil")
+	}
+	return withWriteLock(ctx, s.path, func() error {
+		current, err := os.ReadFile(s.path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		replacement, err := prepare(current)
+		if err != nil {
+			return err
+		}
+		return saveAtPathUnlocked(replacement, s.path)
+	})
+}
+
+// Update implements the provider storage port with the same config transaction.
+func (s *Store) Update(ctx context.Context, backup bool, mutate func(*providers.State) error) error {
+	return s.UpdateConfig(ctx, backup, func(cfg *domainconfig.PiSwitchConfig) error {
 		state := stateFromConfig(*cfg)
 		if err := mutate(&state); err != nil {
 			return err
 		}
 		applyState(cfg, state)
 		return nil
-	}
-	if backup {
-		return UpdateWithBackup(s.path, update)
-	}
-	return config.UpdateAtPath(s.path, update)
+	})
 }
 
-func stateFromConfig(cfg config.PiSwitchConfig) providers.State {
+func loadConfigAtPath(path string, defaults func() domainconfig.PiSwitchConfig) (domainconfig.PiSwitchConfig, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if defaults == nil {
+				return domainconfig.PiSwitchConfig{}, "", errors.New("config defaults are unavailable")
+			}
+			return defaults(), "default (no file)", nil
+		}
+		return domainconfig.PiSwitchConfig{}, "", fmt.Errorf("read config %s: %w", path, err)
+	}
+	if defaults == nil {
+		return domainconfig.PiSwitchConfig{}, "", errors.New("config defaults are unavailable")
+	}
+	cfg, err := domainconfig.ParseConfig(data, defaults())
+	if err != nil {
+		return domainconfig.PiSwitchConfig{}, "", fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return cfg, path, nil
+}
+
+func saveAtPathUnlocked(cfg domainconfig.PiSwitchConfig, path string) error {
+	cfg = domainconfig.MigratedForSave(cfg)
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, append(data, '\n'))
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func withWriteLock(ctx context.Context, path string, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	deadline := time.Now().Add(configWriteLockWait)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		locked, err := tryConfigWriteLock(file)
+		if err != nil {
+			return err
+		}
+		if locked {
+			defer unlockConfigWriteLock(file)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return fn()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: %s", ErrConfigWriteLockBusy, path)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func stateFromConfig(cfg domainconfig.PiSwitchConfig) providers.State {
 	state := providers.State{Profiles: make(map[string]providers.StoredProfile, len(cfg.Profiles))}
 	if cfg.Current != nil {
 		current := *cfg.Current
@@ -48,8 +204,8 @@ func stateFromConfig(cfg config.PiSwitchConfig) providers.State {
 	return state
 }
 
-func applyState(cfg *config.PiSwitchConfig, state providers.State) {
-	profiles := make(map[string]config.ProviderProfile, len(state.Profiles))
+func applyState(cfg *domainconfig.PiSwitchConfig, state providers.State) {
+	profiles := make(map[string]domainconfig.ProviderProfile, len(state.Profiles))
 	for name, stored := range state.Profiles {
 		profiles[name] = stored.Profile
 	}
@@ -59,66 +215,4 @@ func applyState(cfg *config.PiSwitchConfig, state providers.State) {
 		current := *state.Current
 		cfg.Current = &current
 	}
-}
-
-func UpdateWithBackup(path string, mutate func(*config.PiSwitchConfig) error) error {
-	return config.UpdateAtPath(path, func(cfg *config.PiSwitchConfig) error {
-		if err := mutate(cfg); err != nil {
-			return err
-		}
-		_, err := CreateConfigBackup(path)
-		return err
-	})
-}
-
-func ValidateBackupDirectory(path string) error {
-	info, err := os.Lstat(path + ".backups")
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return ErrBackupDirectory
-	}
-	return nil
-}
-
-func CreateConfigBackup(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(path+".backups", 0700); err != nil {
-		return "", err
-	}
-	if err := ValidateBackupDirectory(path); err != nil {
-		return "", err
-	}
-	file, err := os.CreateTemp(path+".backups", "config-*.json")
-	if err != nil {
-		return "", err
-	}
-	complete := false
-	defer func() {
-		_ = file.Close()
-		if !complete {
-			_ = os.Remove(file.Name())
-		}
-	}()
-	if err := file.Chmod(0600); err != nil {
-		return "", err
-	}
-	if _, err := file.Write(data); err != nil {
-		return "", err
-	}
-	if err := file.Sync(); err != nil {
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	complete = true
-	return filepath.Base(file.Name()), nil
 }

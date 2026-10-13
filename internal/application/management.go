@@ -2,15 +2,8 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
 
 	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
@@ -26,15 +19,7 @@ var ErrManagementConflict = providerusecase.ErrRevisionConflict
 func Revision(value interface{}) string { return revision.Of(value) }
 
 func updateWithBackup(path string, mutate func(*config.PiSwitchConfig) error) error {
-	err := fileconfig.UpdateWithBackup(path, mutate)
-	if errors.Is(err, fileconfig.ErrBackupDirectory) {
-		return &ManagementValidationError{Message: err.Error()}
-	}
-	return err
-}
-
-func validateBackupDirectory(path string) error {
-	err := fileconfig.ValidateBackupDirectory(path)
+	err := fileconfig.New(path, config.DefaultConfig).UpdateConfig(context.Background(), true, mutate)
 	if errors.Is(err, fileconfig.ErrBackupDirectory) {
 		return &ManagementValidationError{Message: err.Error()}
 	}
@@ -50,78 +35,28 @@ func CreateConfigBackup(path string) (string, error) {
 	return name, err
 }
 
-type ConfigBackup struct {
-	Name       string
-	Size       int64
-	ModifiedAt time.Time
-}
+type ConfigBackup = fileconfig.Backup
 
 func ListConfigBackups(path string) ([]ConfigBackup, error) {
-	if err := validateBackupDirectory(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []ConfigBackup{}, nil
-		}
-		return nil, err
+	backups, err := fileconfig.ListConfigBackups(path)
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return nil, &ManagementValidationError{Message: err.Error()}
 	}
-	entries, err := os.ReadDir(path + ".backups")
-	if errors.Is(err, os.ErrNotExist) {
-		return []ConfigBackup{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	backups := make([]ConfigBackup, 0)
-	for _, entry := range entries {
-		if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), "config-") && strings.HasSuffix(entry.Name(), ".json") {
-			info, err := entry.Info()
-			if err != nil {
-				return nil, err
-			}
-			backups = append(backups, ConfigBackup{Name: entry.Name(), Size: info.Size(), ModifiedAt: info.ModTime()})
-		}
-	}
-	sort.Slice(backups, func(i, j int) bool {
-		if !backups[i].ModifiedAt.Equal(backups[j].ModifiedAt) {
-			return backups[i].ModifiedAt.After(backups[j].ModifiedAt)
-		}
-		return backups[i].Name < backups[j].Name
-	})
-	return backups, nil
+	return backups, err
 }
 
-func configFileRevision(data []byte) string {
-	if data == nil {
-		return "missing-config"
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func ConfigFileRevision(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	return configFileRevision(data), nil
-}
+func ConfigFileRevision(path string) (string, error) { return fileconfig.ConfigFileRevision(path) }
 
 func RestoreConfigBackup(path, name, expected string) error {
-	if name != filepath.Base(name) || !strings.HasPrefix(name, "config-") || !strings.HasSuffix(name, ".json") {
+	data, err := fileconfig.ReadConfigBackup(path, name)
+	switch {
+	case errors.Is(err, fileconfig.ErrInvalidBackupName):
 		return &ManagementValidationError{Message: "invalid backup name"}
-	}
-	if err := validateBackupDirectory(path); err != nil {
-		return err
-	}
-	backupPath := filepath.Join(path+".backups", name)
-	info, err := os.Lstat(backupPath)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
+	case errors.Is(err, fileconfig.ErrBackupNotRegular):
 		return &ManagementValidationError{Message: "backup must be a regular file"}
-	}
-	data, err := os.ReadFile(backupPath)
-	if err != nil {
+	case errors.Is(err, fileconfig.ErrBackupDirectory):
+		return &ManagementValidationError{Message: err.Error()}
+	case err != nil:
 		return err
 	}
 	restored, err := config.ParseConfig(data)
@@ -131,11 +66,14 @@ func RestoreConfigBackup(path, name, expected string) error {
 	if err := ValidateWritableConfig(restored); err != nil {
 		return &ManagementValidationError{Message: "Backup failed protocol/capability validation; nothing was restored."}
 	}
-	return config.ReplaceAtPath(path, func(current []byte) (config.PiSwitchConfig, error) {
-		if configFileRevision(current) != expected {
+	return fileconfig.New(path, config.DefaultConfig).Replace(context.Background(), func(current []byte) (config.PiSwitchConfig, error) {
+		if fileconfig.ConfigRevision(current) != expected {
 			return config.PiSwitchConfig{}, ErrManagementConflict
 		}
-		if _, err := CreateConfigBackup(path); err != nil {
+		if _, err := fileconfig.CreateConfigBackup(path); err != nil {
+			if errors.Is(err, fileconfig.ErrBackupDirectory) {
+				return config.PiSwitchConfig{}, &ManagementValidationError{Message: err.Error()}
+			}
 			return config.PiSwitchConfig{}, err
 		}
 		return restored, nil

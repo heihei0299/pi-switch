@@ -1,9 +1,10 @@
-package config
+package fileconfig
 
 import (
 	"errors"
-	"golang.org/x/sys/windows"
 	"os"
+
+	"golang.org/x/sys/windows"
 )
 
 func tryConfigWriteLock(f *os.File) (bool, error) {
