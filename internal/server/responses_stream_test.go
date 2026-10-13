@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/store"
 )
 
 // RED: chat client against a Responses upstream must get Chat SSE back,
@@ -116,5 +118,16 @@ func TestStream_ResponsesFailureToChatError(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `"finish_reason":"stop"`) {
 		t.Fatalf("failure stream must not emit successful stop finish: %s", w.Body.String())
+	}
+	db, err := store.GetDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var success, status int
+	if err := db.QueryRow(`SELECT success, status FROM requests ORDER BY id DESC LIMIT 1`).Scan(&success, &status); err != nil {
+		t.Fatal(err)
+	}
+	if success != 0 || status != http.StatusBadGateway {
+		t.Fatalf("failed stream facts = success %d/status %d, want 0/502", success, status)
 	}
 }

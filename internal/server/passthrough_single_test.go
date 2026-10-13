@@ -86,4 +86,11 @@ func TestPassthrough_429Isolated(t *testing.T) {
 	if countB != 0 {
 		t.Fatalf("second request should still not hit supplier-b, countB=%d", countB)
 	}
+	streamReq := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamResponse := httptest.NewRecorder()
+	router.ServeHTTP(streamResponse, streamReq)
+	if streamResponse.Code != 429 || countA != 3 || countB != 0 {
+		t.Fatalf("stream request must return supplier-a's 429 without retry/cooling: code=%d countA=%d countB=%d", streamResponse.Code, countA, countB)
+	}
 }
