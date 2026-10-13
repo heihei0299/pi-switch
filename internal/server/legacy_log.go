@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -357,14 +356,6 @@ func legacyLogEntry(ts, provider, model string, success bool, summary *usage.Usa
 		entry["conversationName"] = nil
 	}
 	return entry
-}
-
-// requestURLOf extracts the upstream URL from a client response.
-func requestURLOf(resp *http.Response) string {
-	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
-		return ""
-	}
-	return resp.Request.URL.String()
 }
 
 // ImportLegacyOnStartup imports requests.log asynchronously. The listener is

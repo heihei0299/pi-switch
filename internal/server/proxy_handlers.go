@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -209,16 +208,7 @@ func handleChatCompletions(c *gin.Context) {
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          30 * time.Second,
 	}
-	buildOutbound := func(body []byte) (inference.OutboundRequest, error) {
-		requestPlan := outboundPlan
-		requestPlan.Body = body
-		request, err := BuildOutboundRequest(requestPlan)
-		if err != nil {
-			return inference.OutboundRequest{}, err
-		}
-		return inference.OutboundRequest{Request: request.Request, Client: request.Client, URL: request.Metadata.URL}, nil
-	}
-	outcome := inference.ExecuteNonStream(c.Request.Context(), prepared, buildOutbound)
+	outcome := inference.ExecuteNonStream(c.Request.Context(), prepared, outboundRequestBuilder(outboundPlan))
 	logOutcome := func() {
 		if outcome.ShouldLog {
 			logRequest(name, realModel, outcome.Kind == inference.NonStreamOutcomeSuccess, outcome.Usage, outcome.Cost, convID, convName,
@@ -261,69 +251,44 @@ func handleChatCompletions(c *gin.Context) {
 }
 
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.PreparedRequest, convID, convName string, start time.Time) {
-	// Transitional passthrough: single candidate, no retry, no cooling.
 	name, realModel := prepared.Supplier, prepared.Model
-	prof, upstream, modelEntry := prepared.Profile, prepared.Upstream, prepared.ModelEntry
-	plan := prepared.ProtocolPlan
-	bbytes, _ := json.Marshal(prepared.Body)
-	outbound, err := BuildOutboundRequest(OutboundRequestPlan{
+	prof, upstream := prepared.Profile, prepared.Upstream
+	outboundPlan := OutboundRequestPlan{
 		Context:          c.Request.Context(),
 		Upstream:         upstream,
-		Path:             plan.UpstreamPath,
+		Path:             prepared.ProtocolPlan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
 		IncomingHeaders:  c.Request.Header,
-		Body:             bbytes,
 		ContentType:      "application/json",
 		Accept:           "text/event-stream",
 		ProfileUserAgent: prof.UserAgent,
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          0,
-	})
-	if err != nil {
-		c.JSON(502, inferenceError(err.Error(), "upstream_error"))
-		return
 	}
-	resp, err := outbound.Client.Do(outbound.Request)
-	if err != nil {
-		status := upstreamErrorStatus(c.Request.Context())
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), status, err.Error(), outbound.Metadata.URL)
-		if status != 499 {
-			c.JSON(status, inferenceError(err.Error(), "upstream_error"))
+	outcome := inference.ExecuteStream(c.Request.Context(), prepared, outboundRequestBuilder(outboundPlan), c.Writer)
+	logOutcome := func() {
+		if outcome.ShouldLog {
+			logRequest(name, realModel, outcome.Facts.Success, outcome.Facts.Usage, outcome.Facts.Cost, convID, convName,
+				time.Since(start).Milliseconds(), outcome.Facts.Status, outcome.Facts.Error, outcome.URL)
 		}
-		return
 	}
-	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, streamErrorBodyLimit))
-		resp.Body.Close()
-		for k, vv := range resp.Header {
-			for _, v := range vv {
-				c.Header(k, v)
+	switch outcome.Kind {
+	case inference.StreamOutcomeCanceled:
+		logOutcome()
+	case inference.StreamOutcomeError:
+		logOutcome()
+		c.JSON(outcome.Facts.Status, inferenceError(outcome.Facts.Error, outcome.ErrorType))
+	case inference.StreamOutcomeUpstreamResponse:
+		for key, values := range outcome.Headers {
+			for _, value := range values {
+				c.Header(key, value)
 			}
 		}
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
-		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(bodyBytes), outbound.Metadata.URL)
-		return
+		c.Data(outcome.Facts.Status, outcome.Headers.Get("Content-Type"), outcome.Body)
+		logOutcome()
+	case inference.StreamOutcomeRelayed:
+		logOutcome()
 	}
-	c.Status(resp.StatusCode)
-	facts := inference.RelayStream(c.Request.Context(), inference.StreamInput{
-		UpstreamStatus:   resp.StatusCode,
-		UpstreamHeaders:  resp.Header,
-		Body:             resp.Body,
-		UpstreamFormat:   plan.To,
-		DownstreamFormat: plan.From,
-		Converter:        plan.StreamConverter(realModel),
-		ModelEntry:       modelEntry,
-	}, c.Writer)
-	logRequest(name, realModel, facts.Success, facts.Usage, facts.Cost, convID, convName,
-		time.Since(start).Milliseconds(), facts.Status, facts.Error, requestURLOf(resp))
-}
-
-// An aborted downstream request has no upstream HTTP status to return.
-func upstreamErrorStatus(ctx context.Context) int {
-	if ctx.Err() != nil {
-		return 499
-	}
-	return http.StatusBadGateway
 }
 
 func logRequest(provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {

@@ -35,7 +35,7 @@ type StreamFacts struct {
 	Cost    *float64
 }
 
-// RelayStream relays the SSE body and returns facts for request logging. The HTTP adapter must set the response status first.
+// RelayStream sets upstream headers/status, relays the SSE body, and returns request facts.
 func RelayStream(ctx context.Context, input StreamInput, sink http.ResponseWriter) StreamFacts {
 	defer input.Body.Close()
 	for key, values := range input.UpstreamHeaders {
@@ -49,6 +49,7 @@ func RelayStream(ctx context.Context, input StreamInput, sink http.ResponseWrite
 	sink.Header().Set("Content-Type", "text/event-stream")
 	sink.Header().Set("Cache-Control", "no-cache")
 	sink.Header().Set("Connection", "keep-alive")
+	sink.WriteHeader(input.UpstreamStatus)
 	if input.Converter == nil {
 		return relayPassthrough(ctx, input, sink)
 	}

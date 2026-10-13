@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/usecase/inference"
 )
 
 type OutboundRequestPlan struct {
@@ -80,6 +81,18 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 			HeaderNames:      headerNames,
 		},
 	}, nil
+}
+
+func outboundRequestBuilder(plan OutboundRequestPlan) inference.OutboundRequestBuilder {
+	return func(body []byte) (inference.OutboundRequest, error) {
+		requestPlan := plan
+		requestPlan.Body = body
+		outbound, err := BuildOutboundRequest(requestPlan)
+		if err != nil {
+			return inference.OutboundRequest{}, err
+		}
+		return inference.OutboundRequest{Request: outbound.Request, Client: outbound.Client, URL: outbound.Metadata.URL}, nil
+	}
 }
 
 func resolveUserAgentValues(profile, global *string) string {

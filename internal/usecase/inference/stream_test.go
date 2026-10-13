@@ -100,6 +100,18 @@ func TestRelayStreamPassThroughPreservesBytesHeadersAndUsage(t *testing.T) {
 	}
 }
 
+func TestRelayStreamWritesTheUpstreamStatus(t *testing.T) {
+	writer := newRelayTestRecorder()
+	RelayStream(context.Background(), StreamInput{
+		UpstreamStatus: http.StatusPartialContent,
+		Body:           &relayTestBody{chunks: [][]byte{[]byte("data: [DONE]\n\n")}},
+		UpstreamFormat: protocol.FormatOpenAIChat,
+	}, writer)
+	if writer.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", writer.Code)
+	}
+}
+
 func TestRelayStreamConversionRequiresSuccessfulTerminalEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

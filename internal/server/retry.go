@@ -53,7 +53,6 @@ const (
 	defaultRequestRetry         = 3
 	defaultMaxRetryIntervalSecs = 30
 	legacyTransientCooldown     = 60 * time.Second
-	streamErrorBodyLimit        = 64 << 10
 )
 
 type retryAction string
