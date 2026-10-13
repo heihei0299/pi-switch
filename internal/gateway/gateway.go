@@ -378,7 +378,7 @@ func gatewayModelEntry(id string, pool []config.ModelEntry, exposedID string) ma
 			entry["name"] = *m.Name
 		}
 		if m.Cost != nil {
-			// cost 显式带 cacheWrite（含 0）：落盘形态经 webui draft round-trip
+			// cost 显式带 cacheWrite（含 0）：落盘形态经 Native Gateway JSON draft round-trip
 			// 必含 cacheWrite:0；若提议侧用 *ModelCost（omitempty 省 0），
 			// JSON 序列化恒差，preview pending 恒=1，同步横幅永不消失。
 			entry["cost"] = map[string]interface{}{

@@ -1,15 +1,17 @@
 # SPEC: pi-switch 全面迁移至 MyGo Native GUI
 
 - **Spec ID**: `SPEC-MYGO-NATIVE-GUI-001`
-- **状态**: Proposed（待批准）
+- **状态**: 历史提案；实施状态与验收以当前代码和阶段测试报告为准
 - **基线分支**: `mygo`
 - **已核实基线提交**: `95ddc55cc545dbf3fabbeae6825bd98d6c6204c5`（2026-10-09）
 - **目标平台**: Linux amd64 / arm64
 - **最终形态**: MyGo 原生 GUI + 共享 Go 应用服务 + Go 业务核心 + 独立无头 Proxy
 
+> 本 SPEC 记录迁移提出时的目标和风险，不再是当前执行清单。截至 2026-10-13，Desktop 已使用 MyGo Native，React/Vite/WebView 运行链已退役；`pi-switch webui` 仅保留为管理 API 的兼容命令名，`/api/*`、CLI、TUI 和独立 Proxy 均保留。Arch+niri/Wayland、IME、缩放等实机门禁仍属于后续阶段，不因代码迁移完成而视为通过。
+
 ## 1. 背景与问题
 
-当前 `mygo` 分支采用 MyGo 桌面 Shell + WebView 承载 React WebUI，并提供部分可选的 MyGo Native 原型。`desktop/shell.go` 与 `desktop/native_complex.go` 集中管理多领域 UI 状态和任务；Native 与 HTTP 管理入口存在部分业务编排重复；React、Vite、WebView 和 Native UI 并存，增加长期维护成本。
+提出本 SPEC 时，`mygo` 分支采用 MyGo 桌面 Shell + WebView 承载 React WebUI，并提供部分可选的 MyGo Native 原型。该描述是历史基线，不代表当前实现。
 
 **架构决策**：最终全面采用 MyGo Native GUI。React WebUI / WebView 只允许作为过渡期参照和回退，不作为长期产品形态。
 
@@ -32,7 +34,7 @@
 - 不引入 DI 容器、通用 Repository 框架、全局事件总线或第二套持久化方案。
 - 不在结构性迁移时顺带增加新业务功能。
 - 不将 GUI 作为 Proxy 正常运行的前置条件。
-- 不强制删除全部 CLI：仅保留启动、诊断、自动化及无头运行必需的命令；TUI 及浏览器管理入口进入退役评估。
+- CLI 与 TUI 保留；浏览器 UI 退役，`pi-switch webui` 仅用于管理 API 的兼容命令名。
 
 ## 3. 目标架构与依赖规则
 
@@ -162,8 +164,8 @@ Minimal CLI    ──> shared services/core (independent of GUI)
 
 1. **确认**：正式桌面界面必须 100% MyGo Native；不保留 WebView 产品入口。
 2. **确认**：Proxy 必须支持 GUI 关闭后的独立运行。
-3. **待决定**：`pi-switch webui` 与 npm 浏览器管理入口是直接退役，还是提供有限兼容期。
-4. **待决定**：TUI 何时退役；保留哪些 CLI 无头命令。
-5. **待决定**：正式支持的 Linux 发行版、桌面协议与安装包格式。
+3. **已决定**：浏览器管理 UI 退役；`pi-switch webui`、`/api/*` 与 CLI/npm CLI 保留为无头兼容入口，不再启动浏览器。
+4. **已决定**：TUI 与必要 CLI 保留。
+5. **范围说明**：Desktop CI 目标为 Linux amd64/arm64；这不等同于所有发行版或桌面协议均已通过实机验收。
 
 > 本 SPEC 只定义架构与交付计划，不授权直接修改代码、删除文件、提交或推送。

@@ -110,7 +110,7 @@ func TestGatewayWriteLockSerializesPublishers(t *testing.T) {
 	}
 }
 
-// Regression: 落盘 cost 含显式 cacheWrite:0（经 webui draft round-trip 写入）
+// Regression: 落盘 cost 含显式 cacheWrite:0（经 Native Gateway JSON draft round-trip 写入）
 // 而 BuildProposed 用 *ModelCost（omitempty 省掉 0），导致 models 恒 changed、
 // preview pending 恒=1、“立即同步”点了再进还弹。
 // 提议侧必须显式带 cacheWrite，写后读才能收敛到 pending=0。

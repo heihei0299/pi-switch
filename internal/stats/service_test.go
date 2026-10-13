@@ -163,7 +163,7 @@ func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {
 	}
 }
 
-func TestExportRequestsPreservesWebUIContractOrderUnknownsAndReadOnlyFacts(t *testing.T) {
+func TestExportRequestsPreservesContractOrderUnknownsAndReadOnlyFacts(t *testing.T) {
 	db := openStatsDB(t)
 	insertFact(t, db, "2026-09-10T12:00:00Z", "supplier", "known", 1, int64(10), int64(5), int64(2), nil, 0.25, nil, nil, int64(12))
 	insertFact(t, db, "2026-09-10T12:01:00Z", "supplier", "unknown", 0, nil, nil, nil, nil, nil, nil, nil, nil)

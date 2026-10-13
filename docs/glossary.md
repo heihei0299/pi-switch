@@ -61,7 +61,7 @@ _Avoid_: 通道、节点、endpoint、渠道配置
 _Avoid_: endpoint、upstream 配置、节点
 
 **API 能力（API Capability）**：
-`internal/protocol` 对每个 api 标识的三项判定：`IsKnown`（是否为受支持标识）、`CanProxy`（translator 能否路由它）、`CanGateway`（能否发布到网关）。同一份来源同时决定预设列表的过滤、写入口的能力判定与 WebUI 可选项；"已知但当前不可代理"（如 `google-generative-ai`）是合法且必须被保留的状态，不是配置错误。
+`internal/protocol` 对每个 api 标识的三项判定：`IsKnown`（是否为受支持标识）、`CanProxy`（translator 能否路由它）、`CanGateway`（能否发布到网关）。同一份来源同时决定预设列表的过滤、写入口的能力判定与 Native UI 可选项；"已知但当前不可代理"（如 `google-generative-ai`）是合法且必须被保留的状态，不是配置错误。
 _Avoid_: 支持列表、白名单、能力表副本
 
 **写入门（Write Door）**：
@@ -77,4 +77,4 @@ _Avoid_: gateway provider、pi gateway、网关配置
 _Avoid_: 同步、自动同步、apply
 
 ## System Contract
-**Canonical facts and boundary contract**：各领域唯一事实来源、缺失/`null`/`[]` 语义、Gateway/Responses/Stats/WebUI/daemon 不变量和 IMP-01～IMP-05 追踪矩阵见 [`system-contract.md`](system-contract.md)。实现与测试必须引用该 contract；不能用未定义的 fallback、自动探测或重复 projection 替代明确边界。
+**Canonical facts and boundary contract**：各领域唯一事实来源、缺失/`null`/`[]` 语义、Gateway/Responses/Stats/Native UI/daemon 不变量和 IMP-01～IMP-05 追踪矩阵见 [`system-contract.md`](system-contract.md)。`/api/*` 是独立管理 API；Native UI 复用共享应用服务，不通过 HTTP handlers 调用业务逻辑。实现与测试必须引用该 contract；不能用未定义的 fallback、自动探测或重复 projection 替代明确边界。

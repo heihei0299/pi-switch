@@ -15,11 +15,6 @@ pi-session-*.html
 bin/pi-switch
 bin/pi-switch-*
 
-# webui build artifacts (dist is embedded into the Go binary at build time)
-webui/node_modules/
-webui/dist/*
-!webui/dist/.gitkeep
-
 # agent tooling config & local caches
 .mcp.json
 opencode.jsonc

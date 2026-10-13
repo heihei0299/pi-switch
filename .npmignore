@@ -3,8 +3,5 @@
 node_modules/
 *.tar.gz
 
-# webui source is compiled into the Go binary (embed.FS); no need to ship it
-webui/
-
 # tests are not shipped
 **/*.test.ts

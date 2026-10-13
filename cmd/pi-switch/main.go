@@ -340,7 +340,7 @@ type providerAddFlags struct {
 }
 
 // modelEntries turns CLI model ids into the config shape; context/maxTokens are
-// left to the catalog enricher (same as the WebUI, where a bare id is normal).
+// left to the catalog enricher (as in Native and API Gateway drafts).
 func modelEntries(ids []string) []config.ModelEntry {
 	out := make([]config.ModelEntry, 0, len(ids))
 	for _, id := range ids {
@@ -832,9 +832,9 @@ func handleStatsCLI() int {
 }
 
 // handleDoctor probes real state. It exits non-zero only for conditions that are
-// genuinely broken (unreadable config, unusable database, an exposed WebUI with
-// no password); a missing config or a stopped daemon is reported as a fact, not
-// a failure.
+// genuinely broken (unreadable config, unusable database, an exposed management
+// API with no password); a missing config or a stopped daemon is reported as a
+// fact, not a failure.
 func handleDoctor() int {
 	cfgPath := config.ResolvePath()
 	problems := 0

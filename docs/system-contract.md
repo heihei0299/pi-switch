@@ -5,17 +5,19 @@
 - **适用范围**：IMP-02～IMP-05 及后续工作包的行为基线
 - **规则**：以下措辞是可测试的 contract；不得用“自动尝试”“必要时 fallback”“尽量保留”等未定义语义替代。
 
+> 当前界面边界（2026-10-13）：Desktop 只使用 MyGo Native；Native 通过 `internal/application` 等共享服务工作，不调用 HTTP handlers。`/api/*`、CLI、TUI 和独立 Proxy 仍受支持；历史命令 `pi-switch webui` 仅启动管理 API，不提供浏览器 UI。以下 UI 条款描述 Native Gateway/JSON 管理页，不包含已退役的 React 布局要求。第 3 节 IMP 编号和“后续工作包”列是历史追踪标签，不代表当前待办或完成状态。
+
 ## 1. 所有权与事实来源
 
 | 领域 | 唯一事实来源 | 派生视图/兼容层 | 写入边界 |
 |---|---|---|---|
-| Supplier、Channel、Model、exposed model | `~/.pi-switch/config.json` 的 `profiles` | Gateway preview、`models.json`、路由目录、WebUI 结构化视图 | Supplier/Channel/Model API；不因 Gateway 失败回写或阻断 Supplier 保存 |
-| Gateway 发布配置 | 后端生成的 canonical proposed plan | WebUI preview/current/diff、`~/.pi/agent/models.json`、Pi provider 列表 | 仅 `PUT /models/gateway` / GatewayPanel 显式发布；Supplier 或 settings 变更不自动写入 |
+| Supplier、Channel、Model、exposed model | `~/.pi-switch/config.json` 的 `profiles` | Native Providers 页、Gateway preview、`models.json`、路由目录 | Supplier/Channel/Model API；不因 Gateway 失败回写或阻断 Supplier 保存 |
+| Gateway 发布配置 | 后端生成的 canonical proposed plan | Native Gateway/JSON 页、`~/.pi/agent/models.json`、Pi provider 列表 | 仅 API 或 Native UI 显式发布；Supplier 或 settings 变更不自动写入 |
 | 请求事实 | SQLite `requests` row | Stats 聚合、请求明细、导出 DTO | 请求完成时写入 provider/model/status/latency/usage/cost 等事实；已落库事实不因展示归属重写 |
 | 对话归属 | 请求显式 ID，或统一 matcher 对 session snapshot 的结果 | Stats conversation view、标题和展示解码 | 显式 ID 优先；启用 sessionScan 时按统一 matcher 即时计算；不扩大时间窗口掩盖歧义 |
 | pi session | `~/.pi/agent/sessions/<id>/*.jsonl` | session snapshot、标题候选、归属候选 | pi-switch 只读扫描，不把幽灵 `--no-session` 会话写入 session 目录 |
-| daemon 运行态 | 受管理进程 identity + 端口 health check | PID 文件、Proxy/WebUI status、WebUI 状态 | PID 文件是定位信息，不单独证明 healthy；发布/配置文件不是运行态事实来源 |
-| WebUI 编辑态 | 单一 canonical draft | JSON 文本、structured form、selection、preview | JSON 与结构化视图互相派生；不能用只读结构化字段替代直接 JSON 编辑 |
+| daemon 运行态 | 受管理进程 identity + 端口 health check | PID 文件、Proxy/管理 API status、CLI/Native 状态 | PID 文件是定位信息，不单独证明 healthy；发布/配置文件不是运行态事实来源 |
+| Native Gateway JSON 草稿 | 单一 canonical draft | JSON 文本、模型选择、plan preview | 验证只读；显式发布写 `models.json`，不修改 `config.json` 或请求历史 |
 
 ## 2. 空值、缺失与默认值
 
@@ -33,7 +35,7 @@
 | `profiles` 缺失或 `null` | 读取边界视为空 map；写入时序列化为合法 config shape |
 | `upstreams` 缺失 | 使用既有 legacy migration 规则映射为单个 `main` channel；不在普通读路径重复迁移 |
 | `exposedModels` 缺失 | 仅表示旧配置需要 migration；migration 完成前不得解释为“全部暴露” |
-| `exposedModels: []` | 明确表示零模型暴露；Gateway、`/v1/models`、route resolution 和 WebUI 均保持零暴露 |
+| `exposedModels: []` | 明确表示零模型暴露；Gateway、`/v1/models`、route resolution 和 Native UI 均保持零暴露 |
 | `exposedModels: null` | 非法配置；在 boundary 报出字段路径错误，不转换为 `[]` 或全部暴露 |
 | model `id` 缺失、`null` 或空字符串 | 非法模型项；不生成空 ID 行、不发布、不路由 |
 | model metadata 缺失或 `contextWindow`/`maxTokens` 为 0 | 保留可用的本地模型项；不伪造 context/maxTokens/cost；clamp 不重写请求中的三个 max key，cost 记为 unknown |
@@ -50,7 +52,7 @@
 3. Profile CRUD 是「手写一个 profile」，可以也应该严格拒收。
 4. 整文件门的 channel 判定不比 runtime 严：按 channel 的 effective 组合，channel 覆盖了 profile 的组合时以 channel 为准，channel 未声明 api 时按 profile api 判定——要求每个 channel 自带 api 属于 CRUD 门（`ValidateUpstreamAPI`）的规则。门唯一比 runtime 严的地方是**保留的 profile 顶层组合检查**：profile 自身声明了不兼容组合时就拒绝，即使每个 channel 都覆盖了它（配置自身必须自洽）。
 5. `ResolvedUpstreams` 与 runtime 共享的是 **effective upstream fallback 语义**（api/baseUrl/apiKey 的取值来源），不是「合成出的 channel 一定能走完 route resolution」——route resolution 只遍历 `prof.Upstreams` 与 `ExposedModels`，所以 legacy flat profile 的可用性不由本节断言。
-6. 旧配置的逃生通道：若磁盘上的配置含不可代理 API，整文件门会拒绝保存并点名 profile/字段，但 **Profile CRUD 仍然可用**（`PUT /api/profiles/:name` 改成可代理的 api、`DELETE /api/profiles/:name` 删除该 profile），也可以直接编辑磁盘文件；`GET /api/config/validate` 会先一步把问题报出来，WebUI 的 api 选择器把不可代理的 api 显示为不可选（但仍保留旧值）。因此不会出现无法修复的配置。
+6. 旧配置的逃生通道：若磁盘上的配置含不可代理 API，整文件门会拒绝保存并点名 profile/字段，但 **Profile CRUD 仍然可用**（`PUT /api/profiles/:name` 改成可代理的 api、`DELETE /api/profiles/:name` 删除该 profile），也可以直接编辑磁盘文件；`GET /api/config/validate` 会先一步把问题报出来，Native Providers 页把不可代理的 api 显示为不可选（但仍保留旧值）。因此不会出现无法修复的配置。
 7. 若要进一步收紧整文件门（例如把 shape 诊断也变成拒绝），必须同时收紧 loader，否则会出现「能被自己加载运行、却拒绝保存」的不对称；那属于破坏性变更，需先改本节。
 
 8. 配置局部变更必须在跨进程写锁内读取最新配置、校验并原子保存；CLI、HTTP、TUI 共用 `UpdateAtPath`。整文件替换也获取同一锁，仍按显式整文件替换处理。进程异常退出由操作系统释放锁；锁文件保持原 inode，不能删除后重建。
@@ -67,7 +69,7 @@
 | fixed provider 无 exposed model | canonical proposed 不包含该 provider；发布后不保留 stale fixed provider |
 | 第三方 provider | 不属于 pi-switch 管理范围，发布时原样保留其 entry 和未受管字段 |
 | Gateway-owned model metadata（`name`/`reasoning`/`input`/`contextWindow`/`maxTokens`/`thinkingLevelMap`/`cost`/`compat`/`headers`/其他 `extra`）缺失 | 不生成空的伪字段；current 中存在的受允许 metadata 合并进 canonical proposed，显式 draft 优先 |
-| models.dev catalog enrich | Generated 用 catalog 覆盖陈旧值（`FillOverwrite`）；Draft 只补 draft 未声明的字段（`FillMissing`），进入 `BuildDraftPlan` 前不得改写 draft 显式值。判「未声明」的规则：`name`/`reasoning`/`cost` 子字段按键是否存在（`cost` 写下的 0 是已知零价，如免费模型，不得覆盖；缺键才补）；`contextWindow`/`maxTokens` 的 0 与空 `input` 数组视为未声明，可被 catalog 补齐（这两个字段的 0 不描述任何真实模型，WebUI 也拒收 0） |
+| models.dev catalog enrich | Generated 用 catalog 覆盖陈旧值（`FillOverwrite`）；Draft 只补 draft 未声明的字段（`FillMissing`），进入 `BuildDraftPlan` 前不得改写 draft 显式值。判「未声明」的规则：`name`/`reasoning`/`cost` 子字段按键是否存在（`cost` 写下的 0 是已知零价，如免费模型，不得覆盖；缺键才补）；`contextWindow`/`maxTokens` 的 0 与空 `input` 数组视为未声明，可被 catalog 补齐（这两个字段的 0 不描述任何真实模型）。Gateway draft 验证复用共享 plan 规则。|
 | validation/conflict 非空 | publish 零写入；不部分写入、不先写临时目标再报告冲突 |
 | 连续 publish 同一 canonical plan | 结构等价且 `pending_count=0`；不得因 normalization 或 extra merge 产生漂移 |
 
@@ -104,21 +106,19 @@
 
 10. 请求完成时的实际 status、error 与 upstream URL 保存到 SQLite、最近请求、对话明细与 JSON/CSV 导出；不得用 success 推断 200/500。缺失历史事实维持 NULL，新 legacy 导入仅保存原行存在的值，成功且无错误时 error 为 NULL。
 
-### 2.6 WebUI 编辑器与布局
+### 2.6 Native Gateway JSON 草稿
 
-1. Config JSON 始终是可直接编辑的受控文本；Format 按钮固定在编辑器左下；structured view 不能替代它。
-2. JSON parse/semantic error 只标记真实错误位置；合法字段不得因为 spellcheck、Grammarly 或默认样式出现红线。
-3. canonical draft 的 parsed value 是业务事实；raw JSON 只在 parse error 时保留未提交文本；selection 和 preview 从 canonical value 派生。
-4. Page 只负责页面底色，Card 负责 surface/border，Table 默认透明并继承 Card，sticky cell 不另造冲突 surface。
-5. viewport contract 固定覆盖 375、768、900、1024、1440；组件按内容最小宽度选择 breakpoint，不把所有组件绑定到同一设备断点。
-6. 长 model ID、Supplier 名和 badge 必须遵守 `min-w-0`、wrap、break-all policy；业务状态不因视觉调整改变。
+1. Draft JSON 编辑的是生成的 Gateway 条目，不是 `config.json`；加载与验证均为只读。
+2. JSON 语法错误保留草稿并标示真实行列；IME 组合输入在提交组合前不改写草稿。
+3. canonical plan 是冲突与变更预览的唯一依据；无冲突且有实际变更时才允许显式确认发布。
+4. 取消、冲突、无变化和失败不得改写 `config.json` 或 `models.json`；成功发布只写 `models.json` 并保留第三方 provider。
 
 ### 2.7 Daemon
 
 1. 生命周期至少区分 `Absent`、`Spawning`、`Healthy`、`AliveButUnhealthy`、`StalePid`、`UnmanagedListener`、`Stopping`、`Stopped`、`Failed`。
 2. 启动顺序必须是 spawn → 保存真实 PID → health check → 成功后 release；health 失败时 kill 子进程并清理 PID 文件。
 3. PID 文件只能定位受管理实例；`running` 必须同时满足 PID identity 与目标端口 health。
-4. 固定 pid 文件只支持一个受管理 Proxy 和一个受管理 WebUI；多实例不是本期能力，Status 必须明确提示 unmanaged/multiple listener。
+4. 固定 pid 文件分别支持一个受管理 Proxy 和一个管理 API daemon；多实例不是本期能力，Status 必须明确提示 unmanaged/multiple listener。
 5. stop 是幂等的：实例已退出、PID stale 或 PID 文件缺失都不能误杀其他进程，也不能报告仍在运行。
 
 ### 2.8 HTTP 错误信封
@@ -127,12 +127,12 @@
 
 | 面 | 路由 | 信封 | 消费者 |
 |---|---|---|---|
-| 管理面 | `/api/*` | `{"error": "<message>"}` | WebUI / CLI；只渲染 message，错误种类由 HTTP status 表达 |
+| 管理面 | `/api/*` | `{"error": "<message>"}` | API client / CLI；错误种类由 HTTP status 表达 |
 | 推理面 | `/v1/*` | `{"error": {"message": "...", "type": "..."}}` | OpenAI 兼容客户端；需要 type/message 语义 |
 
 1. 管理面一律字符串 message，包括 501 `not_implemented` 与 410 `gone`：这两个状态已唯一表达拒绝种类，不再重复放进 `error.type`。
 2. 推理面（含 `GET /v1/models` 与 `POST /v1/chat/completions`）一律 OpenAI 错误对象，即使失败发生在读取 config 这类共享前置步骤。
-3. 管理面客户端只解析字符串；给管理面返回错误对象会让 WebUI 丢失 message、退化成 HTTP statusText。
+3. 管理 API 错误体提供稳定的字符串 message；Native UI 不通过 HTTP handler 调用业务逻辑。
 
 ## 3. IMP-01～IMP-05 追踪矩阵
 
@@ -143,7 +143,7 @@
 | session files 只读，不能持久化 ephemeral 会话 | §1 pi session | 后续 IMP-09 | session scan fixture tests | 真实 session 目录副本与 `--no-session` 请求核对 |
 | SQLite row 保存 immutable request facts | §1 请求事实；§2.5.1 | 后续 IMP-10/11 | store fact immutability tests | Stats 展示不改写落库 row |
 | daemon 状态由 managed identity 与 health 共同决定 | §1 daemon；§2.7 | 后续 IMP-13 | lifecycle/status tests | 真实 PID、端口和 Status 三者一致 |
-| WebUI 只有一个 canonical draft，JSON 始终可编辑 | §1 WebUI；§2.6.1/3 | 后续 IMP-06/08/12 | draft/editor component tests | 浏览器直接编辑、Format 左下、保存重载 |
+| Native Gateway JSON draft 只有一个 canonical draft，JSON 始终可编辑 | §1 Native Gateway JSON draft；§2.6.1/3 | 后续 IMP-06/08/12 | Native draft/editor tests | 草稿、共享 plan 与显式 publish payload 一致 |
 | profiles/upstreams 缺失按 boundary migration，不解释为全部暴露 | §2.2 profiles/upstreams/exposedModels | IMP-05；后续 IMP-07/10 | config decoder/migration tests | 旧 config 读取后 shape 明确且只迁移一次 |
 | exposedModels=[] 是零暴露 | §2.2 exposedModels:[] | IMP-05 | gateway、`/v1/models`、route tests | 实际列表、Gateway provider 和 route 均为空 |
 | exposedModels=null 是非法，不转成 [] 或全部 | §2.2 exposedModels:null | IMP-05；后续 IMP-07 | validation error path tests | API 保存前返回字段错误且无文件写入 |
@@ -160,7 +160,7 @@
 | conflict/validation 非空时零写入 | §2.3 conflict | IMP-05 | failure atomicity tests | 冲突前后 models.json 字节不变 |
 | 同一 canonical plan 连续 publish 幂等 | §2.3 idempotency | IMP-05 | golden/idempotency tests | 第二次 publish 后 `pending_count=0` |
 | responsesMode 只按声明 api 决定 passthrough/convert | §2.4.1/2 | IMP-04 | table-driven PlanRequest tests | Responses/Chat provider 实际 endpoint 与事件语义一致 |
-| responsesMode 规则与 API 能力只有一份 `internal/protocol`，WebUI 从 `/api/state` 读取 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol 规则用例 + WebUI fixture parity 用例 | `/api/state.protocol.apis` 实际驱动下拉与校验 |
+| responsesMode 规则与 API 能力只有一份 `internal/protocol`，HTTP 与 Native 共用 | §2.4.1/2；§2.8 | 后续 IMP-04 | protocol/API/Native validation tests | HTTP 与 Native 对相同 api 给出相同能力判定 |
 | 工具定义、选择策略与调用/结果历史在跨协议转换后保持关联 | §2.4.8 | bug audit 02 | multi-turn tool exchange + invalid history tests | 工具调用后携带结果可继续下一轮 |
 | 非流式响应匹配客户端协议，转换失败明确报错 | §2.4.7 | bug audit 03 | client protocol + malformed/retry HTTP tests | Chat→Responses、Messages→Chat 返回客户端所需结构 |
 | 缺少 SSE 转换器的跨协议请求在访问 upstream 前拒绝 | §2.4.9 | bug audit 04 | unsupported streaming HTTP tests | 不向 Chat 客户端发送 Anthropic SSE，反向同样 |
@@ -177,14 +177,11 @@
 | Stats GET 只读 SQLite，不触发 legacy migration 写入 | §2.5.5 | 后续 IMP-10/11 | handler read-only/concurrency tests | daemon 启动健康且首次 Stats 不同步导入 |
 | session title 与 matcher snapshot 使用同一优先级 | §2.5.6 | 后续 IMP-09 | JSONL title fixture tests | Stats 标题与真实 pi session name/user/cwd 一致 |
 | percent-decode 只在 display boundary，不能改写 facts | §2.5.7 | 后续 IMP-09/11 | storage/display separation tests | 存量编码显示正确，SQLite 原值不变 |
-| JSON 错误只标真实位置，合法内容无 spellcheck/默认红线 | §2.6.2 | 后续 IMP-06/07/12 | JsonEditor/validation tests | 浏览器实际错误行和合法模型 ID 视觉核对 |
-| parsed value 是 canonical draft，selection/preview 从它派生 | §2.6.3 | 后续 IMP-06/08 | reducer/component tests | 选择、JSON、structured preview、publish payload 一致 |
-| Page/Card/Table/sticky surface 层级唯一 | §2.6.4 | 后续 IMP-12 | viewport/screenshot tests | 375/768/900/1024/1440 无黑块和覆盖 |
-| breakpoint 与 overflow 遵守组件内容约束 | §2.6.5/6 | 后续 IMP-12 | responsive interaction tests | 长 model ID/Supplier/badge 无溢出和重叠 |
+| JSON 错误保留草稿并标真实位置；选择/预览来自共享 canonical plan | §2.6.2/3 | 后续 IMP-06/07/12 | Native JSON/editor and validation tests | 冲突/取消不写文件，显式发布结果与预览一致 |
 | daemon 生命周期区分 Absent/Spawning/Healthy/AliveButUnhealthy/StalePid/UnmanagedListener/Stopping/Stopped/Failed | §2.7.1 | 后续 IMP-13 | state transition tests | 真实 start/status/stop 结果与端口状态一致 |
 | spawn 后先保存真实 PID，health 失败 kill 并清理 | §2.7.2 | 后续 IMP-13 | process lifecycle tests | PID 文件 PID 等于真实子进程，失败无残留 |
 | PID 文件不是 running 证明，stop 幂等且不误杀 | §2.7.3/5 | 后续 IMP-13 | stale PID/port conflict tests | stale、重复 stop、端口冲突实际结果正确 |
-| 固定 pid 文件只支持一个受管 Proxy/WebUI，多实例明确提示 | §2.7.4 | 后续 IMP-13 | multiple-listener tests | Status 提示 unmanaged/multiple listener |
+| 固定 pid 文件只支持一个受管 Proxy/管理 API，多实例明确提示 | §2.7.4 | 后续 IMP-13 | multiple-listener tests | Status 提示 unmanaged/multiple listener |
 
 | HTTP 错误信封按面固定：管理面 `{"error": string}`，推理面 OpenAI 对象（含 401/404/panic） | §2.8 | 后续 IMP-14 | 管理/推理信封 contract tests | 真实 401/404/500 响应体形状 |
 
