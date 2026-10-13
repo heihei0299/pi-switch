@@ -17,8 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/conversation"
-	"github.com/heihei0299/pi-switch/internal/domain/protocol"
-	"github.com/heihei0299/pi-switch/internal/proxy"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/usage"
 	"github.com/heihei0299/pi-switch/internal/usecase/inference"
@@ -200,7 +198,7 @@ func handleChatCompletions(c *gin.Context) {
 	// Transitional passthrough: single candidate, no retry, no cooling.
 	// retained for per-conversation breaker, not used in transitional passthrough
 	name, realModel := prepared.Supplier, prepared.Model
-	prof, upstream, modelEntry := prepared.Profile, prepared.Upstream, prepared.ModelEntry
+	prof, upstream := prepared.Profile, prepared.Upstream
 	plan, needRespConvert := prepared.ProtocolPlan, prepared.ProtocolPlan.NeedsConvert()
 	bbytes, _ := json.Marshal(prepared.Body)
 	outboundPlan := OutboundRequestPlan{
@@ -271,23 +269,19 @@ func handleChatCompletions(c *gin.Context) {
 						}
 						if resp2.StatusCode < 400 {
 							// Success on retry: handle as normal success
-							finalBody2 := respBody2
+							result, resultErr := inference.ProcessNonStreamResponse(prepared, respBody2)
+							if resultErr != nil {
+								logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, resultErr.Error(), outbound2.Metadata.URL)
+								c.JSON(502, inferenceError(resultErr.Error(), "conversion_error"))
+								return
+							}
+							finalBody2 := result.Body
 							finalHeaders2 := resp2.Header
 							if needRespConvert {
-								converted, convertErr := transformResponseBody(plan, respBody2, realModel)
-								if convertErr != nil {
-									logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound2.Metadata.URL)
-									c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
-									return
-								}
-								finalBody2 = converted
 								finalHeaders2 = http.Header{}
 								finalHeaders2.Set("Content-Type", "application/json")
 							}
-							var respObj map[string]interface{}
-							_ = json.Unmarshal(respBody2, &respObj)
-							usageSum := usage.ExtractUsage(respObj)
-							cost := proxy.CalcUsageCost(modelEntry, usageSum)
+							usageSum, cost := result.Usage, result.Cost
 							latMs := time.Since(start).Milliseconds()
 							logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp2.StatusCode, "", outbound2.Metadata.URL)
 							for k, vv := range finalHeaders2 {
@@ -318,23 +312,19 @@ func handleChatCompletions(c *gin.Context) {
 		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), resp.StatusCode, string(respBody), outbound.Metadata.URL)
 		return
 	}
-	finalBody := respBody
+	result, resultErr := inference.ProcessNonStreamResponse(prepared, respBody)
+	if resultErr != nil {
+		logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, resultErr.Error(), outbound.Metadata.URL)
+		c.JSON(502, inferenceError(resultErr.Error(), "conversion_error"))
+		return
+	}
+	finalBody := result.Body
 	finalHeaders := resp.Header
 	if needRespConvert {
-		converted, convertErr := transformResponseBody(plan, respBody, realModel)
-		if convertErr != nil {
-			logRequest(name, realModel, false, nil, nil, convID, convName, time.Since(start).Milliseconds(), http.StatusBadGateway, convertErr.Error(), outbound.Metadata.URL)
-			c.JSON(502, inferenceError(convertErr.Error(), "conversion_error"))
-			return
-		}
-		finalBody = converted
 		finalHeaders = http.Header{}
 		finalHeaders.Set("Content-Type", "application/json")
 	}
-	var respObj map[string]interface{}
-	_ = json.Unmarshal(respBody, &respObj)
-	usageSum := usage.ExtractUsage(respObj)
-	cost := proxy.CalcUsageCost(modelEntry, usageSum)
+	usageSum, cost := result.Usage, result.Cost
 	latMs := time.Since(start).Milliseconds()
 	logRequest(name, realModel, true, usageSum, cost, convID, convName, latMs, resp.StatusCode, "", outbound.Metadata.URL)
 	for k, vv := range finalHeaders {
@@ -416,22 +406,6 @@ func upstreamErrorStatus(ctx context.Context) int {
 		return 499
 	}
 	return http.StatusBadGateway
-}
-
-func transformResponseBody(plan protocol.Plan, raw []byte, model string) ([]byte, error) {
-	var upstream map[string]interface{}
-	if err := json.Unmarshal(raw, &upstream); err != nil {
-		return nil, fmt.Errorf("upstream response is not valid JSON: %w", err)
-	}
-	converted, err := plan.TransformResponse(upstream, model)
-	if err != nil {
-		return nil, err
-	}
-	b, err := json.Marshal(converted)
-	if err != nil {
-		return nil, fmt.Errorf("converted response is not serializable: %w", err)
-	}
-	return b, nil
 }
 
 func logRequest(provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
