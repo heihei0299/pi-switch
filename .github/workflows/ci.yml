@@ -35,6 +35,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check architecture dependencies
+        run: go run ./internal/archcheck
+
       - name: Vet Go
         run: go vet ./...
 

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,10 @@ func managementFixture(t *testing.T) (string, config.PiSwitchConfig) {
 
 func TestProviderDraftMasksAndPreservesCredentialsOnRename(t *testing.T) {
 	path, cfg := managementFixture(t)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	draft, err := LoadProviderDraft(path, "supplier")
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +63,50 @@ func TestProviderDraftMasksAndPreservesCredentialsOnRename(t *testing.T) {
 	}
 	if Revision(loaded.Profiles["renamed"]) != Revision(prof) {
 		t.Fatal("save lost explicit empty exposure or credentials")
+	}
+	backups, err := ListConfigBackups(path)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("provider save backups = %v, %v", backups, err)
+	}
+	backupPath := filepath.Join(path+".backups", backups[0].Name)
+	backup, err := os.ReadFile(backupPath)
+	if err != nil || !bytes.Equal(backup, before) {
+		t.Fatalf("provider backup does not preserve exact pre-write bytes: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("provider backup mode/stat = %v, %v", info, err)
+	}
+}
+
+func TestDeleteProviderBacksUpAndClearsCurrent(t *testing.T) {
+	path, cfg := managementFixture(t)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteProvider(path, "supplier", Revision(cfg.Profiles["supplier"])); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := config.LoadConfigAtPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.Profiles["supplier"]; ok || loaded.Current != nil {
+		t.Fatalf("delete did not remove current provider: %+v", loaded)
+	}
+	backups, err := ListConfigBackups(path)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("provider delete backups = %v, %v", backups, err)
+	}
+	backupPath := filepath.Join(path+".backups", backups[0].Name)
+	backup, err := os.ReadFile(backupPath)
+	if err != nil || !bytes.Equal(backup, before) {
+		t.Fatalf("provider delete backup does not preserve exact pre-write bytes: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("provider delete backup mode/stat = %v, %v", info, err)
 	}
 }
 

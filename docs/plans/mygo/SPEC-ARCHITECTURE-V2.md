@@ -1,7 +1,7 @@
 # pi-switch Architecture V2 — 模块化单体重构规范
 
 - 状态：设计基线（尚未修改远程代码）
-- 日期：2026-10-14
+- 日期：2026-10-13
 - 对照代码：`mygo@51530102c94dfd5412df25eb0e612c73a5d668f1`
 - 设计性质：大规模内部重构，外部行为优先保持兼容
 - 目标平台：Linux amd64 / arm64；Desktop 为 MyGo Native；CLI、TUI、管理 API、独立 Proxy 保留
@@ -68,6 +68,18 @@ flowchart TB
 - 当一项功能迁移到 V2 后，其入口禁止绕过用例层直接写数据；尚未迁移的旧调用允许在对应工单范围内存在，禁止新增同类直通路径。
 - 共享的类型只进入实际使用它的业务模块；避免无限生长的 `common`、`utils`、`types` 包。
 - 本设计描述最终依赖方向，不要求在第一工单移动全部原有 packages。先添加新组件，迁移用例，最后清理旧包。
+
+**静态依赖规则（`go run ./internal/archcheck`，CI 持续执行）：**
+
+| 生产代码位置 | 可依赖的本仓库包 | 其他依赖 |
+|---|---|---|
+| `internal/domain/**` | `internal/domain/**` | 仅标准库 |
+| `internal/usecase/**` | `internal/domain/**`、`internal/usecase/**` | 仅标准库 |
+| `internal/adapters/inbound/**` | `internal/domain/**`、`internal/usecase/**`、本 inbound 子树 | 可用标准库和入口所需外部库；不得依赖 outbound |
+| `internal/adapters/outbound/**` | `internal/domain/**`、`internal/usecase/**`、本 outbound 子树 | 可用标准库和 IO 所需外部库；不得依赖 inbound |
+| `internal/bootstrap/**` | 可装配各内部包 | 根模块不得依赖独立 `desktop` 模块 |
+
+检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
 
 ## 4. 按业务能力划分的目标包
 

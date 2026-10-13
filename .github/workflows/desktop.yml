@@ -33,6 +33,9 @@ jobs:
             desktop/go.sum
             go.sum
 
+      - name: Check architecture dependencies
+        run: go run ./internal/archcheck
+
       - name: Test and vet desktop module
         working-directory: desktop
         run: |

@@ -29,6 +29,7 @@ func TestHandleProvider_DuplicateCreatesCopy(t *testing.T) {
 	}
 
 	profiles := readProfiles(t, cfgPath)
+	assertNoProviderBackups(t, cfgPath)
 	orig, ok := profiles["src"].(map[string]any)
 	if !ok {
 		t.Fatalf("source profile missing after duplicate: %v", profiles)
