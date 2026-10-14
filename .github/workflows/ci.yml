@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, mygo]
     tags: ["v*"]
   pull_request:
     branches: [main]
