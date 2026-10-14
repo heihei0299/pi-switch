@@ -3,9 +3,11 @@ package inference
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -228,5 +230,169 @@ func TestRelayStreamDownstreamWriteFailureClosesUpstream(t *testing.T) {
 	}, writer)
 	if facts.Success || facts.Status != 499 || writer.writes != 1 || body.reads != 1 || !body.closed {
 		t.Fatalf("write failure facts=%+v writes=%d reads=%d closed=%t", facts, writer.writes, body.reads, body.closed)
+	}
+}
+
+type relayDiscardWriter struct {
+	writes  int
+	bytes   int
+	flushes int
+}
+
+func (*relayDiscardWriter) SetHeader(string, string) {}
+func (*relayDiscardWriter) WriteHeader(int)          {}
+func (w *relayDiscardWriter) Flush()                 { w.flushes++ }
+func (w *relayDiscardWriter) Write(p []byte) (int, error) {
+	w.writes++
+	w.bytes += len(p)
+	return len(p), nil
+}
+
+type generatedSSEBody struct {
+	remaining int
+	frame     []byte
+	done      bool
+	closed    bool
+}
+
+func (b *generatedSSEBody) Read(p []byte) (int, error) {
+	n := 0
+	for n < len(p) && b.remaining > 0 {
+		if len(b.frame) == 0 {
+			b.frame = []byte("data: {}\n\n")
+		}
+		copyN := min(len(p)-n, min(b.remaining, len(b.frame)))
+		copy(p[n:], b.frame[:copyN])
+		n += copyN
+		b.remaining -= copyN
+		b.frame = b.frame[copyN:]
+		if len(b.frame) == 0 && b.remaining > 0 {
+			b.frame = []byte("data: {}\n\n")
+		}
+	}
+	if n > 0 {
+		return n, nil
+	}
+	if !b.done {
+		b.done = true
+		return copy(p, []byte("data: [DONE]\n\n")), nil
+	}
+	return 0, io.EOF
+}
+
+func (b *generatedSSEBody) Close() error { b.closed = true; return nil }
+
+type generatedBytesBody struct {
+	remaining int
+	value     byte
+	closed    bool
+}
+
+func (b *generatedBytesBody) Read(p []byte) (int, error) {
+	if b.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), b.remaining)
+	for i := 0; i < n; i++ {
+		p[i] = b.value
+	}
+	b.remaining -= n
+	return n, nil
+}
+
+func (b *generatedBytesBody) Close() error { b.closed = true; return nil }
+
+type heapSamplingWriter struct {
+	peakHeap uint64
+	bytes    int
+	sampled  int
+}
+
+func (w *heapSamplingWriter) SetHeader(string, string) {}
+func (*heapSamplingWriter) WriteHeader(int)            {}
+func (*heapSamplingWriter) Flush()                     {}
+func (w *heapSamplingWriter) Write(p []byte) (int, error) {
+	w.bytes += len(p)
+	if w.bytes-w.sampled >= 1<<20 {
+		w.sampled = w.bytes
+		runtime.GC()
+		var stats runtime.MemStats
+		runtime.ReadMemStats(&stats)
+		if stats.HeapAlloc > w.peakHeap {
+			w.peakHeap = stats.HeapAlloc
+		}
+	}
+	return len(p), nil
+}
+
+func TestRelayStreamRejectsOversizedSSEFrame(t *testing.T) {
+	body := &generatedBytesBody{remaining: maxSSEFrameBytes + 4096, value: 'x'}
+	facts := RelayStream(context.Background(), StreamInput{
+		UpstreamStatus: http.StatusOK,
+		Body:           body,
+		UpstreamFormat: protocol.FormatOpenAIChat,
+	}, &relayDiscardWriter{})
+	if facts.Success || facts.Status != http.StatusBadGateway || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
+		t.Fatalf("oversized stream facts=%+v closed=%t", facts, body.closed)
+	}
+}
+
+func TestRelayStreamConversionRejectsOversizedSSEFrame(t *testing.T) {
+	body := &generatedBytesBody{remaining: maxSSEFrameBytes + 4096, value: 'x'}
+	facts := RelayStream(context.Background(), StreamInput{
+		UpstreamStatus:   http.StatusOK,
+		Body:             body,
+		UpstreamFormat:   protocol.FormatOpenAIResponses,
+		DownstreamFormat: protocol.FormatOpenAIChat,
+		Converter:        protocol.NewResponsesSseToChat("model"),
+	}, &relayDiscardWriter{})
+	if facts.Success || facts.Status != http.StatusBadGateway || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
+		t.Fatalf("oversized converted stream facts=%+v closed=%t", facts, body.closed)
+	}
+}
+
+func TestRelayStreamLongPassThroughDoesNotRetainWholeResponse(t *testing.T) {
+	const streamBytes = (32 << 20) / 10 * 10
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	writer := &heapSamplingWriter{}
+	facts := RelayStream(context.Background(), StreamInput{
+		UpstreamStatus: http.StatusOK,
+		Body:           &generatedSSEBody{remaining: streamBytes},
+		UpstreamFormat: protocol.FormatOpenAIChat,
+	}, writer)
+	if !facts.Success {
+		t.Fatalf("long stream facts=%+v", facts)
+	}
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	if after.HeapAlloc > writer.peakHeap {
+		writer.peakHeap = after.HeapAlloc
+	}
+	delta := int64(writer.peakHeap) - int64(before.HeapAlloc)
+	t.Logf("stream_bytes=%d peak_heap_delta=%d", streamBytes, delta)
+	if delta > 8<<20 {
+		t.Fatalf("peak heap grew by %d bytes for %d-byte stream", delta, streamBytes)
+	}
+}
+
+func BenchmarkRelayStreamLongPassThrough(b *testing.B) {
+	for _, streamBytes := range []int{(1 << 20) / 10 * 10, (32 << 20) / 10 * 10} {
+		b.Run(fmt.Sprintf("%dKiB", streamBytes>>10), func(b *testing.B) {
+			b.ReportMetric(float64(streamBytes), "stream_bytes")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				facts := RelayStream(context.Background(), StreamInput{
+					UpstreamStatus: http.StatusOK,
+					Body:           &generatedSSEBody{remaining: streamBytes},
+					UpstreamFormat: protocol.FormatOpenAIChat,
+				}, &relayDiscardWriter{})
+				if !facts.Success {
+					b.Fatalf("long stream facts=%+v", facts)
+				}
+			}
+		})
 	}
 }

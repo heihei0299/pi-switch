@@ -59,11 +59,11 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter)
 	parser := usage.NewSseUsageParser()
 	flusher := sink
 	buf := make([]byte, 4096)
-	var totalBytes bytes.Buffer
 	var frames bytes.Buffer
 	terminalSeen := false
 	logicalFailure := false
 	var readErr error
+	var frameErr error
 	clientCanceled := false
 	for {
 		n, err := input.Body.Read(buf)
@@ -75,16 +75,16 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter)
 				break
 			}
 			chunk := buf[:n]
-			parser.Push(chunk)
-			totalBytes.Write(chunk)
-			consumeSSEFrames(&frames, chunk, func(data string) {
+			if !parser.Push(chunk) || !consumeSSEFrames(&frames, chunk, func(data string) {
 				if isSSETerminal(data, input.UpstreamFormat) {
 					terminalSeen = true
 				}
 				if isSSEFailure(data, input.UpstreamFormat) {
 					logicalFailure = true
 				}
-			})
+			}) {
+				frameErr = errSSEFrameTooLarge
+			}
 			if _, writeErr := sink.Write(chunk); writeErr != nil {
 				readErr = writeErr
 				clientCanceled = true
@@ -93,6 +93,10 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter)
 			}
 			if flusher != nil {
 				flusher.Flush()
+			}
+			if frameErr != nil {
+				_ = input.Body.Close()
+				break
 			}
 		}
 		if clientCanceled {
@@ -105,14 +109,11 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter)
 	}
 	clientCanceled = clientCanceled || ctx.Err() != nil
 	usageSum := parser.Finish()
-	if usageSum == nil {
-		var response map[string]interface{}
-		_ = json.Unmarshal(totalBytes.Bytes(), &response)
-		usageSum = usage.ExtractUsage(response)
-	}
-	streamFailed := clientCanceled || logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
+	streamFailed := clientCanceled || frameErr != nil || logicalFailure || (readErr != nil && !errors.Is(readErr, io.EOF))
 	errorMessage := ""
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
+	if frameErr != nil {
+		errorMessage = frameErr.Error()
+	} else if readErr != nil && !errors.Is(readErr, io.EOF) {
 		errorMessage = readErr.Error()
 	} else if logicalFailure {
 		errorMessage = "upstream stream failed"
@@ -180,8 +181,8 @@ func relayConverted(ctx context.Context, input StreamInput, sink StreamWriter) S
 		n, err := input.Body.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			parser.Push(chunk)
-			consumeSSEFrames(&frames, chunk, func(data string) {
+			parserOK := parser.Push(chunk)
+			framesOK := consumeSSEFrames(&frames, chunk, func(data string) {
 				if clientCanceled || data == "" {
 					return
 				}
@@ -208,6 +209,12 @@ func relayConverted(ctx context.Context, input StreamInput, sink StreamWriter) S
 					emit(event)
 				}
 			})
+			if !parserOK || !framesOK {
+				streamFailed = true
+				streamErr = errSSEFrameTooLarge
+				_ = input.Body.Close()
+				break
+			}
 			if clientCanceled {
 				break
 			}
@@ -260,20 +267,6 @@ func relayConverted(ctx context.Context, input StreamInput, sink StreamWriter) S
 	return StreamFacts{Success: !streamFailed, Status: status, Error: errorMessage, Usage: usageSum, Cost: usage.CalcUsageCost(input.ModelEntry, usageSum)}
 }
 
-func findFrameEnd(buf []byte) (int, int) {
-	for i := 0; i+3 < len(buf); i++ {
-		if buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n' {
-			return i, 4
-		}
-	}
-	for i := 0; i+1 < len(buf); i++ {
-		if buf[i] == '\n' && buf[i+1] == '\n' {
-			return i, 2
-		}
-	}
-	return -1, 0
-}
-
 func extractData(frame []byte) string {
 	lines := strings.Split(string(frame), "\n")
 	for _, line := range lines {
@@ -288,18 +281,32 @@ func extractData(frame []byte) string {
 	return ""
 }
 
-func consumeSSEFrames(buf *bytes.Buffer, chunk []byte, onData func(string)) {
-	buf.Write(chunk)
-	for {
-		raw := buf.Bytes()
-		end, separator := findFrameEnd(raw)
-		if end < 0 {
-			return
+// shortcut: frames over 1 MiB are rejected; raise this only if a provider requires larger SSE events.
+const maxSSEFrameBytes = 1 << 20
+
+var errSSEFrameTooLarge = errors.New("upstream SSE frame exceeds 1 MiB")
+
+func consumeSSEFrames(buf *bytes.Buffer, chunk []byte, onData func(string)) bool {
+	for _, b := range chunk {
+		if buf.Len() >= maxSSEFrameBytes {
+			return false
 		}
-		frame := append([]byte(nil), raw[:end]...)
-		buf.Next(end + separator)
+		_ = buf.WriteByte(b)
+		raw := buf.Bytes()
+		separator := 0
+		if len(raw) >= 2 && raw[len(raw)-2] == '\n' && raw[len(raw)-1] == '\n' {
+			separator = 2
+		} else if len(raw) >= 4 && raw[len(raw)-4] == '\r' && raw[len(raw)-3] == '\n' && raw[len(raw)-2] == '\r' && raw[len(raw)-1] == '\n' {
+			separator = 4
+		}
+		if separator == 0 {
+			continue
+		}
+		frame := append([]byte(nil), raw[:len(raw)-separator]...)
+		buf.Reset()
 		onData(extractData(frame))
 	}
+	return true
 }
 
 func isSSEFailure(data string, format protocol.Format) bool {

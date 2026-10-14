@@ -119,42 +119,44 @@ func (s *UsageSummary) NullableTokens() (prompt, completion, cached, reasoning *
 		knownValue(s.CachedTokens, s.CachedTokensKnown), knownValue(s.ReasoningTokens, s.ReasoningTokensKnown)
 }
 
-func frameEnd(buf []byte) (int, int) {
-	for i := 0; i+3 < len(buf); i++ {
-		if buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n' {
-			return i, 4
-		}
-	}
-	for i := 0; i+1 < len(buf); i++ {
-		if buf[i] == '\n' && buf[i+1] == '\n' {
-			return i, 2
-		}
-	}
-	return -1, 0
-}
+// shortcut: frames over 1 MiB are rejected; raise this only if a provider requires larger SSE events.
+const maxSSEFrameBytes = 1 << 20
 
 type SseUsageParser struct {
 	buffer         []byte
 	summary        *UsageSummary
 	anthropicUsage map[string]interface{}
+	overflow       bool
 }
 
 func NewSseUsageParser() *SseUsageParser { return &SseUsageParser{} }
 
-func (p *SseUsageParser) Push(chunk []byte) {
-	p.buffer = append(p.buffer, chunk...)
-	for {
-		end, sep := frameEnd(p.buffer)
-		if end < 0 {
-			break
-		}
-		frame := make([]byte, end)
-		copy(frame, p.buffer[:end])
-		newBuf := make([]byte, len(p.buffer)-end-sep)
-		copy(newBuf, p.buffer[end+sep:])
-		p.buffer = newBuf
-		p.handleFrame(frame)
+// Push parses complete SSE frames while bounding the incomplete-frame buffer.
+func (p *SseUsageParser) Push(chunk []byte) bool {
+	if p.overflow {
+		return false
 	}
+	for _, b := range chunk {
+		if len(p.buffer) >= maxSSEFrameBytes {
+			p.overflow = true
+			p.buffer = nil
+			return false
+		}
+		p.buffer = append(p.buffer, b)
+		separator := 0
+		if len(p.buffer) >= 2 && p.buffer[len(p.buffer)-2] == '\n' && p.buffer[len(p.buffer)-1] == '\n' {
+			separator = 2
+		} else if len(p.buffer) >= 4 && p.buffer[len(p.buffer)-4] == '\r' && p.buffer[len(p.buffer)-3] == '\n' && p.buffer[len(p.buffer)-2] == '\r' && p.buffer[len(p.buffer)-1] == '\n' {
+			separator = 4
+		}
+		if separator == 0 {
+			continue
+		}
+		frame := p.buffer[:len(p.buffer)-separator]
+		p.handleFrame(frame)
+		p.buffer = p.buffer[:0]
+	}
+	return true
 }
 
 func (p *SseUsageParser) handleFrame(frame []byte) {

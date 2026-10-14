@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"bytes"
 	"math"
 	"testing"
 )
@@ -128,5 +129,15 @@ func TestUsageKnownFlagsPreservePartialAndRejectInvalidCounts(t *testing.T) {
 	s := p.Finish()
 	if s == nil || s.PromptTokensKnown || !s.CompletionTokensKnown || s.CachedTokensKnown || s.ReasoningTokensKnown {
 		t.Fatalf("partial SSE usage=%+v", s)
+	}
+}
+
+func TestSseUsageParserRejectsOversizedIncompleteFrame(t *testing.T) {
+	parser := NewSseUsageParser()
+	if parser.Push(bytes.Repeat([]byte{'x'}, maxSSEFrameBytes+1)) {
+		t.Fatal("oversized incomplete frame was accepted")
+	}
+	if parser.Push([]byte("data: [DONE]\n\n")) {
+		t.Fatal("parser recovered after overflow")
 	}
 }
