@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	proxyadapter "github.com/heihei0299/pi-switch/internal/adapters/outbound/proxy"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/domain/conversation"
 	"github.com/heihei0299/pi-switch/internal/store"
@@ -197,8 +198,7 @@ func handleChatCompletions(c *gin.Context) {
 	name, realModel := prepared.Supplier, prepared.Model
 	prof, upstream := prepared.Profile, prepared.Upstream
 	plan := prepared.ProtocolPlan
-	outboundPlan := OutboundRequestPlan{
-		Context:          c.Request.Context(),
+	outboundPlan := proxyadapter.OutboundRequestPlan{
 		Upstream:         upstream,
 		Path:             plan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
@@ -208,7 +208,7 @@ func handleChatCompletions(c *gin.Context) {
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          30 * time.Second,
 	}
-	outcome := inference.ExecuteNonStream(c.Request.Context(), prepared, outboundRequestBuilder(outboundPlan))
+	outcome := inference.ExecuteNonStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan))
 	logOutcome := func() {
 		if outcome.ShouldLog {
 			logRequest(name, realModel, outcome.Kind == inference.NonStreamOutcomeSuccess, outcome.Usage, outcome.Cost, convID, convName,
@@ -232,7 +232,7 @@ func handleChatCompletions(c *gin.Context) {
 	}
 	finalHeaders := outcome.Headers
 	if prepared.ProtocolPlan.NeedsConvert() {
-		finalHeaders = http.Header{}
+		finalHeaders = inference.Header{}
 		finalHeaders.Set("Content-Type", "application/json")
 	}
 	for key, values := range finalHeaders {
@@ -253,8 +253,7 @@ func handleChatCompletions(c *gin.Context) {
 func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.PreparedRequest, convID, convName string, start time.Time) {
 	name, realModel := prepared.Supplier, prepared.Model
 	prof, upstream := prepared.Profile, prepared.Upstream
-	outboundPlan := OutboundRequestPlan{
-		Context:          c.Request.Context(),
+	outboundPlan := proxyadapter.OutboundRequestPlan{
 		Upstream:         upstream,
 		Path:             prepared.ProtocolPlan.UpstreamPath,
 		ProfileHeaders:   prof.Headers,
@@ -265,7 +264,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          0,
 	}
-	outcome := inference.ExecuteStream(c.Request.Context(), prepared, outboundRequestBuilder(outboundPlan), c.Writer)
+	outcome := inference.ExecuteStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan), proxyadapter.NewStreamWriter(c.Writer))
 	logOutcome := func() {
 		if outcome.ShouldLog {
 			logRequest(name, realModel, outcome.Facts.Success, outcome.Facts.Usage, outcome.Facts.Cost, convID, convName,

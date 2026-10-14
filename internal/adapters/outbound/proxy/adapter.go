@@ -1,4 +1,4 @@
-package server
+package proxy
 
 import (
 	"bytes"
@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heihei0299/pi-switch/internal/config"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
+	"github.com/heihei0299/pi-switch/internal/domain/provider"
 	"github.com/heihei0299/pi-switch/internal/usecase/inference"
 )
 
 type OutboundRequestPlan struct {
-	Context          context.Context
-	Upstream         config.Upstream
+	Upstream         provider.Upstream
 	Path             string
 	ProfileHeaders   map[string]string
 	IncomingHeaders  http.Header
@@ -42,15 +42,10 @@ type BuiltOutboundRequest struct {
 func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error) {
 	method := http.MethodPost
 	url := buildUpstreamURL(plan.Upstream.BaseURL, plan.Path)
-	ctx := plan.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(plan.Body))
+	req, err := http.NewRequest(method, url, bytes.NewReader(plan.Body))
 	if err != nil {
 		return BuiltOutboundRequest{}, err
 	}
-
 	if plan.ContentType != "" {
 		req.Header.Set("Content-Type", plan.ContentType)
 	}
@@ -60,11 +55,11 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 	if plan.Upstream.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+plan.Upstream.APIKey)
 	}
-	for key, value := range config.MergeHeaders(plan.ProfileHeaders, plan.Upstream.Headers) {
+	for key, value := range provider.MergeHeaders(plan.ProfileHeaders, plan.Upstream.Headers) {
 		req.Header.Set(key, value)
 	}
-	req.Header.Set("User-Agent", resolveUserAgentValues(plan.ProfileUserAgent, plan.GlobalUserAgent))
-	applyOpenCodeSessionAffinityHeader(plan.Upstream.BaseURL, plan.IncomingHeaders, req.Header)
+	req.Header.Set("User-Agent", domainconfig.ResolveUserAgentValues(plan.ProfileUserAgent, plan.GlobalUserAgent))
+	ApplyOpenCodeSessionAffinityHeader(plan.Upstream.BaseURL, plan.IncomingHeaders, req.Header)
 
 	headerNames := make([]string, 0, len(req.Header))
 	for name := range req.Header {
@@ -75,31 +70,67 @@ func BuildOutboundRequest(plan OutboundRequestPlan) (BuiltOutboundRequest, error
 		Request: req,
 		Client:  &http.Client{Timeout: plan.Timeout},
 		Metadata: OutboundRequestMetadata{
-			URL:              url,
-			Method:           method,
-			HasAuthorization: plan.Upstream.APIKey != "",
-			HeaderNames:      headerNames,
+			URL: url, Method: method, HasAuthorization: plan.Upstream.APIKey != "", HeaderNames: headerNames,
 		},
 	}, nil
 }
 
-func outboundRequestBuilder(plan OutboundRequestPlan) inference.OutboundRequestBuilder {
+func OutboundRequestBuilder(plan OutboundRequestPlan) inference.OutboundRequestBuilder {
 	return func(body []byte) (inference.OutboundRequest, error) {
 		requestPlan := plan
 		requestPlan.Body = body
 		outbound, err := BuildOutboundRequest(requestPlan)
 		if err != nil {
-			return inference.OutboundRequest{}, err
+			return nil, err
 		}
-		return inference.OutboundRequest{Request: outbound.Request, Client: outbound.Client, URL: outbound.Metadata.URL}, nil
+		return httpOutboundRequest{request: outbound.Request, client: outbound.Client, url: outbound.Metadata.URL}, nil
 	}
 }
 
-func resolveUserAgentValues(profile, global *string) string {
-	return config.ResolveUserAgentValues(profile, global)
+type httpOutboundRequest struct {
+	request *http.Request
+	client  *http.Client
+	url     string
 }
 
-func applyOpenCodeSessionAffinityHeader(baseURL string, incoming, outgoing http.Header) {
+func (r httpOutboundRequest) Do(ctx context.Context) (inference.OutboundResponse, error) {
+	request := r.request.Clone(ctx)
+	response, err := r.client.Do(request)
+	if err != nil {
+		return inference.OutboundResponse{URL: r.url}, err
+	}
+	return inference.OutboundResponse{
+		Status:  response.StatusCode,
+		Headers: fromHTTPHeaders(response.Header),
+		Body:    response.Body,
+		URL:     r.url,
+	}, nil
+}
+
+func fromHTTPHeaders(headers http.Header) inference.Header {
+	out := make(inference.Header, len(headers))
+	for key, values := range headers {
+		out[key] = append([]string(nil), values...)
+	}
+	return out
+}
+
+func NewStreamWriter(w http.ResponseWriter) inference.StreamWriter {
+	return streamWriter{writer: w}
+}
+
+type streamWriter struct{ writer http.ResponseWriter }
+
+func (w streamWriter) SetHeader(key, value string)    { w.writer.Header().Set(key, value) }
+func (w streamWriter) WriteHeader(status int)         { w.writer.WriteHeader(status) }
+func (w streamWriter) Write(data []byte) (int, error) { return w.writer.Write(data) }
+func (w streamWriter) Flush() {
+	if flusher, ok := w.writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func ApplyOpenCodeSessionAffinityHeader(baseURL string, incoming, outgoing http.Header) {
 	if !strings.Contains(strings.ToLower(baseURL), "opencode.ai") {
 		return
 	}

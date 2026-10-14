@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/domain/protocol"
@@ -18,7 +17,7 @@ import (
 // StreamInput describes the upstream response and the conversion plan for one SSE relay.
 type StreamInput struct {
 	UpstreamStatus   int
-	UpstreamHeaders  http.Header
+	UpstreamHeaders  Header
 	Body             io.ReadCloser
 	UpstreamFormat   protocol.Format
 	DownstreamFormat protocol.Format
@@ -36,19 +35,19 @@ type StreamFacts struct {
 }
 
 // RelayStream sets upstream headers/status, relays the SSE body, and returns request facts.
-func RelayStream(ctx context.Context, input StreamInput, sink http.ResponseWriter) StreamFacts {
+func RelayStream(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
 	defer input.Body.Close()
 	for key, values := range input.UpstreamHeaders {
 		for _, value := range values {
 			if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Connection") {
 				continue
 			}
-			sink.Header().Set(key, value)
+			sink.SetHeader(key, value)
 		}
 	}
-	sink.Header().Set("Content-Type", "text/event-stream")
-	sink.Header().Set("Cache-Control", "no-cache")
-	sink.Header().Set("Connection", "keep-alive")
+	sink.SetHeader("Content-Type", "text/event-stream")
+	sink.SetHeader("Cache-Control", "no-cache")
+	sink.SetHeader("Connection", "keep-alive")
 	sink.WriteHeader(input.UpstreamStatus)
 	if input.Converter == nil {
 		return relayPassthrough(ctx, input, sink)
@@ -56,9 +55,9 @@ func RelayStream(ctx context.Context, input StreamInput, sink http.ResponseWrite
 	return relayConverted(ctx, input, sink)
 }
 
-func relayPassthrough(ctx context.Context, input StreamInput, sink http.ResponseWriter) StreamFacts {
+func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
 	parser := usage.NewSseUsageParser()
-	flusher, _ := sink.(http.Flusher)
+	flusher := sink
 	buf := make([]byte, 4096)
 	var totalBytes bytes.Buffer
 	var frames bytes.Buffer
@@ -123,7 +122,7 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink http.Response
 	}
 	status := input.UpstreamStatus
 	if streamFailed {
-		status = http.StatusBadGateway
+		status = 502
 	}
 	if clientCanceled {
 		status = 499
@@ -134,9 +133,9 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink http.Response
 	return StreamFacts{Success: !streamFailed, Status: status, Error: errorMessage, Usage: usageSum, Cost: usage.CalcUsageCost(input.ModelEntry, usageSum)}
 }
 
-func relayConverted(ctx context.Context, input StreamInput, sink http.ResponseWriter) StreamFacts {
+func relayConverted(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
 	parser := usage.NewSseUsageParser()
-	flusher, _ := sink.(http.Flusher)
+	flusher := sink
 	streamFailed := false
 	clientCanceled := false
 	var streamErr error
@@ -248,7 +247,7 @@ func relayConverted(ctx context.Context, input StreamInput, sink http.ResponseWr
 	status := input.UpstreamStatus
 	errorMessage := ""
 	if streamFailed {
-		status = http.StatusBadGateway
+		status = 502
 		if streamErr != nil {
 			errorMessage = streamErr.Error()
 		} else {

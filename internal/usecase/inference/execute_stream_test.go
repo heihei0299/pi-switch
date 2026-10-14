@@ -1,11 +1,9 @@
 package inference
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -18,16 +16,14 @@ func TestExecuteStreamRelaysWithUpstreamStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}}
-	builder := func(body []byte) (OutboundRequest, error) {
-		request, err := http.NewRequest(http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-		if err != nil {
-			return OutboundRequest{}, err
-		}
-		return OutboundRequest{Request: request, URL: "http://upstream.test/stream", Client: testDoer(func(*http.Request) (*http.Response, error) {
-			return testResponse(http.StatusPartialContent, "data: [DONE]\n\n"), nil
-		})}, nil
+	builder := func([]byte) (OutboundRequest, error) {
+		return testOutbound(func(context.Context) (OutboundResponse, error) {
+			response := testResponse(http.StatusPartialContent, "data: [DONE]\n\n")
+			response.URL = "http://upstream.test/stream"
+			return response, nil
+		}), nil
 	}
-	writer := httptest.NewRecorder()
+	writer := newRelayTestRecorder()
 
 	result := ExecuteStream(context.Background(), prepared, builder, writer)
 	if result.Kind != StreamOutcomeRelayed || result.Facts.Status != http.StatusPartialContent || writer.Code != http.StatusPartialContent {
@@ -44,17 +40,16 @@ func TestExecuteStreamPreservesBoundedUpstreamErrorResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}}
-	builder := func(body []byte) (OutboundRequest, error) {
-		request, err := http.NewRequest(http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-		if err != nil {
-			return OutboundRequest{}, err
-		}
-		response := testResponse(http.StatusTooManyRequests, strings.Repeat("x", streamErrorBodyLimit+1))
-		response.Header.Set("X-Upstream", "kept")
-		return OutboundRequest{Request: request, URL: "http://upstream.test/stream", Client: testDoer(func(*http.Request) (*http.Response, error) { return response, nil })}, nil
+	builder := func([]byte) (OutboundRequest, error) {
+		return testOutbound(func(context.Context) (OutboundResponse, error) {
+			response := testResponse(http.StatusTooManyRequests, strings.Repeat("x", streamErrorBodyLimit+1))
+			response.Headers["X-Upstream"] = []string{"kept"}
+			response.URL = "http://upstream.test/stream"
+			return response, nil
+		}), nil
 	}
 
-	result := ExecuteStream(context.Background(), prepared, builder, httptest.NewRecorder())
+	result := ExecuteStream(context.Background(), prepared, builder, newRelayTestRecorder())
 	if result.Kind != StreamOutcomeUpstreamResponse || result.Facts.Status != http.StatusTooManyRequests || len(result.Body) != streamErrorBodyLimit || result.Headers.Get("X-Upstream") != "kept" {
 		t.Fatalf("outcome kind/status/body/header = %v/%d/%d/%q", result.Kind, result.Facts.Status, len(result.Body), result.Headers.Get("X-Upstream"))
 	}
@@ -67,18 +62,14 @@ func TestExecuteStreamCanceledRequestReturnsNoResponse(t *testing.T) {
 	}
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}}
 	ctx, cancel := context.WithCancel(context.Background())
-	builder := func(body []byte) (OutboundRequest, error) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-		if err != nil {
-			return OutboundRequest{}, err
-		}
-		return OutboundRequest{Request: request, URL: "http://upstream.test/stream", Client: testDoer(func(*http.Request) (*http.Response, error) {
+	builder := func([]byte) (OutboundRequest, error) {
+		return testOutbound(func(context.Context) (OutboundResponse, error) {
 			cancel()
-			return nil, context.Canceled
-		})}, nil
+			return OutboundResponse{URL: "http://upstream.test/stream"}, context.Canceled
+		}), nil
 	}
 
-	result := ExecuteStream(ctx, prepared, builder, httptest.NewRecorder())
+	result := ExecuteStream(ctx, prepared, builder, newRelayTestRecorder())
 	if result.Kind != StreamOutcomeCanceled || result.Facts.Status != 499 || !result.ShouldLog {
 		t.Fatalf("outcome = %+v, want logged cancellation without response", result)
 	}
@@ -91,8 +82,8 @@ func TestExecuteStreamBuildFailureIsNotLogged(t *testing.T) {
 	}
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}}
 	result := ExecuteStream(context.Background(), prepared, func([]byte) (OutboundRequest, error) {
-		return OutboundRequest{}, io.ErrUnexpectedEOF
-	}, httptest.NewRecorder())
+		return nil, io.ErrUnexpectedEOF
+	}, newRelayTestRecorder())
 	if result.Kind != StreamOutcomeError || result.ErrorType != "upstream_error" || result.ShouldLog {
 		t.Fatalf("outcome = %+v, want unlogged build error", result)
 	}

@@ -51,6 +51,8 @@ func newRelayTestRecorder() *relayTestRecorder {
 	return &relayTestRecorder{ResponseRecorder: httptest.NewRecorder()}
 }
 
+func (w *relayTestRecorder) SetHeader(key, value string) { w.ResponseRecorder.Header().Set(key, value) }
+
 func (w *relayTestRecorder) Flush() {
 	w.flushes++
 	w.ResponseRecorder.Flush()
@@ -65,7 +67,7 @@ func TestRelayStreamPassThroughPreservesBytesHeadersAndUsage(t *testing.T) {
 	writer := newRelayTestRecorder()
 	input := StreamInput{
 		UpstreamStatus: http.StatusOK,
-		UpstreamHeaders: http.Header{
+		UpstreamHeaders: Header{
 			"Content-Length": {"99"},
 			"X-Upstream":     {"kept"},
 		},
@@ -203,13 +205,14 @@ type relayFailingWriter struct {
 	writes int
 }
 
-func (w *relayFailingWriter) Header() http.Header {
+func (w *relayFailingWriter) SetHeader(key, value string) {
 	if w.header == nil {
 		w.header = make(http.Header)
 	}
-	return w.header
+	w.header.Set(key, value)
 }
 func (*relayFailingWriter) WriteHeader(int) {}
+func (*relayFailingWriter) Flush()          {}
 func (w *relayFailingWriter) Write([]byte) (int, error) {
 	w.writes++
 	return 0, errors.New("client connection closed")

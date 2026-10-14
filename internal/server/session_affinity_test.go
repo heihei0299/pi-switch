@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"testing"
+
+	proxyadapter "github.com/heihei0299/pi-switch/internal/adapters/outbound/proxy"
 )
 
 func TestApplyOpenCodeSessionAffinityHeader(t *testing.T) {
@@ -49,7 +51,7 @@ func TestApplyOpenCodeSessionAffinityHeader(t *testing.T) {
 			if tt.initial != "" {
 				outgoing.Set("x-opencode-session", tt.initial)
 			}
-			applyOpenCodeSessionAffinityHeader(tt.baseURL, tt.incoming, outgoing)
+			proxyadapter.ApplyOpenCodeSessionAffinityHeader(tt.baseURL, tt.incoming, outgoing)
 			got := outgoing.Get("x-opencode-session")
 			if got != tt.want {
 				t.Fatalf("x-opencode-session = %q, want %q", got, tt.want)

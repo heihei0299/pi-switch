@@ -1,7 +1,6 @@
 package inference
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,9 +11,13 @@ import (
 	"github.com/heihei0299/pi-switch/internal/domain/protocol"
 )
 
-type testDoer func(*http.Request) (*http.Response, error)
+type testOutbound func(context.Context) (OutboundResponse, error)
 
-func (do testDoer) Do(request *http.Request) (*http.Response, error) { return do(request) }
+func (f testOutbound) Do(ctx context.Context) (OutboundResponse, error) { return f(ctx) }
+
+func testResponse(status int, body string) OutboundResponse {
+	return OutboundResponse{Status: status, Headers: Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+}
 
 func TestExecuteNonStreamRetriesInvalidRequestAndUsesRetrySuccess(t *testing.T) {
 	plan, err := protocol.PlanRequest("chat", protocol.OpenAIChat, "auto")
@@ -31,21 +34,17 @@ func TestExecuteNonStreamRetriesInvalidRequestAndUsesRetrySuccess(t *testing.T) 
 	calls := 0
 	builder := func(body []byte) (OutboundRequest, error) {
 		bodies = append(bodies, append([]byte(nil), body...))
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-		if err != nil {
-			return OutboundRequest{}, err
-		}
-		return OutboundRequest{
-			Request: request,
-			Client: testDoer(func(*http.Request) (*http.Response, error) {
-				calls++
-				if calls == 1 {
-					return testResponse(http.StatusBadRequest, `{"type":"invalid_request_error"}`), nil
-				}
-				return testResponse(http.StatusOK, `{"id":"ok","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}`), nil
-			}),
-			URL: "http://upstream.test/v1/chat/completions",
-		}, nil
+		return testOutbound(func(context.Context) (OutboundResponse, error) {
+			calls++
+			if calls == 1 {
+				response := testResponse(http.StatusBadRequest, `{"type":"invalid_request_error"}`)
+				response.URL = "http://upstream.test/v1/chat/completions"
+				return response, nil
+			}
+			response := testResponse(http.StatusOK, `{"id":"ok","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}`)
+			response.URL = "http://upstream.test/v1/chat/completions"
+			return response, nil
+		}), nil
 	}
 
 	result := ExecuteNonStream(ctx, prepared, builder)
@@ -75,25 +74,23 @@ func TestExecuteNonStreamRetryFailureReturnsOriginalUpstreamResponse(t *testing.
 			}
 			prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}, sourceBody: map[string]interface{}{"model": "model"}}
 			calls := 0
-			builder := func(body []byte) (OutboundRequest, error) {
+			builder := func([]byte) (OutboundRequest, error) {
 				calls++
 				if calls == 2 && failure == "build" {
-					return OutboundRequest{}, io.ErrUnexpectedEOF
-				}
-				request, err := http.NewRequest(http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-				if err != nil {
-					return OutboundRequest{}, err
+					return nil, io.ErrUnexpectedEOF
 				}
 				status, responseBody, url := http.StatusTooManyRequests, `{"message":"retry failed"}`, "http://upstream.test/retry"
 				if calls == 1 {
 					status, responseBody, url = http.StatusBadRequest, `{"type":"invalid_request_error","message":"original"}`, "http://upstream.test/original"
 				}
-				return OutboundRequest{Request: request, URL: url, Client: testDoer(func(*http.Request) (*http.Response, error) {
+				return testOutbound(func(context.Context) (OutboundResponse, error) {
 					if calls == 2 && failure == "transport" {
-						return nil, io.ErrUnexpectedEOF
+						return OutboundResponse{URL: url}, io.ErrUnexpectedEOF
 					}
-					return testResponse(status, responseBody), nil
-				})}, nil
+					response := testResponse(status, responseBody)
+					response.URL = url
+					return response, nil
+				}), nil
 			}
 
 			result := ExecuteNonStream(context.Background(), prepared, builder)
@@ -104,10 +101,6 @@ func TestExecuteNonStreamRetryFailureReturnsOriginalUpstreamResponse(t *testing.
 	}
 }
 
-func testResponse(status int, body string) *http.Response {
-	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
-}
-
 func TestExecuteNonStreamBuildFailureIsNotLogged(t *testing.T) {
 	plan, err := protocol.PlanRequest("chat", protocol.OpenAIChat, "auto")
 	if err != nil {
@@ -115,7 +108,7 @@ func TestExecuteNonStreamBuildFailureIsNotLogged(t *testing.T) {
 	}
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}}
 	result := ExecuteNonStream(context.Background(), prepared, func([]byte) (OutboundRequest, error) {
-		return OutboundRequest{}, io.ErrUnexpectedEOF
+		return nil, io.ErrUnexpectedEOF
 	})
 	if result.Status != http.StatusBadGateway || result.Kind != NonStreamOutcomeError || result.ErrorType != "upstream_error" || result.ShouldLog {
 		t.Fatalf("outcome = %+v, want unlogged 502 build error", result)
@@ -130,21 +123,19 @@ func TestExecuteNonStreamCanceledRetryReturnsNoResponse(t *testing.T) {
 	prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}, sourceBody: map[string]interface{}{"model": "model"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
-	builder := func(body []byte) (OutboundRequest, error) {
+	builder := func([]byte) (OutboundRequest, error) {
 		calls++
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://upstream.test", bytes.NewReader(body))
-		if err != nil {
-			return OutboundRequest{}, err
-		}
 		if calls == 1 {
-			return OutboundRequest{Request: request, URL: "http://upstream.test/original", Client: testDoer(func(*http.Request) (*http.Response, error) {
-				return testResponse(http.StatusBadRequest, `{"type":"invalid_request_error"}`), nil
-			})}, nil
+			return testOutbound(func(context.Context) (OutboundResponse, error) {
+				response := testResponse(http.StatusBadRequest, `{"type":"invalid_request_error"}`)
+				response.URL = "http://upstream.test/original"
+				return response, nil
+			}), nil
 		}
 		cancel()
-		return OutboundRequest{Request: request, URL: "http://upstream.test/retry", Client: testDoer(func(*http.Request) (*http.Response, error) {
-			return nil, context.Canceled
-		})}, nil
+		return testOutbound(func(context.Context) (OutboundResponse, error) {
+			return OutboundResponse{URL: "http://upstream.test/retry"}, context.Canceled
+		}), nil
 	}
 
 	result := ExecuteNonStream(ctx, prepared, builder)

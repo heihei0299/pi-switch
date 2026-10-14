@@ -1,12 +1,8 @@
 package config
 
+import domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
+
 // ResolveUserAgentValues is shared by Proxy outbound requests and usage probes.
 func ResolveUserAgentValues(profile, global *string) string {
-	if profile != nil && *profile != "" {
-		return *profile
-	}
-	if global != nil && *global != "" {
-		return *global
-	}
-	return "curl/8.5.0"
+	return domainconfig.ResolveUserAgentValues(profile, global)
 }

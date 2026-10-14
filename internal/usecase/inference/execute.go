@@ -4,21 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/domain/usage"
 )
-
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
-type OutboundRequest struct {
-	Request *http.Request
-	Client  HTTPDoer
-	URL     string
-}
 
 type OutboundRequestBuilder func([]byte) (OutboundRequest, error)
 
@@ -34,7 +23,7 @@ const (
 type NonStreamOutcome struct {
 	Kind      NonStreamOutcomeKind
 	Status    int
-	Headers   http.Header
+	Headers   Header
 	Body      []byte
 	URL       string
 	Error     string
@@ -48,28 +37,28 @@ func ExecuteNonStream(ctx context.Context, prepared PreparedRequest, build Outbo
 	body, _ := json.Marshal(prepared.Body)
 	outbound, err := build(body)
 	if err != nil {
-		return NonStreamOutcome{Kind: NonStreamOutcomeError, Status: http.StatusBadGateway, Error: err.Error(), ErrorType: "upstream_error"}
+		return NonStreamOutcome{Kind: NonStreamOutcomeError, Status: 502, Error: err.Error(), ErrorType: "upstream_error"}
 	}
-	response, err := outbound.Client.Do(outbound.Request)
+	response, err := outbound.Do(ctx)
 	if err != nil {
-		return transportFailure(ctx, err, outbound.URL)
+		return transportFailure(ctx, err, response.URL)
 	}
 	responseBody, err := readResponse(ctx, response)
 	if err != nil {
-		return transportFailure(ctx, err, outbound.URL)
+		return transportFailure(ctx, err, response.URL)
 	}
-	if response.StatusCode >= http.StatusBadRequest {
-		if response.StatusCode == http.StatusBadRequest && strings.Contains(string(responseBody), "invalid_request_error") {
+	if response.Status >= 400 {
+		if response.Status == 400 && strings.Contains(string(responseBody), "invalid_request_error") {
 			if retry, handled := retryNonStream(ctx, prepared, build); handled {
 				return retry
 			}
 		}
 		return NonStreamOutcome{
-			Kind: NonStreamOutcomeUpstreamResponse, Status: response.StatusCode, Headers: response.Header, Body: responseBody,
-			URL: outbound.URL, Error: string(responseBody), ShouldLog: true,
+			Kind: NonStreamOutcomeUpstreamResponse, Status: response.Status, Headers: response.Headers, Body: responseBody,
+			URL: response.URL, Error: string(responseBody), ShouldLog: true,
 		}
 	}
-	return processSuccessfulResponse(prepared, response, responseBody, outbound.URL)
+	return processSuccessfulResponse(prepared, response, responseBody)
 }
 
 func retryNonStream(ctx context.Context, prepared PreparedRequest, build OutboundRequestBuilder) (NonStreamOutcome, bool) {
@@ -82,39 +71,39 @@ func retryNonStream(ctx context.Context, prepared PreparedRequest, build Outboun
 	if err != nil {
 		return NonStreamOutcome{}, false
 	}
-	response, err := outbound.Client.Do(outbound.Request)
+	response, err := outbound.Do(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			return transportFailure(ctx, err, outbound.URL), true
+			return transportFailure(ctx, err, response.URL), true
 		}
 		return NonStreamOutcome{}, false
 	}
 	responseBody, err := readResponse(ctx, response)
 	if err != nil {
-		return transportFailure(ctx, err, outbound.URL), true
+		return transportFailure(ctx, err, response.URL), true
 	}
-	if response.StatusCode >= http.StatusBadRequest {
+	if response.Status >= 400 {
 		return NonStreamOutcome{}, false
 	}
-	return processSuccessfulResponse(prepared, response, responseBody, outbound.URL), true
+	return processSuccessfulResponse(prepared, response, responseBody), true
 }
 
-func processSuccessfulResponse(prepared PreparedRequest, response *http.Response, body []byte, upstreamURL string) NonStreamOutcome {
+func processSuccessfulResponse(prepared PreparedRequest, response OutboundResponse, body []byte) NonStreamOutcome {
 	result, err := processNonStreamResponse(prepared, body)
 	if err != nil {
 		return NonStreamOutcome{
-			Kind: NonStreamOutcomeError, Status: http.StatusBadGateway, Error: err.Error(), ErrorType: "conversion_error",
-			URL: upstreamURL, ShouldLog: true,
+			Kind: NonStreamOutcomeError, Status: 502, Error: err.Error(), ErrorType: "conversion_error",
+			URL: response.URL, ShouldLog: true,
 		}
 	}
 	return NonStreamOutcome{
-		Kind: NonStreamOutcomeSuccess, Status: response.StatusCode, Headers: response.Header, Body: result.Body,
-		URL: upstreamURL, ShouldLog: true, Usage: result.Usage, Cost: result.Cost,
+		Kind: NonStreamOutcomeSuccess, Status: response.Status, Headers: response.Headers, Body: result.Body,
+		URL: response.URL, ShouldLog: true, Usage: result.Usage, Cost: result.Cost,
 	}
 }
 
 func transportFailure(ctx context.Context, err error, upstreamURL string) NonStreamOutcome {
-	status := http.StatusBadGateway
+	status := 502
 	noResponse := false
 	if ctx.Err() != nil {
 		status, noResponse = 499, true
@@ -129,7 +118,7 @@ func transportFailure(ctx context.Context, err error, upstreamURL string) NonStr
 	}
 }
 
-func readResponse(ctx context.Context, response *http.Response) ([]byte, error) {
+func readResponse(ctx context.Context, response OutboundResponse) ([]byte, error) {
 	body, err := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if ctxErr := ctx.Err(); ctxErr != nil {

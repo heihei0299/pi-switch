@@ -381,7 +381,7 @@ func handleGetCredits(c *gin.Context) {
 	// 真实回源：opencode 兼容网关的 {baseURL}/usage（zen/go 实测返回
 	// rolling/weekly/monthly 用量百分比；Zen-only key 可能 403）。
 	// 非 200/解析失败一律如实报错，前端显示错误+重试，不再编造数字。
-	usage, err := fetchUpstreamUsage(baseURL, apiKey, resolveUserAgentValues(prof.UserAgent, cfg.Settings.Proxy.UserAgent))
+	usage, err := fetchUpstreamUsage(baseURL, apiKey, config.ResolveUserAgentValues(prof.UserAgent, cfg.Settings.Proxy.UserAgent))
 	if err != nil {
 		c.JSON(502, gin.H{"error": err.Error(), "type": "upstream_error"})
 		return
