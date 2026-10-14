@@ -63,6 +63,53 @@ type scoredCandidate struct {
 	promptKnown bool
 }
 
+type Matcher struct {
+	byModel map[string][]Candidate
+}
+
+// NewMatcher indexes a stable session snapshot for repeated timestamped lookups.
+func NewMatcher(candidates []Candidate) *Matcher {
+	matcher := &Matcher{byModel: make(map[string][]Candidate)}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.ID) == "" || candidate.LastActiveAt.IsZero() {
+			continue
+		}
+		model := strings.TrimSpace(candidate.Model)
+		if model == "" {
+			continue
+		}
+		key := BareModel(model)
+		if key == "" {
+			key = model
+		}
+		matcher.byModel[key] = append(matcher.byModel[key], candidate)
+	}
+	for key := range matcher.byModel {
+		sort.SliceStable(matcher.byModel[key], func(i, j int) bool {
+			return matcher.byModel[key][i].LastActiveAt.Before(matcher.byModel[key][j].LastActiveAt)
+		})
+	}
+	return matcher
+}
+
+// Match applies Match to only same-model candidates within its time window.
+func (m *Matcher) Match(source Source, input MatchInput) MatchResult {
+	if m == nil || source != SourceSessionScan || input.Timestamp.IsZero() || strings.TrimSpace(input.Model) == "" ||
+		strings.TrimSpace(input.ExplicitID) != "" && strings.TrimSpace(input.ExplicitID) != UnlabeledID {
+		return Match(source, input, nil)
+	}
+	model := strings.TrimSpace(input.Model)
+	key := BareModel(model)
+	if key == "" {
+		key = model
+	}
+	candidates := m.byModel[key]
+	from, to := input.Timestamp.Add(-matchWindow), input.Timestamp.Add(matchWindow)
+	first := sort.Search(len(candidates), func(i int) bool { return !candidates[i].LastActiveAt.Before(from) })
+	last := sort.Search(len(candidates), func(i int) bool { return candidates[i].LastActiveAt.After(to) })
+	return Match(source, input, candidates[first:last])
+}
+
 // Match applies the single conversation attribution policy used by both
 // request-time logging and Stats-time projection. It never consults the clock;
 // callers provide the request row timestamp and a stable session snapshot.

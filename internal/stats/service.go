@@ -283,6 +283,7 @@ func exportField[T any](value *T) string {
 }
 
 func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
+	matcher := s.matcher()
 	if page < 0 {
 		page = 0
 	}
@@ -380,7 +381,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 
 		var result conversation.MatchResult
 		if s.Source != conversation.SourceOff {
-			result = s.match(fact)
+			result = s.match(matcher, fact)
 			aggregateConversation(conversations, fact, result, countable)
 		}
 		factIndex++
@@ -396,7 +397,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	for _, fact := range recentFacts {
 		var result conversation.MatchResult
 		if s.Source != conversation.SourceOff {
-			result = s.match(fact)
+			result = s.match(matcher, fact)
 		}
 		response.RecentRequests = append(response.RecentRequests, requestDTO(fact, result, s.Source))
 	}
@@ -437,8 +438,9 @@ func (s Service) Conversations(window *Window, page, limit int) ([]ConversationS
 		return []ConversationSummary{}, 0, nil
 	}
 	groups := map[string]*conversationAggregate{}
+	matcher := s.matcher()
 	err := s.forEachFact(window, "DESC", func(fact RequestFact) error {
-		aggregateConversation(groups, fact, s.match(fact), fact.countable())
+		aggregateConversation(groups, fact, s.match(matcher, fact), fact.countable())
 		return nil
 	})
 	if err != nil {
@@ -449,6 +451,7 @@ func (s Service) Conversations(window *Window, page, limit int) ([]ConversationS
 }
 
 func (s Service) ConversationRequests(id string, page, limit int) ([]ConversationRequestDTO, int, error) {
+	matcher := s.matcher()
 	if page < 0 {
 		page = 0
 	}
@@ -460,7 +463,7 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 	matched := make([]ConversationRequestDTO, 0, limit)
 	total := 0
 	err := s.forEachFact(nil, "DESC", func(fact RequestFact) error {
-		if s.match(fact).ID != id {
+		if s.match(matcher, fact).ID != id {
 			return nil
 		}
 		if total >= start && total < end {
@@ -567,7 +570,14 @@ func (f RequestFact) valueOr(value *string, fallback string) string {
 	return fallback
 }
 
-func (s Service) match(fact RequestFact) conversation.MatchResult {
+func (s Service) matcher() *conversation.Matcher {
+	if s.Source != conversation.SourceSessionScan {
+		return nil
+	}
+	return conversation.NewMatcher(s.Candidates)
+}
+
+func (s Service) match(matcher *conversation.Matcher, fact RequestFact) conversation.MatchResult {
 	var timestamp time.Time
 	if fact.TS != nil {
 		timestamp, _ = parseTimestamp(*fact.TS)
@@ -577,14 +587,18 @@ func (s Service) match(fact RequestFact) conversation.MatchResult {
 		value := uint64(*fact.PromptTokens)
 		promptTokens = &value
 	}
-	return conversation.Match(s.Source, conversation.MatchInput{
+	input := conversation.MatchInput{
 		ExplicitID:   valueString(fact.ConversationID),
 		ExplicitName: valueString(fact.ConversationName),
 		Provider:     valueString(fact.Provider),
 		Model:        valueString(fact.Model),
 		Timestamp:    timestamp,
 		PromptTokens: promptTokens,
-	}, s.Candidates)
+	}
+	if matcher == nil {
+		return conversation.Match(s.Source, input, nil)
+	}
+	return matcher.Match(s.Source, input)
 }
 
 type conversationAggregate struct {
