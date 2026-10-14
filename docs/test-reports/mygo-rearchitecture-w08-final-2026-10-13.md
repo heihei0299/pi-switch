@@ -1,6 +1,6 @@
 # Architecture V2 W08 — final local audit — 2026-10-13
 
-**Code HEAD audited:** `b16c9ca` (`refactor(config): move HTTP replacement workflow`). This report is documentation-only; it does not change the tested code. **W08 is not marked complete:** the safe local gates below pass, but CI-runner-only and native arm64 checks remain unverified. No push or remote GitHub CI was performed.
+**Code HEAD audited:** `80f011a` (the documentation-only audit commit after `b16c9ca`, `refactor(config): move HTTP replacement workflow`). **W08 is not marked complete:** the safe local gates below pass, but CI-runner-only and native arm64 checks remain unverified. No push or remote GitHub CI was performed.
 
 ## Scope and compatibility audit
 
@@ -27,6 +27,10 @@
 | `gofmt` on changed Go files and committed W08 `git diff --check` | PASS |
 
 The in-place npm package audit found four ignored binaries dated 2026-08-31 (`darwin`/`windows`) already in `bin/`, so the current directory was not a clean CI package workspace. They were left untouched. Re-running the same package audit in a clean archive containing the final Linux amd64/arm64 binaries passed.
+
+## Supplemental final-HEAD rerun
+
+After the documentation-only commit `80f011a`, the following were rerun against that exact HEAD: full root tests/vet, full Desktop tests/vet/MyGo vet, architecture check, Secrets Scan, root build-identity/help/functional smoke, Node CLI tests (8/8), amd64/arm64 root builds and isolated npm package audit, plus Desktop amd64/arm64 package builds, architecture metadata checks, installer smoke, and packaged amd64 CLI/API/Proxy smoke. All passed. The isolated root test DB was `/tmp/pi-switch-w08-head.JbVpfq/requests.db`; the clean npm package audit tree was `/tmp/pi-switch-npm-head.CWmneY/`.
 
 ## Gates not verified / limits
 
