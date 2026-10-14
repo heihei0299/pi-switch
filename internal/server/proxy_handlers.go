@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	httpinfer "github.com/heihei0299/pi-switch/internal/adapters/inbound/httpinfer"
 	proxyadapter "github.com/heihei0299/pi-switch/internal/adapters/outbound/proxy"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/domain/conversation"
@@ -264,7 +265,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          0,
 	}
-	outcome := inference.ExecuteStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan), proxyadapter.NewStreamResponseStarter(c.Writer), proxyadapter.NewStreamWriter(c.Writer))
+	outcome := inference.ExecuteStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan), httpinfer.NewStreamResponseStarter(c.Writer), httpinfer.NewStreamWriter(c.Writer))
 	logOutcome := func() {
 		if outcome.ShouldLog {
 			logRequest(name, realModel, outcome.Facts.Success, outcome.Facts.Usage, outcome.Facts.Cost, convID, convName,
@@ -278,7 +279,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 		logOutcome()
 		c.JSON(outcome.Facts.Status, inferenceError(outcome.Facts.Error, outcome.ErrorType))
 	case inference.StreamOutcomeUpstreamResponse:
-		proxyadapter.WriteResponse(c.Writer, outcome.Facts.Status, outcome.Headers, outcome.Body)
+		httpinfer.WriteResponse(c.Writer, outcome.Facts.Status, outcome.Headers, outcome.Body)
 		logOutcome()
 	case inference.StreamOutcomeRelayed:
 		logOutcome()
