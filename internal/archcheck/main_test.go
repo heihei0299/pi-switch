@@ -40,6 +40,20 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			wantViolation: "github.com/gin-gonic/gin",
 		},
 		{
+			name: "domain rejects legacy infrastructure package",
+			files: map[string]string{
+				"internal/domain/provider/provider.go": "package provider\nimport \"github.com/heihei0299/pi-switch/internal/store\"\n",
+			},
+			wantViolation: module + "/internal/store",
+		},
+		{
+			name: "usecase rejects legacy infrastructure package",
+			files: map[string]string{
+				"internal/usecase/providers/service.go": "package providers\nimport \"github.com/heihei0299/pi-switch/internal/config\"\n",
+			},
+			wantViolation: module + "/internal/config",
+		},
+		{
 			name: "usecase rejects adapters",
 			files: map[string]string{
 				"internal/usecase/providers/service.go": "package providers\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
@@ -151,6 +165,87 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			}
 
 			violations, err := check(root, module, stdlib)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantViolation == "" {
+				if len(violations) != 0 {
+					t.Fatalf("clean dependency graph reported violations: %+v", violations)
+				}
+				return
+			}
+			for _, violation := range violations {
+				if violation.ImportPath == tt.wantViolation {
+					return
+				}
+			}
+			t.Fatalf("missing violation for %s; got %+v", tt.wantViolation, violations)
+		})
+	}
+}
+
+func TestCheckArchitectureDependenciesScansDesktopModule(t *testing.T) {
+	const rootModule = "github.com/heihei0299/pi-switch"
+	const desktopModule = rootModule + "/desktop"
+	stdlib := map[string]bool{"context": true, "fmt": true, "net/url": true}
+
+	tests := []struct {
+		name          string
+		files         map[string]string
+		wantViolation string
+	}{
+		{
+			name: "desktop domain and usecase allow their layers",
+			files: map[string]string{
+				"desktop/internal/domain/value.go":    "package value\nimport \"net/url\"\ntype T = url.URL\n",
+				"desktop/internal/usecase/service.go": "package usecase\nimport (\"context\"; \"github.com/heihei0299/pi-switch/desktop/internal/domain/value\")\nvar _ = context.Background\nvar _ value.T\n",
+			},
+		},
+		{
+			name: "desktop domain rejects infrastructure",
+			files: map[string]string{
+				"desktop/internal/domain/value.go": "package value\nimport \"github.com/heihei0299/pi-switch/internal/store\"\n",
+			},
+			wantViolation: rootModule + "/internal/store",
+		},
+		{
+			name: "desktop usecase rejects infrastructure",
+			files: map[string]string{
+				"desktop/internal/usecase/service.go": "package usecase\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
+			},
+			wantViolation: rootModule + "/internal/adapters/outbound/fileconfig",
+		},
+		{
+			name: "desktop composition root may use shared infrastructure",
+			files: map[string]string{
+				"desktop/main.go": "package main\nimport \"github.com/heihei0299/pi-switch/internal/bootstrap\"\n",
+			},
+		},
+		{
+			name: "desktop test-only imports do not become production violations",
+			files: map[string]string{
+				"desktop/internal/usecase/service_test.go": "package usecase\nimport \"github.com/heihei0299/pi-switch/internal/store\"\n",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for path, source := range tt.files {
+				fullPath := filepath.Join(root, filepath.FromSlash(path))
+				if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(fullPath, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			violations, err := checkModules([]moduleTarget{
+				{root: root, module: rootModule, display: "."},
+				{root: filepath.Join(root, "desktop"), module: desktopModule, display: "desktop"},
+			}, stdlib)
 			if err != nil {
 				t.Fatal(err)
 			}

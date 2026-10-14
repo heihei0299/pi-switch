@@ -71,6 +71,8 @@ flowchart TB
 
 **静态依赖规则（`go run ./internal/archcheck`，CI 持续执行）：**
 
+一次 checker 运行从仓库根目录读取根模块和 `desktop/go.mod`，分别扫描两个 Go Module；Desktop 的 composition root 文件可以依赖根模块的共享业务与基础设施包，但两个模块各自的 `internal/domain/**` 和 `internal/usecase/**` 仍按下表独立约束。
+
 | 生产代码位置 | 可依赖的本仓库包 | 其他依赖 |
 |---|---|---|
 | `internal/domain/**` | `internal/domain/**` | 仅标准库 |
@@ -79,7 +81,7 @@ flowchart TB
 | `internal/adapters/outbound/**` | `internal/domain/**`、`internal/usecase/**`、本 outbound 子树 | 可用标准库和 IO 所需外部库；不得依赖 inbound |
 | `internal/bootstrap/**` | 可装配各内部包 | 根模块不得依赖独立 `desktop` 模块 |
 
-检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W02 将 config schema 放入 `internal/domain/config`、文件事务放入 `outbound/fileconfig`；旧 `internal/config` 入口仅保留委托给 adapter 的兼容包装。W03 将 Gateway 规则和 catalog 快照/补齐规则移入 domain、usecase，文件与远端缓存 IO 分别归 `outbound/filegateway`、`outbound/catalog`。W01 的 Provider 校验迁移桥接仍仅允许 `outbound/profilevalidation` 依赖现有 `internal/profile`，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
+检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；Desktop 模块则扫描其根目录、`internal` 等生产源，但不把 Desktop 的 composition root 误判为 domain/usecase。两个模块中的 domain/usecase 都拒绝外部库、adapter、store、config、daemon 等具体基础设施包；标准库工具包和同层/下层业务包仍按上表允许。不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W02 将 config schema 放入 `internal/domain/config`、文件事务放入 `outbound/fileconfig`；旧 `internal/config` 入口仅保留委托给 adapter 的兼容包装。W03 将 Gateway 规则和 catalog 快照/补齐规则移入 domain、usecase，文件与远端缓存 IO 分别归 `outbound/filegateway`、`outbound/catalog`。W01 的 Provider 校验迁移桥接仍仅允许 `outbound/profilevalidation` 依赖现有 `internal/profile`，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
 
 ## 4. 按业务能力划分的目标包
 

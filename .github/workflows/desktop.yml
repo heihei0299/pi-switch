@@ -33,7 +33,7 @@ jobs:
             desktop/go.sum
             go.sum
 
-      - name: Check architecture dependencies
+      - name: Check architecture dependencies (root + desktop modules)
         run: go run ./internal/archcheck
 
       - name: Test architecture checker rules

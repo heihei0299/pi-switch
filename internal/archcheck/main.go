@@ -12,6 +12,12 @@ import (
 	"strings"
 )
 
+type moduleTarget struct {
+	root    string
+	module  string
+	display string
+}
+
 type violation struct {
 	File       string
 	Line       int
@@ -36,7 +42,11 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	violations, err := check(root, module, stdlib)
+	targets, err := moduleTargets(root, module)
+	if err != nil {
+		fatal(err)
+	}
+	violations, err := checkModules(targets, stdlib)
 	if err != nil {
 		fatal(err)
 	}
@@ -46,7 +56,7 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	fmt.Println("architecture dependencies: clean")
+	fmt.Printf("architecture dependencies: clean (%d modules)\n", len(targets))
 }
 
 func fatal(err error) {
@@ -74,6 +84,47 @@ func modulePath(root string) (string, error) {
 		return module, nil
 	}
 	return "", fmt.Errorf("module directive not found in %s/go.mod", root)
+}
+
+func moduleTargets(root, module string) ([]moduleTarget, error) {
+	targets := []moduleTarget{{root: root, module: module, display: "."}}
+	desktopRoot := filepath.Join(root, "desktop")
+	if _, err := os.Stat(filepath.Join(desktopRoot, "go.mod")); err == nil {
+		desktopModule, err := modulePath(desktopRoot)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, moduleTarget{root: desktopRoot, module: desktopModule, display: "desktop"})
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return targets, nil
+}
+
+func checkModules(targets []moduleTarget, stdlib map[string]bool) ([]violation, error) {
+	var violations []violation
+	for _, target := range targets {
+		moduleViolations, err := check(target.root, target.module, stdlib)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range moduleViolations {
+			if target.display != "." {
+				item.File = filepath.ToSlash(filepath.Join(target.display, item.File))
+			}
+			violations = append(violations, item)
+		}
+	}
+	sort.Slice(violations, func(i, j int) bool {
+		if violations[i].File != violations[j].File {
+			return violations[i].File < violations[j].File
+		}
+		if violations[i].Line != violations[j].Line {
+			return violations[i].Line < violations[j].Line
+		}
+		return violations[i].ImportPath < violations[j].ImportPath
+	})
+	return violations, nil
 }
 
 func standardPackages(root string) (map[string]bool, error) {
