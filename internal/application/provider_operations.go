@@ -1,20 +1,36 @@
 package application
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
 func DuplicateProvider(path, source, name, expected string) error {
-	return updateWithBackup(path, func(cfg *config.PiSwitchConfig) error {
-		prof, ok := cfg.Profiles[source]
-		if !ok || Revision(prof) != expected {
-			return ErrManagementConflict
-		}
-		return providerValidationError(prof, profile.DuplicateInConfig(cfg, source, name))
+	_, err := bootstrap.NewProviderService(path).Duplicate(context.Background(), providerusecase.DuplicateCommand{
+		Source: source, Name: name, ExpectedRevision: expected,
 	})
+	if errors.Is(err, providerusecase.ErrRevisionConflict) {
+		return ErrManagementConflict
+	}
+	var validation *providerusecase.DuplicateValidationError
+	if errors.As(err, &validation) {
+		return providerValidationError(validation.Profile, validation.Err)
+	}
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	var persistence *providerusecase.PersistenceError
+	if errors.As(err, &persistence) {
+		return persistence.Err
+	}
+	return err
 }
 
 func ProviderPresetDraft(id string) (ProviderDraft, error) {

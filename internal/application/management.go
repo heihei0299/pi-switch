@@ -19,14 +19,6 @@ var ErrManagementConflict = providerusecase.ErrRevisionConflict
 // Revision is a comparison token, never a second source of configuration.
 func Revision(value interface{}) string { return revision.Of(value) }
 
-func updateWithBackup(path string, mutate func(*config.PiSwitchConfig) error) error {
-	err := fileconfig.New(path, config.DefaultConfig).UpdateConfig(context.Background(), true, mutate)
-	if errors.Is(err, fileconfig.ErrBackupDirectory) {
-		return &ManagementValidationError{Message: err.Error()}
-	}
-	return err
-}
-
 // CreateConfigBackup keeps the exact pre-write bytes, including legacy fields.
 func CreateConfigBackup(path string) (string, error) {
 	name, err := fileconfig.CreateConfigBackup(path)
@@ -99,20 +91,7 @@ func mapSettingsError(err error) error {
 	return err
 }
 
-// shortcut: keep caller-compatible Provider facades until entrypoint wiring is folded in W08.
-// PutLegacyProvider preserves the historical HTTP overwrite and rename semantics.
-func PutLegacyProvider(ctx context.Context, path, name, renameFrom string, prof config.ProviderProfile) error {
-	_, err := bootstrap.NewProviderService(path).PutLegacy(ctx, providerusecase.PutLegacyCommand{
-		Name: name, RenameFrom: renameFrom, Profile: prof,
-	})
-	return err
-}
-
-func DeleteLegacyProvider(ctx context.Context, path, name string) error {
-	_, err := bootstrap.NewProviderService(path).DeleteLegacy(ctx, providerusecase.DeleteLegacyCommand{Name: name})
-	return err
-}
-
+// shortcut: Native provider pages retain application error mapping, upgrade when those adapters map usecase errors directly.
 func SaveProvider(path, original, name string, prof config.ProviderProfile, expected string) error {
 	return saveProviderContext(context.Background(), path, original, name, prof, expected)
 }
@@ -150,13 +129,19 @@ func deleteProviderContext(ctx context.Context, path, name, expected string) err
 }
 
 func SetCurrentProfile(path, name string) error {
-	return updateWithBackup(path, func(cfg *config.PiSwitchConfig) error {
-		if _, ok := cfg.Profiles[name]; !ok {
-			return fmt.Errorf("profile %q no longer exists", name)
-		}
-		cfg.Current = &name
-		return nil
-	})
+	err := bootstrap.NewProviderService(path).SelectCurrent(context.Background(), name)
+	var validation *providerusecase.ValidationError
+	if errors.As(err, &validation) {
+		return errors.New(validation.Err.Error())
+	}
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	var persistence *providerusecase.PersistenceError
+	if errors.As(err, &persistence) {
+		return persistence.Err
+	}
+	return err
 }
 
 // ValidateWritableConfig is the existing full-config write gate; legacy shape

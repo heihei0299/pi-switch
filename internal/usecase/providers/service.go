@@ -79,6 +79,12 @@ type SaveCommand struct {
 	ExpectedRevision string
 }
 
+type DuplicateCommand struct {
+	Source           string
+	Name             string
+	ExpectedRevision string
+}
+
 type DeleteLegacyCommand struct{ Name string }
 
 type DeleteCommand struct {
@@ -89,9 +95,15 @@ type DeleteCommand struct {
 type Result struct{ Name string }
 
 type ValidationError struct{ Err error }
+type DuplicateValidationError struct {
+	Err     error
+	Profile provider.Profile
+}
 
-func (e *ValidationError) Error() string { return e.Err.Error() }
-func (e *ValidationError) Unwrap() error { return e.Err }
+func (e *ValidationError) Error() string          { return e.Err.Error() }
+func (e *ValidationError) Unwrap() error          { return e.Err }
+func (e *DuplicateValidationError) Error() string { return e.Err.Error() }
+func (e *DuplicateValidationError) Unwrap() error { return e.Err }
 
 type PersistenceError struct{ Err error }
 
@@ -171,6 +183,34 @@ func (s *Service) DuplicateLegacy(ctx context.Context, source, name string) (Res
 	return Result{Name: name}, nil
 }
 
+func (s *Service) Duplicate(ctx context.Context, cmd DuplicateCommand) (Result, error) {
+	err := s.update(ctx, true, func(state *State) error {
+		source, ok := state.Profiles[cmd.Source]
+		if !ok || source.Revision != cmd.ExpectedRevision {
+			return ErrRevisionConflict
+		}
+		name := strings.TrimSpace(cmd.Name)
+		if name == "" {
+			return &DuplicateValidationError{Err: ErrTargetNameRequired, Profile: source.Profile}
+		}
+		if _, exists := state.Profiles[name]; exists {
+			return &DuplicateValidationError{Err: namedProfileError{name: name, exists: true}, Profile: source.Profile}
+		}
+		if s.validator == nil {
+			return &DuplicateValidationError{Err: errors.New("provider validator is unavailable"), Profile: source.Profile}
+		}
+		if err := s.validator.ValidateDuplicate(ctx, source.Profile); err != nil {
+			return &DuplicateValidationError{Err: err, Profile: source.Profile}
+		}
+		state.Profiles[name] = StoredProfile{Profile: source.Profile}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Name: strings.TrimSpace(cmd.Name)}, nil
+}
+
 func (s *Service) Save(ctx context.Context, cmd SaveCommand) (Result, error) {
 	name := strings.TrimSpace(cmd.Name)
 	if name == "" {
@@ -237,6 +277,16 @@ func (s *Service) SelectLegacy(ctx context.Context, name string) (Result, error)
 		return Result{}, err
 	}
 	return Result{Name: name}, nil
+}
+
+func (s *Service) SelectCurrent(ctx context.Context, name string) error {
+	return s.update(ctx, true, func(state *State) error {
+		if _, ok := state.Profiles[name]; !ok {
+			return &ValidationError{Err: fmt.Errorf("profile %q no longer exists", name)}
+		}
+		state.Current = &name
+		return nil
+	})
 }
 
 // DeleteIfPresentLegacy keeps the CLI's idempotent delete behavior and always
@@ -370,7 +420,8 @@ func (s *Service) update(ctx context.Context, backup bool, mutate func(*State) e
 	}
 	if err := s.store.Update(ctx, backup, mutate); err != nil {
 		var validation *ValidationError
-		if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrProfileExists) || errors.Is(err, ErrRevisionConflict) || errors.Is(err, ErrUnknownChannel) || errors.As(err, &validation) {
+		var duplicateValidation *DuplicateValidationError
+		if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrProfileExists) || errors.Is(err, ErrRevisionConflict) || errors.Is(err, ErrUnknownChannel) || errors.As(err, &validation) || errors.As(err, &duplicateValidation) {
 			return err
 		}
 		var persistence *PersistenceError

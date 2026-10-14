@@ -194,6 +194,31 @@ func TestSelectLegacyUsesNoBackupAndRejectsMissingProfile(t *testing.T) {
 	}
 }
 
+func TestSelectCurrentCreatesBackupAndRejectsDeletedProfile(t *testing.T) {
+	current := "old"
+	store := &testStore{state: State{
+		Current: &current,
+		Profiles: map[string]StoredProfile{
+			"old": {Profile: provider.Profile{API: "openai-completions"}},
+			"new": {Profile: provider.Profile{API: "anthropic-messages"}},
+		},
+	}}
+	service := New(store, &testValidator{})
+	if err := service.SelectCurrent(context.Background(), "new"); err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Current == nil || *store.state.Current != "new" || len(store.backups) != 1 || !store.backups[0] {
+		t.Fatalf("current/backups = %v/%v, want backed-up selection", store.state.Current, store.backups)
+	}
+	before := cloneState(store.state)
+	if err := service.SelectCurrent(context.Background(), "deleted"); err == nil || err.Error() != `profile "deleted" no longer exists` {
+		t.Fatalf("deleted selection error = %v", err)
+	}
+	if store.state.Current == nil || before.Current == nil || *store.state.Current != *before.Current || len(store.backups) != 1 {
+		t.Fatal("deleted selection changed state or created a backup")
+	}
+}
+
 func TestDeleteIfPresentLegacyIsIdempotentWithoutBackup(t *testing.T) {
 	current := "one"
 	store := &testStore{state: State{
@@ -238,6 +263,34 @@ func TestSetModelsLegacyValidatesAndDoesNotBackup(t *testing.T) {
 	}
 	if len(store.backups) != 1 || store.state.Profiles["one"].Profile.Upstreams[0].Models[0].ID != "new" {
 		t.Fatal("rejected model update changed state or created a backup")
+	}
+}
+
+func TestNativeDuplicateChecksRevisionAndBacksUp(t *testing.T) {
+	current := "source"
+	initial := State{
+		Current: &current,
+		Profiles: map[string]StoredProfile{
+			"source": {Profile: provider.Profile{API: "openai-completions"}, Revision: "revision"},
+		},
+	}
+	stale := &testStore{state: cloneState(initial)}
+	service := New(stale, &testValidator{})
+	if _, err := service.Duplicate(context.Background(), DuplicateCommand{Source: "source", Name: "copy", ExpectedRevision: "stale"}); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale duplicate = %v", err)
+	}
+	if len(stale.backups) != 0 || len(stale.state.Profiles) != 1 {
+		t.Fatal("stale duplicate mutated state or created a backup")
+	}
+
+	store := &testStore{state: cloneState(initial)}
+	service = New(store, &testValidator{})
+	result, err := service.Duplicate(context.Background(), DuplicateCommand{Source: "source", Name: " copy ", ExpectedRevision: "revision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "copy" || store.state.Current == nil || *store.state.Current != "source" || store.state.Profiles["copy"].Profile.API != "openai-completions" || len(store.backups) != 1 || !store.backups[0] {
+		t.Fatalf("result/state/backups = %+v/%+v/%v", result, store.state, store.backups)
 	}
 }
 

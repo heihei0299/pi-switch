@@ -157,7 +157,9 @@ func handlePutProfile(c *gin.Context) {
 	if body.RenameFrom != nil {
 		renameFrom = *body.RenameFrom
 	}
-	if err := application.PutLegacyProvider(c.Request.Context(), configPath(), name, renameFrom, prof); err != nil {
+	if _, err := bootstrap.NewProviderService(configPath()).PutLegacy(c.Request.Context(), providerusecase.PutLegacyCommand{
+		Name: name, RenameFrom: renameFrom, Profile: prof,
+	}); err != nil {
 		var validation *providerusecase.ValidationError
 		if errors.As(err, &validation) {
 			c.JSON(400, gin.H{"error": validation.Err.Error()})
@@ -171,7 +173,7 @@ func handlePutProfile(c *gin.Context) {
 
 func handleDeleteProfile(c *gin.Context) {
 	name := c.Param("name")
-	err := application.DeleteLegacyProvider(c.Request.Context(), configPath(), name)
+	_, err := bootstrap.NewProviderService(configPath()).DeleteLegacy(c.Request.Context(), providerusecase.DeleteLegacyCommand{Name: name})
 	if errors.Is(err, providerusecase.ErrProfileNotFound) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return

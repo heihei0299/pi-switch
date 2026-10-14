@@ -110,6 +110,44 @@ func TestDeleteProviderBacksUpAndClearsCurrent(t *testing.T) {
 	}
 }
 
+func TestSetCurrentProfileBacksUpAndMissingProfileDoesNotWrite(t *testing.T) {
+	path, cfg := managementFixture(t)
+	cfg.Profiles["other"] = cfg.Profiles["supplier"]
+	if err := config.SaveAtPath(cfg, path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetCurrentProfile(path, "other"); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := ListConfigBackups(path)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, %v; want one", backups, err)
+	}
+	backup, err := os.ReadFile(filepath.Join(path+".backups", backups[0].Name))
+	if err != nil || !bytes.Equal(backup, before) {
+		t.Fatalf("selection backup = %q, %v; want exact previous bytes", backup, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetCurrentProfile(path, "missing"); err == nil || err.Error() != `profile "missing" no longer exists` {
+		t.Fatalf("missing selection error = %v", err)
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(unchanged, after) {
+		t.Fatalf("missing selection changed config: %v", err)
+	}
+	backups, err = ListConfigBackups(path)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("missing selection changed backups: %v, %v", backups, err)
+	}
+}
+
 func TestProviderValidationConflictAndCancelHaveNoWrites(t *testing.T) {
 	path, cfg := managementFixture(t)
 	before, _ := os.ReadFile(path)
