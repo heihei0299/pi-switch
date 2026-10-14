@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/config"
 	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
+	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
 var (
@@ -188,16 +190,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.tab == 0 {
 				if it, ok := m.list.SelectedItem().(profileItem); ok && it.name != "(no profiles)" {
-					cfgPath := config.ResolvePath()
 					name := it.name
-					if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
-						if _, ok := cfg.Profiles[name]; !ok {
-							return fmt.Errorf("profile %q no longer exists", name)
-						}
-						current := name
-						cfg.Current = &current
-						return nil
-					}); err != nil {
+					_, err := bootstrap.NewProviderService(config.ResolvePath()).SelectLegacy(context.Background(), name)
+					if errors.Is(err, providerusecase.ErrProfileNotFound) {
+						err = fmt.Errorf("profile %q no longer exists", name)
+					}
+					if err != nil {
 						m.statusMsg = "switch failed: " + err.Error()
 					} else {
 						m.cfg.Current = &name

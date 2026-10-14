@@ -17,6 +17,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
 	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
+	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
@@ -639,15 +640,8 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		name := args[1]
-		missing := errors.New("profile not found")
-		if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
-			if _, ok := cfg.Profiles[name]; !ok {
-				return missing
-			}
-			current := name
-			cfg.Current = &current
-			return nil
-		}); errors.Is(err, missing) {
+		_, err := bootstrap.NewProviderService(cfgPath).SelectLegacy(context.Background(), name)
+		if errors.Is(err, providerusecase.ErrProfileNotFound) {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", name)
 			return 1
 		} else if err != nil {
@@ -661,13 +655,7 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		name := args[1]
-		if err := config.UpdateAtPath(cfgPath, func(cfg *config.PiSwitchConfig) error {
-			delete(cfg.Profiles, name)
-			if cfg.Current != nil && *cfg.Current == name {
-				cfg.Current = nil
-			}
-			return nil
-		}); err != nil {
+		if _, err := bootstrap.NewProviderService(cfgPath).DeleteIfPresentLegacy(context.Background(), name); err != nil {
 			fmt.Fprintf(os.Stderr, "provider delete failed to save config: %v\n", err)
 			return 1
 		}

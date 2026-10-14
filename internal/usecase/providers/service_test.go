@@ -125,6 +125,48 @@ func TestDeleteLegacyClearsCurrentAndMissingIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestSelectLegacyUsesNoBackupAndRejectsMissingProfile(t *testing.T) {
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{API: "openai-completions"}},
+	}}}
+	service := New(store, &testValidator{})
+	if _, err := service.SelectLegacy(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Current == nil || *store.state.Current != "one" || len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("current/backups = %v/%v, want one no-backup selection", store.state.Current, store.backups)
+	}
+	before := cloneState(store.state)
+	if _, err := service.SelectLegacy(context.Background(), "missing"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("missing selection error = %v, want ErrProfileNotFound", err)
+	}
+	if store.state.Current == nil || before.Current == nil || *store.state.Current != *before.Current || len(store.backups) != 1 {
+		t.Fatal("missing selection changed current or created a backup")
+	}
+}
+
+func TestDeleteIfPresentLegacyIsIdempotentWithoutBackup(t *testing.T) {
+	current := "one"
+	store := &testStore{state: State{
+		Current:  &current,
+		Profiles: map[string]StoredProfile{"one": {Profile: provider.Profile{API: "openai-completions"}}},
+	}}
+	service := New(store, &testValidator{})
+	if _, err := service.DeleteIfPresentLegacy(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Current != nil || len(store.state.Profiles) != 0 || len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("delete state/backups = %+v/%v, want empty state and one no-backup transaction", store.state, store.backups)
+	}
+	calls := store.calls
+	if _, err := service.DeleteIfPresentLegacy(context.Background(), "missing"); err != nil {
+		t.Fatalf("missing delete = %v, want idempotent success", err)
+	}
+	if store.calls != calls+1 || len(store.backups) != 2 || store.backups[1] {
+		t.Fatalf("missing delete calls/backups = %d/%v, want one no-backup transaction", store.calls, store.backups)
+	}
+}
+
 func TestNativeSaveRequiresNameBeforeValidationOrStorage(t *testing.T) {
 	store := &testStore{state: State{Profiles: map[string]StoredProfile{}}}
 	validator := &testValidator{}

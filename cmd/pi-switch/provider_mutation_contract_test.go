@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
@@ -70,6 +71,26 @@ func TestProviderCLIUseAndDeleteMutationContract(t *testing.T) {
 		}
 		if string(after) != string(before) {
 			t.Fatal("missing provider use changed config bytes")
+		}
+		assertNoProviderBackups(t, path)
+	})
+
+	t.Run("missing delete remains idempotent", func(t *testing.T) {
+		isolateCLI(t)
+		path := os.Getenv("PI_SWITCH_CONFIG")
+		if err := os.WriteFile(path, []byte(providerMutationCLIConfig), 0600); err != nil {
+			t.Fatal(err)
+		}
+		code, out, errOut := runCLIStreams(t, func() int { return handleProvider([]string{"delete", "missing"}) })
+		if code != 0 || !strings.Contains(out, "Deleted missing") {
+			t.Fatalf("missing delete = exit %d, stdout=%q, stderr=%q", code, out, errOut)
+		}
+		cfg, _, err := config.LoadConfigAtPath(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Profiles) != 2 || cfg.Current == nil || *cfg.Current != "p1" {
+			t.Fatalf("missing delete changed profiles/current: %+v", cfg)
 		}
 		assertNoProviderBackups(t, path)
 	})

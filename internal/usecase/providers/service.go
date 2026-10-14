@@ -149,6 +149,37 @@ func (s *Service) DeleteLegacy(ctx context.Context, cmd DeleteLegacyCommand) (Re
 	return Result{Name: cmd.Name}, nil
 }
 
+// SelectLegacy switches the active profile without a backup, matching the CLI and TUI contract.
+func (s *Service) SelectLegacy(ctx context.Context, name string) (Result, error) {
+	err := s.update(ctx, false, func(state *State) error {
+		if _, ok := state.Profiles[name]; !ok {
+			return ErrProfileNotFound
+		}
+		state.Current = &name
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Name: name}, nil
+}
+
+// DeleteIfPresentLegacy keeps the CLI's idempotent delete behavior and always
+// completes the same no-backup config transaction, even when the name is absent.
+func (s *Service) DeleteIfPresentLegacy(ctx context.Context, name string) (Result, error) {
+	err := s.update(ctx, false, func(state *State) error {
+		delete(state.Profiles, name)
+		if state.Current != nil && *state.Current == name {
+			state.Current = nil
+		}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Name: name}, nil
+}
+
 func (s *Service) Delete(ctx context.Context, cmd DeleteCommand) (Result, error) {
 	err := s.update(ctx, true, func(state *State) error {
 		profile, ok := state.Profiles[cmd.Name]
