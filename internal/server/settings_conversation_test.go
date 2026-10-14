@@ -40,6 +40,9 @@ func TestSettings_GetAndPut_Roundtrip(t *testing.T) {
 	if w2.Code != 200 {
 		t.Fatalf("PUT proxy status %d body %s", w2.Code, w2.Body.String())
 	}
+	if _, err := os.Stat(path + ".backups"); !os.IsNotExist(err) {
+		t.Fatalf("legacy HTTP PUT unexpectedly created a backup directory: %v", err)
+	}
 	// GET should return proxy
 	w3 := httptest.NewRecorder()
 	req3, _ := http.NewRequest("GET", "/api/settings", nil)

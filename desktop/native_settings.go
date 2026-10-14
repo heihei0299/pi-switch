@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
+	settingsusecase "github.com/heihei0299/pi-switch/internal/usecase/settings"
 )
 
 type nativeSettingsPage struct {
@@ -18,14 +20,14 @@ func (p *nativeSettingsPage) load(shell *desktopShell) {
 		return
 	}
 	p.busy = shell.runStandardTask("settings", func() (interface{}, error) {
-		return application.LoadSettingsDraft(config.ResolvePath())
+		return bootstrap.NewSettingsService(config.ResolvePath()).LoadDraft(context.Background())
 	}, func(result interface{}, err error) {
 		p.busy = false
 		if err != nil {
 			p.message = nativeManagementError(err)
 			return
 		}
-		draft := result.(application.SettingsDraft)
+		draft := result.(settingsusecase.Draft)
 		p.draft, p.revision, p.message = draft.JSON, draft.Revision, "Settings loaded. Proxy will not be restarted automatically."
 		p.loaded = true
 	})
@@ -34,14 +36,14 @@ func (p *nativeSettingsPage) load(shell *desktopShell) {
 func (p *nativeSettingsPage) save(shell *desktopShell) {
 	raw, expected := p.draft, p.revision
 	p.busy = shell.runStandardTask("settings", func() (interface{}, error) {
-		return application.SaveSettingsDraft(config.ResolvePath(), raw, expected)
+		return bootstrap.NewSettingsService(config.ResolvePath()).SaveDraft(context.Background(), raw, expected)
 	}, func(result interface{}, err error) {
 		p.busy = false
 		if err != nil {
 			p.message = nativeManagementError(err)
 			return
 		}
-		saved := result.(application.SettingsDraft)
+		saved := result.(settingsusecase.Draft)
 		p.revision, p.draft = saved.Revision, saved.JSON
 		p.message = "Settings saved with a pre-write backup. Restart Proxy explicitly to apply listener changes."
 		shell.refreshNativeOverview()

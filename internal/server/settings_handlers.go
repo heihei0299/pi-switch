@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/heihei0299/pi-switch/internal/config"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/daemon"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
+	settingsusecase "github.com/heihei0299/pi-switch/internal/usecase/settings"
 )
 
 func handleBuildInfo(c *gin.Context) {
@@ -159,30 +161,30 @@ func handlePutFailover(c *gin.Context) {
 	c.JSON(410, managementError("failover removed, will be replaced by per-conversation breaker"))
 }
 func handleGetSettings(c *gin.Context) {
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
+	settings, err := bootstrap.NewSettingsService(configPath()).Read(c.Request.Context())
+	if err != nil {
+		c.JSON(500, managementError(err.Error()))
 		return
 	}
-	c.JSON(200, cfg.Settings)
+	c.JSON(200, settings)
 }
 
 func handlePutSettings(c *gin.Context) {
 	raw, _ := c.GetRawData()
-	var s config.Settings
+	var s domainconfig.Settings
 	if err := json.Unmarshal(raw, &s); err != nil {
 		c.JSON(400, gin.H{"error": "invalid json"})
 		return
 	}
-	if err := config.ValidateSettingsRetry(s); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
 	// A failed write must not be reported as success: the caller would believe
 	// settings were persisted while the file still holds the old values.
-	if err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
-		cfg.Settings = s
-		return nil
-	}); err != nil {
+	err := bootstrap.NewSettingsService(configPath()).PutLegacy(c.Request.Context(), s)
+	if err != nil {
+		var validation *settingsusecase.ValidationError
+		if errors.As(err, &validation) {
+			c.JSON(400, gin.H{"error": validation.Message})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to save settings: " + err.Error()})
 		return
 	}

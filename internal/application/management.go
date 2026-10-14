@@ -11,6 +11,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/domain/revision"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
+	settingsusecase "github.com/heihei0299/pi-switch/internal/usecase/settings"
 )
 
 var ErrManagementConflict = providerusecase.ErrRevisionConflict
@@ -81,19 +82,21 @@ func RestoreConfigBackup(path, name, expected string) error {
 }
 
 func SaveSettings(path string, settings config.Settings, expected string) error {
-	if err := config.ValidateSettingsRetry(settings); err != nil {
-		return &ManagementValidationError{Message: "Invalid proxy retry settings; check retry counts, intervals and requestScopedErrors status/match/action rules."}
+	return mapSettingsError(bootstrap.NewSettingsService(path).Save(context.Background(), settings, expected))
+}
+
+func mapSettingsError(err error) error {
+	if errors.Is(err, settingsusecase.ErrRevisionConflict) {
+		return ErrManagementConflict
 	}
-	if settings.Proxy.Port < 1 || settings.Proxy.Port > 65535 || settings.Web.Port < 1 || settings.Web.Port > 65535 {
-		return &ManagementValidationError{Message: "ports must be between 1 and 65535"}
+	var validation *settingsusecase.ValidationError
+	if errors.As(err, &validation) {
+		return &ManagementValidationError{Message: validation.Message}
 	}
-	return updateWithBackup(path, func(cfg *config.PiSwitchConfig) error {
-		if Revision(cfg.Settings) != expected {
-			return ErrManagementConflict
-		}
-		cfg.Settings = settings
-		return nil
-	})
+	if errors.Is(err, fileconfig.ErrBackupDirectory) {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	return err
 }
 
 // shortcut: keep caller-compatible Provider facades until entrypoint wiring is folded in W08.
