@@ -68,9 +68,9 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			wantViolation: module + "/internal/catalog",
 		},
 		{
-			name: "inbound rejects outbound",
+			name: "inbound http adapter rejects outbound",
 			files: map[string]string{
-				"internal/adapters/inbound/httpmgmt/handler.go": "package httpmgmt\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
+				"internal/adapters/inbound/httpinfer/handler.go": "package httpinfer\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
 			},
 			wantViolation: module + "/internal/adapters/outbound/fileconfig",
 		},
@@ -148,6 +148,53 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			files: map[string]string{
 				"internal/usecase/providers/service_test.go": "package providers\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
 			},
+		},
+		{
+			name: "requestlog usecase allows its domain and own ports",
+			files: map[string]string{
+				"internal/usecase/requestlog/service.go": "package requestlog\nimport (\"context\"; \"github.com/heihei0299/pi-switch/internal/domain/usage\")\nvar _ = context.Background\nvar _ usage.UsageSummary\n",
+			},
+		},
+		{
+			name: "requestlog usecase rejects database sql",
+			files: map[string]string{
+				"internal/usecase/requestlog/service.go": "package requestlog\nimport \"database/sql\"\nvar _ *sql.DB\n",
+			},
+			wantViolation: "database/sql",
+		},
+		{
+			name: "requestlog usecase rejects legacy store",
+			files: map[string]string{
+				"internal/usecase/requestlog/service.go": "package requestlog\nimport \"github.com/heihei0299/pi-switch/internal/store\"\nvar _ = store.DBPath\n",
+			},
+			wantViolation: module + "/internal/store",
+		},
+		{
+			name: "requestlog usecase rejects legacy config",
+			files: map[string]string{
+				"internal/usecase/requestlog/service.go": "package requestlog\nimport \"github.com/heihei0299/pi-switch/internal/config\"\nvar _ = config.ResolvePath\n",
+			},
+			wantViolation: module + "/internal/config",
+		},
+		{
+			name: "requestlog usecase rejects server",
+			files: map[string]string{
+				"internal/usecase/requestlog/service.go": "package requestlog\nimport \"github.com/heihei0299/pi-switch/internal/server\"\nvar _ = server.NewProxyRouter\n",
+			},
+			wantViolation: module + "/internal/server",
+		},
+		{
+			name: "requestlog outbound adapter may use sqlite and requestlog port",
+			files: map[string]string{
+				"internal/adapters/outbound/requestlog/adapter.go": "package requestlog\nimport (\"database/sql\"; \"github.com/heihei0299/pi-switch/internal/usecase/requestlog\")\nvar _ *sql.DB\nvar _ requestlog.Record\n",
+			},
+		},
+		{
+			name: "requestlog outbound adapter rejects inbound",
+			files: map[string]string{
+				"internal/adapters/outbound/requestlog/adapter.go": "package requestlog\nimport \"github.com/heihei0299/pi-switch/internal/adapters/inbound/httpinfer\"\nvar _ = httpinfer.WriteResponse\n",
+			},
+			wantViolation: module + "/internal/adapters/inbound/httpinfer",
 		},
 	}
 

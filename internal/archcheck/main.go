@@ -267,6 +267,13 @@ func forbiddenImport(file, importPath, module string, stdlib map[string]bool) st
 		allowed = stdlib[importPath] || under(importPath, domain)
 	case "usecase":
 		allowed = stdlib[importPath] || under(importPath, domain) || under(importPath, usecase)
+		if under(rel, "internal/usecase/requestlog") &&
+			(importPath == "database/sql" ||
+				under(importPath, module+"/internal/store") ||
+				under(importPath, module+"/internal/config") ||
+				under(importPath, module+"/internal/server")) {
+			return "requestlog usecase must not depend on concrete persistence or HTTP packages"
+		}
 	case "inbound":
 		allowed = !under(importPath, module+"/internal") || under(importPath, domain) || under(importPath, usecase) || under(importPath, inbound)
 	case "outbound":

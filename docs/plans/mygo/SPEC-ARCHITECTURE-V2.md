@@ -1,24 +1,21 @@
 # pi-switch Architecture V2 — 模块化单体重构规范
 
-- 状态：设计基线（尚未修改远程代码）
-- 日期：2026-10-13
-- 对照代码：`mygo@51530102c94dfd5412df25eb0e612c73a5d668f1`
-- 设计性质：大规模内部重构，外部行为优先保持兼容
+- 状态：实施基线（W20–W25 已在本地分支完成；W26 实机门禁独立处理）
+- 日期：2026-10-14
+- 对照代码：当前 `codex/mygo-v2-20261014094522` 分支的 W20–W25 提交
+- 设计性质：内部模块化重构，外部行为优先保持兼容
 - 目标平台：Linux amd64 / arm64；Desktop 为 MyGo Native；CLI、TUI、管理 API、独立 Proxy 保留
 
 ## 1. 现状与问题陈述
 
-当前系统以 Go 单体为核心，入口包括 `cmd/pi-switch` CLI/TUI、`desktop` 独立 Go module 的 MyGo Native，以及 `internal/server` 提供的管理 API 和推理 API。重要事实所有权明确：`config.json` 定义供应商/渠道/模型，`models.json` 是显式发布的 Pi Gateway 视图，SQLite 保存请求事实，Pi session 只读。
+当前系统以 Go 单体为核心，入口包括 `cmd/pi-switch` CLI/TUI、`desktop` 独立 Go module 的 MyGo Native，以及 `internal/server` 提供的管理 API 和推理 API。重要事实所有权明确：`config.json` 定义供应商/渠道/模型，`models.json` 是显式发布的 Pi Gateway 视图，SQLite 保存请求事实，Pi session 只读。V2 的新 domain/usecase/adapter 目录已经接管 Gateway、Analytics、Proxy 响应和 RequestLog 的对应职责；旧包仅作为兼容入口或尚未迁移的实现保留。
 
-已观察到的维护性问题：
+历史问题与当前状态：
 
-1. **多入口用例分叉。** Native Provider 保存调用 `application.SaveProvider`，具备 expected revision 与备份；HTTP `PUT /api/profiles/:name` 直接使用 `config.UpdateAtPath`，不具有相同的修订/备份语义。两条路径均有历史合同，不能通过强制调用同一高层函数贸然改变语义。
-2. **应用层不完整。** 普通 Native 管理功能依赖 `internal/application`，Gateway/Stats/Packages/Proxy 仍部分直接穿透到 core/IO 包；未来新入口可能再复制业务编排。
-3. **Desktop Shell 仍为集中协调器。** `desktop/shell.go` 约 793 行，兼顾窗口/托盘/daemon 和大量业务任务回调；复杂页面虽已拆分但存在跨组件共享状态与硬编码回调。
-4. **代理 HTTP handler 过重。** `internal/server/proxy_handlers.go` 超过千行，同时承担路由、上下文限制、协议协调、流式响应、日志与错误归一化。
-5. **Gateway 核心 IO 与纯规则混存。** `internal/gateway/gateway.go` 约 1246 行，混合 plan/diff/验证、文件读取、锁和原子发布。
-6. **统计层存在重复全量扫描路径。** `Stats()`、`Conversations()`、`ConversationRequests()` 在统计与会话查询时分别遍历数据；随着历史增长可能放大成本。尚无性能瓶颈的实测证据。
-7. **隐式全局依赖。** `config.ResolvePath()`、`store.GetDB()`、daemon 等包级入口使配置隔离、生命周期及测试代价较高；移除应渐进，不得突然删除兼容 API。
+1. Provider、Gateway、Packages、Settings 等仍保留历史入口差异；兼容性优先，后续迁移必须分别保留各 endpoint 的旧合同。
+2. Desktop Shell 仍承担窗口、托盘、daemon 和任务协调；这是 UI 组织问题，不在 W25 继续扩张业务边界。
+3. `internal/server` 仍是兼容 HTTP 入口；W22 已将客户端响应/SSE 写入移到 `internal/adapters/inbound/httpinfer`，W23 已将新请求的双写协调移到 `internal/usecase/requestlog`。
+4. `internal/config`、`internal/gateway`、`internal/protocol`、`internal/store` 等兼容包仍存在；历史文档中的 `internal/translator`、`internal/limit`、`internal/daemon` 路径已分别落到 `internal/domain/protocol`、`internal/domain/limit`、`internal/adapters/outbound/daemon`，不再作为当前路径。
 
 ## 2. 架构选择
 
@@ -81,7 +78,7 @@ flowchart TB
 | `internal/adapters/outbound/**` | `internal/domain/**`、`internal/usecase/**`、本 outbound 子树 | 可用标准库和 IO 所需外部库；不得依赖 inbound |
 | `internal/bootstrap/**` | 可装配各内部包 | 根模块不得依赖独立 `desktop` 模块 |
 
-检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；Desktop 模块则扫描其根目录、`internal` 等生产源，但不把 Desktop 的 composition root 误判为 domain/usecase。两个模块中的 domain/usecase 都拒绝外部库、adapter、store、config、daemon 等具体基础设施包；标准库工具包和同层/下层业务包仍按上表允许。不会要求尚未创建的 V2 目录存在。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。W02 将 config schema 放入 `internal/domain/config`、文件事务放入 `outbound/fileconfig`；旧 `internal/config` 入口仅保留委托给 adapter 的兼容包装。W03 将 Gateway 规则和 catalog 快照/补齐规则移入 domain、usecase，文件与远端缓存 IO 分别归 `outbound/filegateway`、`outbound/catalog`。W01 的 Provider 校验迁移桥接仍仅允许 `outbound/profilevalidation` 依赖现有 `internal/profile`，不得在其他 outbound 包复制或绕过。违反方向的临时源码夹具必须被拒绝，旧代码（当前尚无 V2 目录）必须通过。
+检查器也对根模块的 `cmd`、`internal`、`legacy`、`webui` 和根目录生产 Go 源拒绝导入 `desktop`；Desktop 模块则扫描其根目录、`internal` 等生产源，但不把 Desktop 的 composition root 误判为 domain/usecase。两个模块中的 domain/usecase 都拒绝外部库、adapter、store、config、daemon 等具体基础设施包；标准库工具包和同层/下层业务包仍按上表允许。它只检查生产 `.go` 文件，不把测试夹具的跨层导入当成产品依赖。`internal/usecase/requestlog` 另有负例规则：不得导入 `database/sql`、`internal/store`、`internal/config` 或 `internal/server`；SQLite/Legacy 文件实现只能在 `internal/adapters/outbound/requestlog`。W22 的 `httpinfer` 与 outbound 互斥、W23 的 RequestLog 限制均由 `internal/archcheck/main_test.go` 的负例覆盖。
 
 ## 4. 按业务能力划分的目标包
 
@@ -106,21 +103,22 @@ internal/
     packages/                     包列表、导入、修改
     proxycontrol/                 启停/状态/健康信息（不承载推理）
     inference/                    Request routing / conversion / stream coordination
-    diagnostics/                  Doctor、诊断
+    requestlog/                   请求事实双写协调，不依赖具体存储
   adapters/
-    httpmgmt/                     管理 API 接入，保持 /api/* 兼容
-    httpinfer/                    OpenAI-compatible /v1 接入
-    fileconfig/                   config.json 锁、版本、备份、原子写
-    filegateway/                  models.json 锁、快照校验、原子 publish
-    catalog/                      models.dev 拉取与缓存读写
-    sqlite/                       Requests 和 packages 存储实现
-    piagent/                      只读 Session/包探测
-    upstream/                     网络请求、超时、SSE 读取
-    daemon/                       PID、进程身份、启停
+    inbound/httpinfer/            OpenAI-compatible /v1 客户端响应与 SSE 适配
+    outbound/fileconfig/          config.json 锁、版本、备份、原子写
+    outbound/filegateway/         models.json 锁、快照校验、原子 publish
+    outbound/catalog/             models.dev 拉取与缓存读写
+    outbound/requestlog/          SQLite INSERT 与 Legacy requests.log 追加
+    outbound/sqlanalytics/        SQLite Stats / Conversations 查询
+    outbound/sqlpackages/         SQLite packages 查询
+    outbound/proxy/               上游网络请求、header 和请求构造
+    outbound/piagentpackages/     只读 Session/包探测
+    outbound/daemon/               PID、进程身份、启停
   bootstrap/                       根模块内通用装配帮助（不可 import desktop）
 ```
 
-现有 `internal/config`、`gateway`、`protocol`、`translator`、`stats`、`store`、`daemon` 等继续作为可工作的旧接口，逐工单迁移，迁移完成后才决定是否改名/删兼容包装。禁止一次 PR 重命名全部包而无法识别行为变化。
+现有 `internal/config`、`internal/gateway`、`internal/protocol`、`internal/store` 等继续作为可工作的兼容接口或底层旧实现；历史 `translator`、`limit`、`daemon` 名称不代表当前目录。V2 新代码使用上表中的 domain/usecase/adapter 路径。禁止一次 PR 重命名全部包而无法识别行为变化。
 
 ## 5. 业务上下文合同
 
@@ -140,20 +138,28 @@ internal/
 
 ### 5.3 Proxy / Inference
 
-- 代理请求链设计成独立可测试的组件：`Decode → Route → Validate/Clamp → Protocol Plan → Outbound → Response/Stream → Usage/Cost → Store`。
+- 代理请求链由 `internal/server`、`internal/usecase/inference`、`internal/adapters/outbound/proxy` 和 `internal/adapters/inbound/httpinfer` 协作完成：`Decode → Route → Validate/Clamp → Protocol Plan → Outbound → Response/Stream → Usage/Cost → RequestLog`。
 - 统一流式与非流式共享的 **路由选择、上游请求构造、事实归一化**；流式转换独立实现，避免为了复用而牺牲 SSE backpressure、flush 和错误语义。
+- outbound proxy 只访问上游，不持有客户端 `http.ResponseWriter`；客户端 status/header/body/SSE/flush 由 inbound `httpinfer` 适配。
 - 保留 `/v1/*` 路径、状态码、错误 envelope、模型裸 ID、失败时记录事实、工具调用和多轮历史、取消与限额规则。
 - 入站 context 显式贯穿 outbound 请求、数据库查询等可取消工作；不可将 `Context` 长期保存在 service struct 中。已经开始且必须提交的文件/进程副作用，需要明确提交点，不因 UI 退出声称已回滚。
 - Proxy 是独立 daemon，启动/停止必须验证进程身份与健康，不得接管未验证监听者。
 
 ### 5.4 Analytics / Stats / Sessions
 
+- `internal/usecase/analytics` 定义统计、会话和分页语义；`internal/adapters/outbound/sqlanalytics` 只负责 SQLite 查询与 NULL/分页边界。
 - 请求表始终保存不可变事实；由业务层聚合、展示时匹配会话，不修改原 row。
 - 统一查询语义；在不改变计费、unknown、cache、reasoning 和会话匹配意义的前提下减少重复扫描。
 - 性能优化先建立 1 万 / 10 万 / 100 万请求数据集的可重复 benchmark；保留旧输出作为 golden baseline。
 - 不强制引入 ORM；SQL 查询下沉到 SQLite adapter，独立验证分页、时间窗口和索引。
 
-### 5.5 Packages / Settings / Daemon
+### 5.5 RequestLog / Legacy Log
+
+- `internal/usecase/requestlog` 只协调 `Record` 事实向两个最小 port 写入；不得导入 `database/sql`、`internal/store`、`internal/config` 或 `internal/server`。
+- `internal/adapters/outbound/requestlog` 实现 SQLite INSERT 和 Legacy `requests.log` 追加；两个目标独立失败，保持既有客户端响应语义。
+- `internal/server/legacy_log.go` 只保留旧日志历史导入兼容逻辑，不是新请求的文件写入 owner。
+
+### 5.6 Packages / Settings / Daemon
 
 - Packages 命令通过单一用例入口调用原有服务/SQLite；接口 DTO 尽可能类型化，旧 HTTP JSON 序列化兼容。
 - Settings 与备份、恢复仍遵循既有 path/revision/permissions 合同。
@@ -183,12 +189,19 @@ internal/
 - **可回滚：** 新包逐步接管调用路径；移除旧函数/旧文件只能在所有消费者已迁移、相关测试通过之后。
 - **GUI：** 本轮自动化 tester/打包验证不替代下一阶段 Arch+niri/Wayland/IME/Scale 2 实机验收。
 
-## 8. 首轮落地决策
+## 8. W20–W26 实施状态
 
-1. 首先添加本 SPEC、逐工单执行计划与依赖检查（不动业务逻辑）；设定当前 main/mygo 对照结果与行为 golden。
-2. 第一项生产代码变更选 **Providers 用例边界统一**：迁移 HTTP `PUT/DELETE /api/profiles/:name` 的业务编排到 application/usecase 的共同 mutation core，同时保留它相对 Native 的 legacy 兼容差异，测试固定；之后迁移 CLI/TUI。
-3. 下一项迁移 Gateway 读写 Port 和相关 Adapter，确保显式发布无变化；其他模块随后按依赖顺序落地。
-4. 每一工单完成测试后单独 commit；commit 与 push/merge/release 相互独立。未授权不更新远程分支，不动 live 数据。
+| 工单 | 当前状态 | 实际结果 |
+|---|---|---|
+| W20 | 已完成 | Root CI 的 `main`/`mygo` push 触发；Tag 才能进入发布链；未 Push，因此远程运行结果未验证 |
+| W21 | 已完成 | Analytics 分页极值防护；Usecase、HTTP handler 和 SQLite 分页边界测试通过 |
+| W22 | 已完成 | 客户端响应/SSE 适配迁移到 `internal/adapters/inbound/httpinfer`；outbound proxy 不再写客户端响应 |
+| W23 | 已完成 | RequestLog usecase、SQLite/Legacy outbound adapter 和 bootstrap 装配完成；历史导入保留 |
+| W24 | 已完成 | Analytics 聚合使用轻量 `AggregationFact`；1M shared-window benchmark 的 B/op 达到既定下降目标 |
+| W25 | 当前工单 | 文档与 archcheck 对齐实际目录，并补充 inbound/outbound/RequestLog 依赖负例 |
+| W26 | 未在本规范中宣称通过 | Arch+niri/Wayland/Noctalia/Fcitx5/MyGo Native 的真实图形会话验收必须另行取得证据；Xvfb 或模拟 GUI 不算通过 |
+
+每个工单保持独立本地 commit；commit 不等于 push/merge/release。未授权不得更新远程分支或 live 数据。
 
 ## 9. 参考
 
