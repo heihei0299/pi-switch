@@ -60,6 +60,22 @@ func (rows factMemory) selected(window *Window, order Order) []RequestFact {
 	return selected
 }
 
+type countedFactRepository struct {
+	rows      factMemory
+	forEach   int
+	pageFacts int
+}
+
+func (r *countedFactRepository) ForEachFact(window *Window, order Order, visit func(RequestFact) error) error {
+	r.forEach++
+	return r.rows.ForEachFact(window, order, visit)
+}
+
+func (r *countedFactRepository) PageFacts(window *Window, page, limit int) ([]RequestFact, error) {
+	r.pageFacts++
+	return r.rows.PageFacts(window, page, limit)
+}
+
 func ptr[T any](value T) *T { return &value }
 
 func TestStatsServiceUsesWindowAndPreservesNullableFacts(t *testing.T) {
@@ -103,6 +119,47 @@ func TestStatsServiceSharesConversationAttributionAcrossEndpoints(t *testing.T) 
 	}
 	if requestTotal != 1 || len(requests) != 1 || requests[0].ConversationID == nil || *requests[0].ConversationID != conversation.UnlabeledID {
 		t.Fatalf("conversation detail did not use same matcher: total=%d values=%+v", requestTotal, requests)
+	}
+}
+
+func TestStatsAndConversationsReusesAggregationForSameWindow(t *testing.T) {
+	base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	repository := &countedFactRepository{rows: factMemory{
+		{ID: 1, TS: ptr(base.Format(time.RFC3339)), Success: ptr(true), PromptTokens: ptr(int64(1)), CompletionTokens: ptr(int64(1)), ConversationID: ptr("c1")},
+		{ID: 2, TS: ptr(base.Add(time.Minute).Format(time.RFC3339)), Success: ptr(true), PromptTokens: ptr(int64(1)), CompletionTokens: ptr(int64(1)), ConversationID: ptr("c2")},
+	}}
+	service := NewService(repository, conversation.SourceProxy, nil)
+	window := &Window{From: base.UnixMilli(), To: base.Add(time.Hour).UnixMilli()}
+	stats, conversations, total, err := service.StatsAndConversations(window, window, 0, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TotalRequests != 2 || repository.forEach != 1 || repository.pageFacts != 1 {
+		t.Fatalf("same-window reads = stats %d, fact scans %d, page reads %d", stats.TotalRequests, repository.forEach, repository.pageFacts)
+	}
+	if total != 2 || len(conversations) != 1 || conversations[0].ConversationID != "c1" {
+		t.Fatalf("conversation page = total %d, values %+v", total, conversations)
+	}
+}
+
+func TestStatsAndConversationsScansDistinctWindowsSeparately(t *testing.T) {
+	base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	repository := &countedFactRepository{rows: factMemory{
+		{ID: 1, TS: ptr(base.Format(time.RFC3339)), Success: ptr(true), PromptTokens: ptr(int64(1)), CompletionTokens: ptr(int64(1)), ConversationID: ptr("stats")},
+		{ID: 2, TS: ptr(base.Add(24 * time.Hour).Format(time.RFC3339)), Success: ptr(true), PromptTokens: ptr(int64(1)), CompletionTokens: ptr(int64(1)), ConversationID: ptr("conversations")},
+	}}
+	service := NewService(repository, conversation.SourceProxy, nil)
+	statsWindow := &Window{From: base.UnixMilli(), To: base.Add(time.Hour).UnixMilli()}
+	conversationWindow := &Window{From: base.Add(24 * time.Hour).UnixMilli(), To: base.Add(25 * time.Hour).UnixMilli()}
+	stats, conversations, total, err := service.StatsAndConversations(statsWindow, conversationWindow, 0, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TotalRequests != 1 || repository.forEach != 2 || repository.pageFacts != 1 {
+		t.Fatalf("different-window reads = stats %d, fact scans %d, page reads %d", stats.TotalRequests, repository.forEach, repository.pageFacts)
+	}
+	if total != 1 || len(conversations) != 1 || conversations[0].ConversationID != "conversations" {
+		t.Fatalf("conversation page = total %d, values %+v", total, conversations)
 	}
 }
 

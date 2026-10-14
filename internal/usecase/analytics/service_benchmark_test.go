@@ -73,6 +73,49 @@ func BenchmarkStatsHistorySelectiveWindow(b *testing.B) {
 	}
 }
 
+func BenchmarkStatsAndConversations(b *testing.B) {
+	for _, count := range []int{10_000, 100_000, 1_000_000} {
+		b.Run(fmt.Sprintf("rows_%d", count), func(b *testing.B) {
+			db := benchmarkStatsDB(b, count)
+			defer db.Close()
+			base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+			candidates := make([]conversation.Candidate, 128)
+			for i := range candidates {
+				candidates[i] = conversation.Candidate{
+					ID: fmt.Sprintf("session-%02d", i), Model: "model", LastActiveAt: base.Add(time.Duration(i) * time.Minute),
+				}
+			}
+			service := analytics.NewService(sqlanalytics.New(db), conversation.SourceSessionScan, candidates)
+			for _, tc := range []struct {
+				name   string
+				shared bool
+			}{
+				{name: "separate_scans"},
+				{name: "shared_window", shared: true},
+			} {
+				b.Run(tc.name, func(b *testing.B) {
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if tc.shared {
+							if _, _, _, err := service.StatsAndConversations(nil, nil, 0, 0, 50); err != nil {
+								b.Fatal(err)
+							}
+							continue
+						}
+						if _, err := service.Stats(nil, 0, 50); err != nil {
+							b.Fatal(err)
+						}
+						if _, _, err := service.Conversations(nil, 0, 50); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 func benchmarkStatsDB(b *testing.B, count int) *sql.DB {
 	return benchmarkStatsDBWithTimestamps(b, count, func(int) string { return "2026-09-10T12:00:00Z" })
 }

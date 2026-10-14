@@ -430,6 +430,30 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	return response, nil
 }
 
+// StatsAndConversations reuses Stats' conversation aggregation when both views
+// request the same window; distinct windows remain independent reads.
+func (s Service) StatsAndConversations(statsWindow, conversationWindow *Window, requestPage, conversationPage, limit int) (StatsResponse, []ConversationSummary, int, error) {
+	stats, err := s.Stats(statsWindow, requestPage, limit)
+	if err != nil {
+		return StatsResponse{}, nil, 0, err
+	}
+	if sameWindow(statsWindow, conversationWindow) {
+		return stats, pageItems(stats.ByConversation, conversationPage, limit), len(stats.ByConversation), nil
+	}
+	conversations, total, err := s.Conversations(conversationWindow, conversationPage, limit)
+	if err != nil {
+		return StatsResponse{}, nil, 0, err
+	}
+	return stats, conversations, total, nil
+}
+
+func sameWindow(left, right *Window) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
 func (s Service) Conversations(window *Window, page, limit int) ([]ConversationSummary, int, error) {
 	if s.Source == conversation.SourceOff {
 		return []ConversationSummary{}, 0, nil

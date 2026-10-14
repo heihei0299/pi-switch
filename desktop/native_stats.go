@@ -191,11 +191,7 @@ func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nati
 	if err != nil {
 		return nativeStatsSnapshot{}, err
 	}
-	result, err := service.Stats(requestWindow, requestPage, limit)
-	if err != nil {
-		return nativeStatsSnapshot{}, err
-	}
-	conversations, conversationTotal, err := service.Conversations(conversationWindow, conversationPage, limit)
+	result, conversations, conversationTotal, err := service.StatsAndConversations(requestWindow, conversationWindow, requestPage, conversationPage, limit)
 	if err != nil {
 		return nativeStatsSnapshot{}, err
 	}
