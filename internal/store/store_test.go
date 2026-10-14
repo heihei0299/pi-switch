@@ -50,6 +50,22 @@ func TestOpenReportsMalformedDatabase(t *testing.T) {
 	}
 }
 
+func TestOpenCreatesTimestampWindowIndex(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "requests.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_requests_ts_epoch_ms'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("timestamp window index count = %d, want 1", count)
+	}
+}
+
 func TestRequestErrorFactMigrationPreservesOldRowsAndUnknowns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "requests.db")
 	db, err := sql.Open("sqlite", path)

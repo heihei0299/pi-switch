@@ -3,6 +3,7 @@ package sqlanalytics
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,4 +67,28 @@ func TestRepositoryPageFactsIsNewestFirstAndStableByID(t *testing.T) {
 	if len(first) != 1 || len(second) != 1 || first[0].Model == nil || *first[0].Model != "second" || second[0].Model == nil || *second[0].Model != "first" {
 		t.Fatalf("pages = %+v / %+v", first, second)
 	}
+}
+
+func TestRepositoryWindowQueryUsesTimestampIndex(t *testing.T) {
+	db := openRepositoryDB(t)
+	query := "SELECT " + requestFactsColumns + " FROM requests WHERE " + timestampEpochMillisSQL + " >= ? AND " + timestampEpochMillisSQL + " < ? ORDER BY id DESC"
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, int64(0), int64(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(detail, "idx_requests_ts_epoch_ms") {
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatal("timestamp window query plan did not use idx_requests_ts_epoch_ms")
 }

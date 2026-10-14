@@ -12,6 +12,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const requestTimestampEpochMillisSQL = `(CAST(strftime('%s', ts) AS INTEGER) * 1000 + CASE WHEN instr(ts, '.') = 0 THEN 0 WHEN substr(ts, instr(ts, '.') + 3, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 3) AS INTEGER) WHEN substr(ts, instr(ts, '.') + 2, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 2) AS INTEGER) * 10 ELSE CAST(substr(ts, instr(ts, '.') + 1, 1) AS INTEGER) * 100 END)`
+
 // RequestRow mirrors the requests table row for stats.
 type RequestRow struct {
 	TS               string   `json:"ts"`
@@ -177,7 +179,11 @@ func ensureTable(db *sql.DB) error {
 			return fmt.Errorf("migrate requests.%s: %w", column.name, err)
 		}
 	}
-	return ensureLegacyMigrationSchema(db)
+	if err := ensureLegacyMigrationSchema(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_requests_ts_epoch_ms ON requests(` + requestTimestampEpochMillisSQL + `)`)
+	return err
 }
 
 // InsertRequest inserts one request row. cost may be nil (unknown).

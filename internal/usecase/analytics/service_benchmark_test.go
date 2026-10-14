@@ -48,7 +48,36 @@ func BenchmarkStatsHistory(b *testing.B) {
 	}
 }
 
+func BenchmarkStatsHistorySelectiveWindow(b *testing.B) {
+	for _, count := range []int{10_000, 100_000, 1_000_000} {
+		b.Run(fmt.Sprintf("rows_%d", count), func(b *testing.B) {
+			base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			spread := 100 * 24 * time.Hour
+			db := benchmarkStatsDBWithTimestamps(b, count, func(i int) string {
+				return base.Add(spread / time.Duration(count) * time.Duration(i)).Format(time.RFC3339Nano)
+			})
+			defer db.Close()
+			window := &analytics.Window{
+				From: base.Add(50 * 24 * time.Hour).UnixMilli(),
+				To:   base.Add(51 * 24 * time.Hour).UnixMilli(),
+			}
+			service := analytics.NewService(sqlanalytics.New(db), conversation.SourceOff, nil)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := service.Stats(window, 0, 50); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func benchmarkStatsDB(b *testing.B, count int) *sql.DB {
+	return benchmarkStatsDBWithTimestamps(b, count, func(int) string { return "2026-09-10T12:00:00Z" })
+}
+
+func benchmarkStatsDBWithTimestamps(b *testing.B, count int, timestamp func(int) string) *sql.DB {
 	b.Helper()
 	db, err := store.Open(filepath.Join(b.TempDir(), "requests.db"))
 	if err != nil {
@@ -67,7 +96,7 @@ func benchmarkStatsDB(b *testing.B, count int) *sql.DB {
 		if i%10 == 0 {
 			success = 0
 		}
-		if _, err := statement.Exec("2026-09-10T12:00:00Z", "supplier", "model", success, 100, 20, 10, 2, 0.001, 10); err != nil {
+		if _, err := statement.Exec(timestamp(i), "supplier", "model", success, 100, 20, 10, 2, 0.001, 10); err != nil {
 			b.Fatal(err)
 		}
 	}
