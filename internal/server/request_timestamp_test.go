@@ -3,14 +3,15 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/usage"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 func TestLogRequestPreservesSubsecondTimestampForCurrentStatsWindow(t *testing.T) {
@@ -34,11 +35,11 @@ func TestLogRequestPreservesSubsecondTimestampForCurrentStatsWindow(t *testing.T
 	if parsed.Nanosecond() == 0 {
 		t.Fatalf("request timestamp lost subsecond precision: %q", rawTS)
 	}
-	service, err := newStatsService(db)
+	service, err := bootstrap.NewManagementAnalyticsService(db)
 	if err != nil {
 		t.Fatalf("stats service: %v", err)
 	}
-	window := &statsservice.Window{
+	window := &analytics.Window{
 		From: parsed.Add(-time.Second).UnixMilli(),
 		To:   parsed.UnixMilli() + 1,
 	}

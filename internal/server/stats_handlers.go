@@ -2,14 +2,14 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	statsservice "github.com/heihei0299/pi-switch/internal/stats"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 type window struct{ from, to int64 }
@@ -79,7 +79,7 @@ func parseWindowQuery(rangeParam, fromStr, toStr string) (*window, error) {
 	return nil, nil
 }
 
-func statsWindowFor(c *gin.Context) (*statsservice.Window, error) {
+func statsWindowFor(c *gin.Context) (*analytics.Window, error) {
 	rangeParam := c.Query("range")
 	if rangeParam == "" {
 		rangeParam = c.Query("window")
@@ -88,7 +88,7 @@ func statsWindowFor(c *gin.Context) (*statsservice.Window, error) {
 	if err != nil || w == nil {
 		return nil, err
 	}
-	return &statsservice.Window{From: w.from, To: w.to}, nil
+	return &analytics.Window{From: w.from, To: w.to}, nil
 }
 
 func statsPageLimit(c *gin.Context, max int) (page, limit int) {
@@ -104,16 +104,6 @@ func statsPageLimit(c *gin.Context, max int) (page, limit int) {
 		limit = max
 	}
 	return page, limit
-}
-
-func newStatsService(db *sql.DB) (statsservice.Service, error) {
-	return statsservice.NewManagementService(db)
-}
-
-// OpenStatsService returns the management stats service with the configured
-// conversation source and the same cached session candidates as the API.
-func OpenStatsService() (statsservice.Service, error) {
-	return statsservice.OpenManagementService()
 }
 
 // --- stats handler with window filtering ---
@@ -133,7 +123,7 @@ func handleStats(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	service, err := newStatsService(db)
+	service, err := bootstrap.NewManagementAnalyticsService(db)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -159,7 +149,7 @@ func handleStatsConversations(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	service, err := newStatsService(db)
+	service, err := bootstrap.NewManagementAnalyticsService(db)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -190,7 +180,7 @@ func handleConversationRequests(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	service, err := newStatsService(db)
+	service, err := bootstrap.NewManagementAnalyticsService(db)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -215,7 +205,7 @@ func handleLogsExport(c *gin.Context) {
 		return
 	}
 	var output bytes.Buffer
-	if err := (statsservice.Service{DB: db}).ExportRequests(&output, format); err != nil {
+	if err := bootstrap.NewSummaryAnalyticsService(db).ExportRequests(&output, format); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

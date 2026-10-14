@@ -1,7 +1,6 @@
-package stats
+package analytics
 
 import (
-	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -10,8 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/heihei0299/pi-switch/internal/conversation"
-	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/domain/conversation"
 )
 
 // Window is an inclusive/exclusive epoch-millisecond range.
@@ -20,22 +18,26 @@ type Window struct {
 	To   int64
 }
 
-type Service struct {
-	DB         *sql.DB
-	Source     conversation.Source
-	Candidates []conversation.Candidate
+type Order uint8
+
+const (
+	OldestFirst Order = iota
+	NewestFirst
+)
+
+type Repository interface {
+	ForEachFact(*Window, Order, func(RequestFact) error) error
+	PageFacts(*Window, int, int) ([]RequestFact, error)
 }
 
-// OpenSummaryService returns a Service bound to the default request database for
-// the Summary path. Source is Off because Summary never attributes requests to
-// conversations, so this service cannot be asked for a conversation view that
-// would silently come back empty.
-func OpenSummaryService() (Service, error) {
-	db, err := store.GetDB()
-	if err != nil {
-		return Service{}, err
-	}
-	return Service{DB: db, Source: conversation.SourceOff}, nil
+type Service struct {
+	repository Repository
+	Source     conversation.Source
+	candidates []conversation.Candidate
+}
+
+func NewService(repository Repository, source conversation.Source, candidates []conversation.Candidate) Service {
+	return Service{repository: repository, Source: source, candidates: candidates}
 }
 
 // Summary is the compact aggregate behind the TUI status line: successful
@@ -55,7 +57,7 @@ type Summary struct {
 // summed into a total. Requests counts every successful row.
 func (s Service) Summary(window *Window) (Summary, error) {
 	var out Summary
-	err := s.forEachFact(window, "ASC", func(fact RequestFact) error {
+	err := s.forEachFact(window, OldestFirst, func(fact RequestFact) error {
 		if fact.Success == nil || !*fact.Success {
 			return nil
 		}
@@ -77,11 +79,6 @@ func (s Service) Summary(window *Window) (Summary, error) {
 	}
 	return out, nil
 }
-
-// timestampEpochMillisSQL keeps the Stats window in the same epoch-millisecond
-// domain as the API bounds. SQLite julianday() rounds fractional timestamps and
-// can drop a just-completed request at the right edge.
-const timestampEpochMillisSQL = "(CAST(strftime('%s', ts) AS INTEGER) * 1000 + CASE WHEN instr(ts, '.') = 0 THEN 0 WHEN substr(ts, instr(ts, '.') + 3, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 3) AS INTEGER) WHEN substr(ts, instr(ts, '.') + 2, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 2) AS INTEGER) * 10 ELSE CAST(substr(ts, instr(ts, '.') + 1, 1) AS INTEGER) * 100 END)"
 
 // RequestFact keeps database nullability until the DTO boundary. In
 // particular, missing token facts are not silently converted to zero.
@@ -219,7 +216,7 @@ func (s Service) ExportRequests(w io.Writer, format string) error {
 	}
 	if format == "json" {
 		requests := make([]map[string]any, 0)
-		if err := s.forEachFact(nil, "ASC", func(fact RequestFact) error {
+		if err := s.forEachFact(nil, OldestFirst, func(fact RequestFact) error {
 			request := map[string]any{
 				"ts": exportValue(fact.TS), "provider": exportValue(fact.Provider), "model": exportValue(fact.Model),
 				"success": exportValue(fact.Success), "ok": exportValue(fact.Success),
@@ -248,7 +245,7 @@ func (s Service) ExportRequests(w io.Writer, format string) error {
 	if err := csvWriter.Write([]string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}); err != nil {
 		return err
 	}
-	err := s.forEachFact(nil, "ASC", func(fact RequestFact) error {
+	err := s.forEachFact(nil, OldestFirst, func(fact RequestFact) error {
 		cost := ""
 		if fact.Cost != nil {
 			cost = strconv.FormatFloat(*fact.Cost, 'f', -1, 64)
@@ -305,7 +302,7 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	}
 	factIndex := 0
 
-	err := s.forEachFact(window, "DESC", func(fact RequestFact) error {
+	err := s.forEachFact(window, NewestFirst, func(fact RequestFact) error {
 		response.TotalRequests++
 		if fact.Success != nil && *fact.Success {
 			response.OKRequests++
@@ -439,7 +436,7 @@ func (s Service) Conversations(window *Window, page, limit int) ([]ConversationS
 	}
 	groups := map[string]*conversationAggregate{}
 	matcher := s.matcher()
-	err := s.forEachFact(window, "DESC", func(fact RequestFact) error {
+	err := s.forEachFact(window, NewestFirst, func(fact RequestFact) error {
 		aggregateConversation(groups, fact, s.match(matcher, fact), fact.countable())
 		return nil
 	})
@@ -462,7 +459,7 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 	end := start + limit
 	matched := make([]ConversationRequestDTO, 0, limit)
 	total := 0
-	err := s.forEachFact(nil, "DESC", func(fact RequestFact) error {
+	err := s.forEachFact(nil, NewestFirst, func(fact RequestFact) error {
 		if s.match(matcher, fact).ID != id {
 			return nil
 		}
@@ -478,85 +475,18 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 	return matched, total, nil
 }
 
-func scanFact(rows *sql.Rows) (RequestFact, error) {
-	var id int64
-	var ts, provider, model, convID, convName, errMsg, upstreamURL sql.NullString
-	var success, prompt, completion, cached, reasoning, latency, status sql.NullInt64
-	var cost sql.NullFloat64
-	if err := rows.Scan(&id, &ts, &provider, &model, &success, &prompt, &completion, &cached, &reasoning, &cost, &convID, &convName, &latency, &status, &errMsg, &upstreamURL); err != nil {
-		return RequestFact{}, err
-	}
-	return RequestFact{
-		ID: id, TS: nullableString(ts), Provider: nullableString(provider), Model: nullableString(model),
-		Success: nullableBool(success), Status: nullableInt(status), Error: nullableString(errMsg), UpstreamURL: nullableString(upstreamURL), PromptTokens: nullableInt(prompt), CompletionTokens: nullableInt(completion),
-		CachedTokens: nullableInt(cached), ReasoningTokens: nullableInt(reasoning), Cost: nullableFloat(cost),
-		ConversationID: nullableString(convID), ConversationName: nullableString(convName), LatencyMs: nullableInt(latency),
-	}, nil
-}
-
 func (s Service) pageFacts(window *Window, page, limit int) ([]RequestFact, error) {
-	if page < 0 {
-		page = 0
+	if s.repository == nil {
+		return nil, fmt.Errorf("stats database is nil")
 	}
-	if limit <= 0 {
-		limit = 50
-	}
-	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests`
-	args := []any{}
-	if window != nil {
-		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
-		args = append(args, window.From, window.To)
-	}
-	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
-	args = append(args, limit, page*limit)
-	rows, err := s.DB.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	facts := make([]RequestFact, 0, limit)
-	for rows.Next() {
-		fact, err := scanFact(rows)
-		if err != nil {
-			return nil, err
-		}
-		facts = append(facts, fact)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return facts, nil
+	return s.repository.PageFacts(window, page, limit)
 }
 
-func (s Service) forEachFact(window *Window, order string, visit func(RequestFact) error) error {
-	if s.DB == nil {
+func (s Service) forEachFact(window *Window, order Order, visit func(RequestFact) error) error {
+	if s.repository == nil {
 		return fmt.Errorf("stats database is nil")
 	}
-	query := `SELECT id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url FROM requests`
-	args := []any{}
-	if window != nil {
-		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
-		args = append(args, window.From, window.To)
-	}
-	if order != "ASC" {
-		order = "DESC"
-	}
-	query += ` ORDER BY id ` + order
-	rows, err := s.DB.Query(query, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		fact, err := scanFact(rows)
-		if err != nil {
-			return err
-		}
-		if err := visit(fact); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
+	return s.repository.ForEachFact(window, order, visit)
 }
 
 func (f RequestFact) countable() bool {
@@ -574,7 +504,7 @@ func (s Service) matcher() *conversation.Matcher {
 	if s.Source != conversation.SourceSessionScan {
 		return nil
 	}
-	return conversation.NewMatcher(s.Candidates)
+	return conversation.NewMatcher(s.candidates)
 }
 
 func (s Service) match(matcher *conversation.Matcher, fact RequestFact) conversation.MatchResult {
@@ -780,38 +710,6 @@ func parseTimestamp(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid timestamp %q", value)
-}
-
-func nullableString(value sql.NullString) *string {
-	if !value.Valid {
-		return nil
-	}
-	result := value.String
-	return &result
-}
-
-func nullableInt(value sql.NullInt64) *int64 {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Int64
-	return &result
-}
-
-func nullableFloat(value sql.NullFloat64) *float64 {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Float64
-	return &result
-}
-
-func nullableBool(value sql.NullInt64) *bool {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Int64 == 1
-	return &result
 }
 
 func valueString(value *string) string {

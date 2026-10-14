@@ -10,8 +10,9 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	statsservice "github.com/heihei0299/pi-switch/internal/stats"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 type nativeUsageRow struct {
@@ -140,7 +141,7 @@ func newNativeSessionsFilters(now time.Time) nativeSessionsFilters {
 		conversationTo:   today,
 	}
 }
-func nativeStatsWindow(rangeChoice int, fromDate, toDate, now time.Time) (*statsservice.Window, error) {
+func nativeStatsWindow(rangeChoice int, fromDate, toDate, now time.Time) (*analytics.Window, error) {
 	if rangeChoice == nativeRangeAll {
 		return nil, nil
 	}
@@ -166,7 +167,7 @@ func nativeStatsWindow(rangeChoice int, fromDate, toDate, now time.Time) (*stats
 		from = nativeCalendarDay(now)
 		to = now
 	}
-	return &statsservice.Window{From: from.UnixMilli(), To: to.UnixMilli()}, nil
+	return &analytics.Window{From: from.UnixMilli(), To: to.UnixMilli()}, nil
 }
 func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) (nativeStatsSnapshot, error) {
 	now := time.Now()
@@ -186,7 +187,7 @@ func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nati
 	} else if err != nil {
 		return nativeStatsSnapshot{}, fmt.Errorf("inspect request history: %w", err)
 	}
-	service, err := statsservice.OpenManagementService()
+	service, err := bootstrap.OpenManagementAnalyticsService()
 	if err != nil {
 		return nativeStatsSnapshot{}, err
 	}
@@ -302,7 +303,7 @@ func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nati
 	}
 	return loaded, nil
 }
-func writeNativeStatsExport(path, format string, service statsservice.Service) error {
+func writeNativeStatsExport(path, format string, service analytics.Service) error {
 	temp, err := os.CreateTemp(filepath.Dir(path), ".pi-switch-stats-export-*")
 	if err != nil {
 		return err
@@ -569,7 +570,7 @@ func (p *nativeStatsState) export(shell *desktopShell, format string) {
 			if err != nil {
 				status = "Export failed: " + err.Error()
 			} else {
-				service := statsservice.Service{DB: db}
+				service := bootstrap.NewSummaryAnalyticsService(db)
 				filter := mygo.FileFilter{Name: "JSON", Extensions: []string{"json"}}
 				if format == "csv" {
 					filter = mygo.FileFilter{Name: "CSV", Extensions: []string{"csv"}}

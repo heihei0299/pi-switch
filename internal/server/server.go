@@ -15,7 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/conversation"
+	"github.com/heihei0299/pi-switch/internal/domain/conversation"
 	"github.com/heihei0299/pi-switch/internal/scan"
 )
 

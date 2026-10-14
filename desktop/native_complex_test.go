@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/conversation"
 	"github.com/heihei0299/pi-switch/internal/gateway"
-	statsservice "github.com/heihei0299/pi-switch/internal/stats"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 func TestNativeJSONDraftKeepsInvalidTextAndUndoRedo(t *testing.T) {
@@ -814,7 +814,7 @@ func TestNativeStatsWindowPresets(t *testing.T) {
 func TestNativeConversationRequestTextOmitsRawErrors(t *testing.T) {
 	errorText, provider, model := "provider-error-secret", "supplier", "model-a"
 	status, ok := int64(500), false
-	text := nativeConversationRequestText(statsservice.ConversationRequestDTO{
+	text := nativeConversationRequestText(analytics.ConversationRequestDTO{
 		Provider: &provider,
 		Model:    &model,
 		OK:       &ok,
@@ -1083,7 +1083,7 @@ func TestNativeStatsExportButtonsAndAtomicFileWrite(t *testing.T) {
 	if err := store.InsertRequest(db, "supplier", "model-a", true, 10, 5, 2, nil, "conversation", 12, "2026-10-11T12:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	service := statsservice.Service{DB: db, Source: conversation.SourceOff}
+	service := bootstrap.NewSummaryAnalyticsService(db)
 	path := filepath.Join(dir, "pi-switch-logs.json")
 	if err := os.WriteFile(path, []byte("previous export"), 0600); err != nil {
 		t.Fatal(err)

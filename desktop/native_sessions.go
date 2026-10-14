@@ -6,8 +6,9 @@ import (
 	"os"
 
 	"github.com/egoist/mygo/ui"
-	statsservice "github.com/heihei0299/pi-switch/internal/stats"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 type nativeSessionsPage struct {
@@ -60,7 +61,7 @@ func loadNativeConversationPage(id string, page, limit int) (nativeConversationP
 	} else if err != nil {
 		return nativeConversationPage{}, fmt.Errorf("inspect request history: %w", err)
 	}
-	service, err := statsservice.OpenManagementService()
+	service, err := bootstrap.OpenManagementAnalyticsService()
 	if err != nil {
 		return nativeConversationPage{}, err
 	}
@@ -74,7 +75,7 @@ func loadNativeConversationPage(id string, page, limit int) (nativeConversationP
 	}
 	return loaded, nil
 }
-func nativeConversationRequestText(request statsservice.ConversationRequestDTO) string {
+func nativeConversationRequestText(request analytics.ConversationRequestDTO) string {
 	provider, model, timestamp, status, cost := "unknown", "unknown", "unknown time", "unknown", "unknown"
 	if request.Provider != nil && *request.Provider != "" {
 		provider = *request.Provider

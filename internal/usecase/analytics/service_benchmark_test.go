@@ -1,4 +1,4 @@
-package stats
+package analytics_test
 
 import (
 	"database/sql"
@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heihei0299/pi-switch/internal/conversation"
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/sqlanalytics"
+	"github.com/heihei0299/pi-switch/internal/domain/conversation"
 	"github.com/heihei0299/pi-switch/internal/store"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 func BenchmarkStatsHistory(b *testing.B) {
@@ -32,7 +34,7 @@ func BenchmarkStatsHistory(b *testing.B) {
 				{name: "session_scan_128", source: conversation.SourceSessionScan, matches: candidates},
 			} {
 				b.Run(tc.name, func(b *testing.B) {
-					service := Service{DB: db, Source: tc.source, Candidates: tc.matches}
+					service := analytics.NewService(sqlanalytics.New(db), tc.source, tc.matches)
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {

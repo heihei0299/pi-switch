@@ -7,9 +7,10 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/gateway"
-	"github.com/heihei0299/pi-switch/internal/stats"
+	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
 var (
@@ -94,7 +95,7 @@ func (m *Model) refreshGateway() {
 }
 
 func (m *Model) refreshStats() {
-	service, err := stats.OpenSummaryService()
+	service, err := bootstrap.OpenSummaryAnalyticsService()
 	if err != nil {
 		m.statsBrief = "stats: db unavailable"
 		return
@@ -108,8 +109,8 @@ func (m *Model) refreshStats() {
 }
 
 // formatStatsBrief is the TUI's only stats responsibility: turning the numbers
-// into a display string. The aggregation lives in internal/stats.
-func formatStatsBrief(s stats.Summary) string {
+// into a display string. The aggregation lives in internal/usecase/analytics.
+func formatStatsBrief(s analytics.Summary) string {
 	costStr := "-"
 	if s.Requests > 0 && s.Cost != nil && *s.Cost != 0 {
 		switch {
