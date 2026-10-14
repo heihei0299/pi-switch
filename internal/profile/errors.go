@@ -3,6 +3,8 @@ package profile
 import (
 	"errors"
 	"fmt"
+
+	domainprovider "github.com/heihei0299/pi-switch/internal/domain/provider"
 )
 
 // Profile-domain outcomes callers must tell apart: the HTTP handlers map them to
@@ -12,10 +14,8 @@ import (
 var (
 	ErrProfileNotFound     = errors.New("profile not found")
 	ErrProfileExists       = errors.New("profile already exists")
-	ErrTargetNameRequired  = errors.New("as required")
-	ErrUnknownChannel      = errors.New("unknown channel")
+	ErrUnknownChannel      = domainprovider.ErrUnknownChannel
 	ErrUpstreamFetchFailed = errors.New("upstream fetch failed")
-	ErrPersistFailed       = errors.New("failed to persist config")
 )
 
 // profileError carries one of the kinds above together with the message its

@@ -105,6 +105,39 @@ func TestChannelFetch_UnknownChannel400(t *testing.T) {
 	}
 }
 
+func TestChannelFetch_PreservesChangesMadeDuringUpstreamRequest(t *testing.T) {
+	dir := t.TempDir()
+	var path string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := config.UpdateAtPath(path, func(cfg *config.PiSwitchConfig) error {
+			prof := cfg.Profiles["sup"]
+			prof.Upstreams[0].Models = append(prof.Upstreams[0].Models, config.ModelEntry{ID: "concurrent"})
+			prof.Upstreams[0].ExposedModels = []string{"concurrent"}
+			cfg.Profiles["sup"] = prof
+			return nil
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"fetched"}]}`))
+	}))
+	defer upstream.Close()
+	cfgJSON := `{"version":2,"profiles":{"sup":{"api":"openai-completions","responsesMode":"auto","baseUrl":"` + upstream.URL + `","apiKey":"k","upstreams":[{"name":"main","baseUrl":"` + upstream.URL + `","apiKey":"k","models":[{"id":"manual"}],"exposedModels":[]}]}},"settings":{}}`
+	path = writeChannelConfig(t, dir, cfgJSON)
+
+	code, resp := postFetch(t, NewMgmtRouter(), "/api/profiles/sup/fetch-models?channel=main")
+	if code != http.StatusOK {
+		t.Fatalf("fetch code = %d, want 200 (%v)", code, resp)
+	}
+	prof := loadCfg(t, path).Profiles["sup"].Upstreams[0]
+	if len(prof.Models) != 3 || prof.Models[0].ID != "manual" || prof.Models[1].ID != "concurrent" || prof.Models[2].ID != "fetched" {
+		t.Fatalf("models after concurrent edit and fetch = %+v", prof.Models)
+	}
+	if len(prof.ExposedModels) != 1 || prof.ExposedModels[0] != "concurrent" {
+		t.Fatalf("concurrent exposure was lost: %v", prof.ExposedModels)
+	}
+}
+
 func TestChannelFetch_LegacyNoParamUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	mockA := channelMock(t, "a1")

@@ -16,7 +16,7 @@ var (
 	ErrPersistence        = errors.New("provider configuration persistence failed")
 	ErrNameRequired       = errors.New("name required")
 	ErrTargetNameRequired = errors.New("as required")
-	ErrUnknownChannel     = errors.New("unknown channel")
+	ErrUnknownChannel     = provider.ErrUnknownChannel
 )
 
 type namedProfileError struct {
@@ -330,6 +330,21 @@ func (s *Service) SetModelsLegacy(ctx context.Context, name, channel string, mod
 			seen[model.ID] = true
 		}
 		profile.Upstreams[idx].Models = models
+		state.Profiles[name] = StoredProfile{Profile: profile, Revision: stored.Revision}
+		return nil
+	})
+}
+
+func (s *Service) MergeModelsLegacy(ctx context.Context, name, channel string, entries []provider.ModelEntry) error {
+	return s.update(ctx, false, func(state *State) error {
+		stored, ok := state.Profiles[name]
+		if !ok {
+			return ErrProfileNotFound
+		}
+		profile := stored.Profile
+		if err := provider.MergeChannelModels(&profile, channel, entries); err != nil {
+			return err
+		}
 		state.Profiles[name] = StoredProfile{Profile: profile, Revision: stored.Revision}
 		return nil
 	})

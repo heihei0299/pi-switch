@@ -294,6 +294,47 @@ func TestNativeDuplicateChecksRevisionAndBacksUp(t *testing.T) {
 	}
 }
 
+func TestMergeModelsLegacyPreservesCurrentEntriesAndExposure(t *testing.T) {
+	main := "main"
+	manual, catalog := "manual", "catalog"
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{Upstreams: []provider.Upstream{{
+			Name: &main, Models: []provider.ModelEntry{{ID: "existing", Name: &manual}}, ExposedModels: []string{"existing"},
+		}}}},
+	}}}
+	service := New(store, &testValidator{})
+	entries := []provider.ModelEntry{{ID: "existing", Name: &catalog}, {ID: "new"}, {ID: "new"}, {ID: " "}}
+	if err := service.MergeModelsLegacy(context.Background(), "one", "main", entries); err != nil {
+		t.Fatal(err)
+	}
+	got := store.state.Profiles["one"].Profile.Upstreams[0]
+	if len(got.Models) != 2 || got.Models[0].Name == nil || *got.Models[0].Name != "manual" || got.Models[1].ID != "new" || len(got.ExposedModels) != 1 || got.ExposedModels[0] != "existing" {
+		t.Fatalf("merge changed existing metadata or exposure: %+v", got)
+	}
+	if len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("backups = %v, want one no-backup merge", store.backups)
+	}
+}
+
+func TestMergeModelsLegacyMergesIntoLatestProfile(t *testing.T) {
+	main := "main"
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{Upstreams: []provider.Upstream{{Name: &main, Models: []provider.ModelEntry{{ID: "old"}}}}}},
+	}}}
+	latest := store.state.Profiles["one"]
+	latest.Profile.Upstreams[0].Models = append(latest.Profile.Upstreams[0].Models, provider.ModelEntry{ID: "concurrent"})
+	latest.Profile.Upstreams[0].ExposedModels = []string{"concurrent"}
+	store.state.Profiles["one"] = latest
+	service := New(store, &testValidator{})
+	if err := service.MergeModelsLegacy(context.Background(), "one", "main", []provider.ModelEntry{{ID: "fetched"}}); err != nil {
+		t.Fatal(err)
+	}
+	models := store.state.Profiles["one"].Profile.Upstreams[0].Models
+	if len(models) != 3 || models[1].ID != "concurrent" || models[2].ID != "fetched" || store.state.Profiles["one"].Profile.Upstreams[0].ExposedModels[0] != "concurrent" {
+		t.Fatalf("latest models/exposure were not preserved: %+v", store.state.Profiles["one"].Profile.Upstreams[0])
+	}
+}
+
 func TestSetExposedModelsLegacyValidatesChannelOwnership(t *testing.T) {
 	main := "main"
 	store := &testStore{state: State{Profiles: map[string]StoredProfile{

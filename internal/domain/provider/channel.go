@@ -1,5 +1,13 @@
 package provider
 
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+var ErrUnknownChannel = errors.New("unknown channel")
+
 // EnsureMutationChannel resolves a channel and materializes the legacy flat or
 // unnamed single-upstream profile as "main" when that is the requested channel.
 func EnsureMutationChannel(profile *Profile, channel string) int {
@@ -55,4 +63,24 @@ func channelIndex(profile Profile, channel string) int {
 		}
 	}
 	return -1
+}
+
+// MergeChannelModels adds only new IDs, preserving existing entries and exposure.
+func MergeChannelModels(profile *Profile, channel string, entries []ModelEntry) error {
+	idx := EnsureMutationChannel(profile, channel)
+	if idx < 0 {
+		return fmt.Errorf("%w %q", ErrUnknownChannel, channel)
+	}
+	seen := make(map[string]bool, len(profile.Upstreams[idx].Models))
+	for _, model := range profile.Upstreams[idx].Models {
+		seen[model.ID] = true
+	}
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.ID) == "" || seen[entry.ID] {
+			continue
+		}
+		seen[entry.ID] = true
+		profile.Upstreams[idx].Models = append(profile.Upstreams[idx].Models, entry)
+	}
+	return nil
 }

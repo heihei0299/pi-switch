@@ -97,7 +97,7 @@ func respondProfileError(c *gin.Context, err error) {
 		c.JSON(400, gin.H{"error": "target exists"})
 	case errors.Is(err, providerusecase.ErrPersistence):
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
-	case errors.Is(err, profile.ErrPersistFailed), errors.Is(err, profile.ErrUpstreamFetchFailed):
+	case errors.Is(err, profile.ErrUpstreamFetchFailed):
 		c.JSON(500, gin.H{"error": err.Error()})
 	default:
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -215,7 +215,7 @@ func handleTestProfile(c *gin.Context) {
 }
 
 func handleFetchModelsForChannel(c *gin.Context, name, channel string) {
-	ids, counts, err := profile.FetchChannelModels(name, channel)
+	ids, counts, err := application.FetchChannelModels(c.Request.Context(), configPath(), name, channel)
 	if err != nil {
 		respondProfileError(c, err)
 		return

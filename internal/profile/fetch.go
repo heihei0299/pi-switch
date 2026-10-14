@@ -11,6 +11,7 @@ import (
 
 	"github.com/heihei0299/pi-switch/internal/catalog"
 	"github.com/heihei0299/pi-switch/internal/config"
+	domainprovider "github.com/heihei0299/pi-switch/internal/domain/provider"
 )
 
 // EnrichCounts reports what EnrichModelsWithCatalog did, so each caller can
@@ -211,45 +212,6 @@ func EnrichModelsWithCatalog(models []map[string]interface{}, prof config.Provid
 	return enriched, skipped, failed, warning
 }
 
-// FetchChannelModels pulls the model list a channel's own credentials report,
-// enriches it, merges only the new ids into that channel's pool and persists.
-// It is the single implementation behind
-// POST /api/profiles/:name/fetch-models?channel= and
-// `pi-switch provider fetch-models --channel`, so the CLI cannot drift from the
-// handler's channel-directed semantics. Existing entries are never modified and
-// other channels are never touched.
-func FetchChannelModels(name, channel string) ([]string, EnrichCounts, error) {
-	cfg, err := loadConfig()
-	if err != nil {
-		return nil, EnrichCounts{}, err
-	}
-	prof, ok := cfg.Profiles[name]
-	if !ok {
-		return nil, EnrichCounts{}, profileErr(ErrProfileNotFound, "profile %q not found", name)
-	}
-	ids, entries, counts, err := FetchChannelModelEntries(prof, channel)
-	if err != nil {
-		return nil, EnrichCounts{}, err
-	}
-	// The network call intentionally happens outside the config lock. The
-	// latest profile is reloaded in the transaction below before merging so a
-	// concurrent model/expose update cannot be overwritten by this fetch.
-	if err := updateConfig("failed to save config: ", func(cfg *config.PiSwitchConfig) error {
-		latest, ok := cfg.Profiles[name]
-		if !ok {
-			return keepMutation(profileErr(ErrProfileNotFound, "profile %q not found", name))
-		}
-		if err := MergeChannelModels(&latest, channel, entries); err != nil {
-			return keepMutation(err)
-		}
-		cfg.Profiles[name] = latest
-		return nil
-	}); err != nil {
-		return nil, EnrichCounts{}, err
-	}
-	return ids, counts, nil
-}
-
 // FetchChannelModelEntries performs the shared fetch/enrichment without a config write.
 func FetchChannelModelEntries(prof config.ProviderProfile, channel string) ([]string, []config.ModelEntry, EnrichCounts, error) {
 	prof.Upstreams = append([]config.Upstream(nil), prof.Upstreams...)
@@ -291,20 +253,5 @@ func FetchChannelModelEntries(prof config.ProviderProfile, channel string) ([]st
 
 // MergeChannelModels only adds new IDs; exposure and existing metadata stay intact.
 func MergeChannelModels(prof *config.ProviderProfile, channel string, entries []config.ModelEntry) error {
-	latestIdx := EnsureMutationChannel(prof, channel)
-	if latestIdx < 0 {
-		return profileErr(ErrUnknownChannel, "unknown channel %q", channel)
-	}
-	seen := map[string]bool{}
-	for _, m := range prof.Upstreams[latestIdx].Models {
-		seen[m.ID] = true
-	}
-	for _, e := range entries {
-		if strings.TrimSpace(e.ID) == "" || seen[e.ID] {
-			continue
-		}
-		seen[e.ID] = true
-		prof.Upstreams[latestIdx].Models = append(prof.Upstreams[latestIdx].Models, e)
-	}
-	return nil
+	return domainprovider.MergeChannelModels(prof, channel, entries)
 }

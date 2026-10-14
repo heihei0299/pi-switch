@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
@@ -569,8 +570,15 @@ func handleProvider(args []string) int {
 		// --channel 走渠道定向拉取（enrich 后合并入该渠道并落盘），与 handler 同一实现；
 		// 不给渠道时保持只读列出，不写盘。
 		if channel := flags["--channel"]; channel != "" {
-			ids, counts, err := profile.FetchChannelModels(name, channel)
+			ids, counts, err := application.FetchChannelModels(context.Background(), cfgPath, name, channel)
 			if err != nil {
+				if errors.Is(err, providerusecase.ErrProfileNotFound) {
+					err = fmt.Errorf("profile %q not found", name)
+				}
+				var persistence *providerusecase.PersistenceError
+				if errors.As(err, &persistence) {
+					err = fmt.Errorf("failed to save config: %w", persistence.Err)
+				}
 				fmt.Fprintf(os.Stderr, "provider fetch-models %s: %v\n", name, err)
 				return 1
 			}

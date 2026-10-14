@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
@@ -11,6 +12,13 @@ import (
 	"github.com/heihei0299/pi-switch/internal/profile"
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
+
+type namedProviderNotFoundError struct{ name string }
+
+func (e namedProviderNotFoundError) Error() string {
+	return fmt.Sprintf("profile %q not found", e.name)
+}
+func (e namedProviderNotFoundError) Unwrap() error { return providerusecase.ErrProfileNotFound }
 
 func DuplicateProvider(path, source, name, expected string) error {
 	_, err := bootstrap.NewProviderService(path).Duplicate(context.Background(), providerusecase.DuplicateCommand{
@@ -31,6 +39,25 @@ func DuplicateProvider(path, source, name, expected string) error {
 		return persistence.Err
 	}
 	return err
+}
+
+func FetchChannelModels(ctx context.Context, path, name, channel string) ([]string, profile.EnrichCounts, error) {
+	cfg, _, err := bootstrap.LoadConfig(path)
+	if err != nil {
+		return nil, profile.EnrichCounts{}, err
+	}
+	prof, ok := cfg.Profiles[name]
+	if !ok {
+		return nil, profile.EnrichCounts{}, namedProviderNotFoundError{name: name}
+	}
+	ids, entries, counts, err := profile.FetchChannelModelEntries(prof, channel)
+	if err != nil {
+		return nil, profile.EnrichCounts{}, err
+	}
+	if err := bootstrap.NewProviderService(path).MergeModelsLegacy(ctx, name, channel, entries); err != nil {
+		return nil, profile.EnrichCounts{}, err
+	}
+	return ids, counts, nil
 }
 
 func ProviderPresetDraft(id string) (ProviderDraft, error) {
