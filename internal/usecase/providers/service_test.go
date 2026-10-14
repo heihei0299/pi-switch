@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/domain/provider"
@@ -34,6 +35,10 @@ type testValidator struct {
 }
 
 func (v *testValidator) Validate(context.Context, provider.Profile) error {
+	v.calls++
+	return v.err
+}
+func (v *testValidator) ValidateDuplicate(context.Context, provider.Profile) error {
 	v.calls++
 	return v.err
 }
@@ -80,6 +85,50 @@ func TestPutLegacyKeepsHTTPRenameAndBackupSemantics(t *testing.T) {
 	}
 	if len(store.backups) != 1 || store.backups[0] {
 		t.Fatalf("backup calls = %v, want one no-backup mutation", store.backups)
+	}
+}
+
+func TestCreateLegacyTrimsChecksAndDoesNotBackup(t *testing.T) {
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{}}}
+	validator := &testValidator{}
+	service := New(store, validator)
+	result, err := service.CreateLegacy(context.Background(), " new ", provider.Profile{API: "openai-completions"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "new" || store.state.Profiles["new"].Profile.API != "openai-completions" || len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("result/state/backups = %+v/%+v/%v", result, store.state, store.backups)
+	}
+	if _, err := service.CreateLegacy(context.Background(), "new", provider.Profile{}); !errors.Is(err, ErrProfileExists) {
+		t.Fatalf("duplicate create error = %v, want ErrProfileExists", err)
+	}
+	if len(store.state.Profiles) != 1 || len(store.backups) != 1 {
+		t.Fatal("duplicate create changed state or created backup")
+	}
+}
+
+func TestDuplicateLegacyKeepsErrorOrderAndNoBackupContract(t *testing.T) {
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"source": {Profile: provider.Profile{API: "openai-completions"}},
+		"target": {Profile: provider.Profile{API: "anthropic-messages"}},
+	}}}
+	validator := &testValidator{}
+	service := New(store, validator)
+	if _, err := service.DuplicateLegacy(context.Background(), "missing", "target"); !errors.Is(err, ErrProfileNotFound) || err.Error() != `profile "missing" not found` {
+		t.Fatalf("missing source error = %v", err)
+	}
+	if _, err := service.DuplicateLegacy(context.Background(), "source", "target"); !errors.Is(err, ErrProfileExists) || err.Error() != `target "target" already exists` {
+		t.Fatalf("existing target error = %v", err)
+	}
+	if validator.calls != 0 || len(store.backups) != 0 {
+		t.Fatal("duplicate conflicts reached validation or wrote a backup")
+	}
+	result, err := service.DuplicateLegacy(context.Background(), "source", "copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "copy" || store.state.Profiles["copy"].Profile.API != "openai-completions" || validator.calls != 1 || len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("result/state/validation/backups = %+v/%+v/%d/%v", result, store.state, validator.calls, store.backups)
 	}
 }
 
@@ -164,6 +213,75 @@ func TestDeleteIfPresentLegacyIsIdempotentWithoutBackup(t *testing.T) {
 	}
 	if store.calls != calls+1 || len(store.backups) != 2 || store.backups[1] {
 		t.Fatalf("missing delete calls/backups = %d/%v, want one no-backup transaction", store.calls, store.backups)
+	}
+}
+
+func TestSetModelsLegacyValidatesAndDoesNotBackup(t *testing.T) {
+	main := "main"
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{Upstreams: []provider.Upstream{{Name: &main, Models: []provider.ModelEntry{{ID: "old"}}}}}},
+	}}}
+	service := New(store, &testValidator{})
+	models := []provider.ModelEntry{{ID: "new"}}
+	if err := service.SetModelsLegacy(context.Background(), "one", "main", models); err != nil {
+		t.Fatal(err)
+	}
+	got := store.state.Profiles["one"].Profile.Upstreams[0].Models
+	if len(got) != 1 || got[0].ID != "new" || len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("models/backups = %+v/%v", got, store.backups)
+	}
+	if err := service.SetModelsLegacy(context.Background(), "one", "missing", models); !errors.Is(err, ErrUnknownChannel) {
+		t.Fatalf("unknown channel error = %v", err)
+	}
+	if err := service.SetModelsLegacy(context.Background(), "one", "main", []provider.ModelEntry{{ID: " "}}); err == nil || err.Error() != "model id must not be empty" {
+		t.Fatalf("empty model id error = %v", err)
+	}
+	if len(store.backups) != 1 || store.state.Profiles["one"].Profile.Upstreams[0].Models[0].ID != "new" {
+		t.Fatal("rejected model update changed state or created a backup")
+	}
+}
+
+func TestSetExposedModelsLegacyValidatesChannelOwnership(t *testing.T) {
+	main := "main"
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{Upstreams: []provider.Upstream{{Name: &main, Models: []provider.ModelEntry{{ID: "m1"}}}}}},
+	}}}
+	service := New(store, &testValidator{})
+	if err := service.SetExposedModelsLegacy(context.Background(), "one", "main", []string{"m1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.state.Profiles["one"].Profile.Upstreams[0].ExposedModels; len(got) != 1 || got[0] != "m1" {
+		t.Fatalf("exposed models = %v", got)
+	}
+	if err := service.SetExposedModelsLegacy(context.Background(), "one", "main", []string{"unknown"}); err == nil || err.Error() != `exposedModels references unknown model "unknown" in channel "main"` {
+		t.Fatalf("unknown exposed model error = %v", err)
+	}
+	if len(store.backups) != 1 || store.backups[0] {
+		t.Fatalf("backups = %v, want only no-backup writes", store.backups)
+	}
+}
+
+func TestSetUserAgentLegacyValidatesAndClears(t *testing.T) {
+	store := &testStore{state: State{Profiles: map[string]StoredProfile{
+		"one": {Profile: provider.Profile{}},
+	}}}
+	service := New(store, &testValidator{})
+	codex := "codex"
+	if err := service.SetUserAgentLegacy(context.Background(), "one", &codex); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.state.Profiles["one"].Profile.UserAgent; got == nil || *got != codex {
+		t.Fatalf("user agent = %v", got)
+	}
+	invalid := "browser"
+	if err := service.SetUserAgentLegacy(context.Background(), "one", &invalid); err == nil || !strings.Contains(err.Error(), `invalid spoof "browser"`) {
+		t.Fatalf("invalid spoof error = %v", err)
+	}
+	if err := service.SetUserAgentLegacy(context.Background(), "one", nil); err != nil {
+		t.Fatal(err)
+	}
+	if store.state.Profiles["one"].Profile.UserAgent != nil || len(store.backups) != 2 || store.backups[0] || store.backups[1] {
+		t.Fatalf("user agent/backups = %v/%v", store.state.Profiles["one"].Profile.UserAgent, store.backups)
 	}
 }
 

@@ -38,6 +38,10 @@ func ValidateResponsesMode(p config.ProviderProfile) error {
 	return protocol.ValidateResponsesMode(p.API, p.ResponsesMode)
 }
 
+func ValidateResolvedCapability(p config.ProviderProfile) error {
+	return config.ValidateResolvedCapability(p)
+}
+
 // Issue is one profile diagnostic plus the field it belongs to, so the advisory
 // surface can point at a path while the write paths only need the first message.
 // Message keeps the exact wording the CRUD doors print.

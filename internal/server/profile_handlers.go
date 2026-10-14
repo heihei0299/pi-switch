@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
@@ -85,23 +86,17 @@ func handleGetProfile(c *gin.Context) {
 	c.JSON(200, gin.H{"name": name, "profile": prof, "providerId": name})
 }
 
-// isPersistError distinguishes a failed write from a rejected input, so the
-// handler can keep answering 400 for validation and 500 for storage. It matches
-// the kind rather than the syscall error types, so a wrapped or future persist
-// error cannot silently downgrade 500 to 400.
-func isPersistError(err error) bool {
-	return errors.Is(err, profile.ErrPersistFailed)
-}
-
 // respondProfileError maps a profile-domain error onto the status codes these
 // endpoints already answered. Every arm matches by kind, so the order of the arms
 // cannot misread a storage failure as a missing profile.
 func respondProfileError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, profile.ErrProfileNotFound):
+	case errors.Is(err, profile.ErrProfileNotFound), errors.Is(err, providerusecase.ErrProfileNotFound):
 		c.JSON(404, gin.H{"error": "not found"})
-	case errors.Is(err, profile.ErrProfileExists):
+	case errors.Is(err, profile.ErrProfileExists), errors.Is(err, providerusecase.ErrProfileExists):
 		c.JSON(400, gin.H{"error": "target exists"})
+	case errors.Is(err, providerusecase.ErrPersistence):
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 	case errors.Is(err, profile.ErrPersistFailed), errors.Is(err, profile.ErrUpstreamFetchFailed):
 		c.JSON(500, gin.H{"error": err.Error()})
 	default:
@@ -128,11 +123,11 @@ func handlePostProfile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("invalid profile: %v", err)})
 		return
 	}
-	// 校验（含 responsesMode 兼容性）、重名与落盘都在 CreateProfile 里（与 CLI
+	// 校验（含 responsesMode 兼容性）、重名与落盘都在 Provider usecase 里（与 CLI
 	// 共用一份实现），handler 只负责把它映射成 HTTP 错误码：落盘失败 500，
 	// 其余 400。
-	if err := profile.CreateProfile(body.Name, prof); err != nil {
-		if isPersistError(err) {
+	if _, err := bootstrap.NewProviderService(configPath()).CreateLegacy(c.Request.Context(), body.Name, prof); err != nil {
+		if errors.Is(err, providerusecase.ErrPersistence) {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
@@ -195,7 +190,7 @@ func handleDuplicateProfile(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	if err := profile.DuplicateProfile(name, body.As); err != nil {
+	if _, err := bootstrap.NewProviderService(configPath()).DuplicateLegacy(c.Request.Context(), name, body.As); err != nil {
 		respondProfileError(c, err)
 		return
 	}
@@ -293,49 +288,21 @@ func handlePutModels(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	var inputErr error
-	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
-		prof, ok := cfg.Profiles[name]
-		if !ok {
-			return profile.ErrProfileNotFound
-		}
-		if body.Channel == "" {
-			inputErr = errors.New("channel is required")
-			return inputErr
-		}
-		idx := profile.EnsureMutationChannel(&prof, body.Channel)
-		if idx < 0 {
-			return fmt.Errorf("%w: %q", profile.ErrUnknownChannel, body.Channel)
-		}
-		seen := map[string]bool{}
-		for _, m := range body.Models {
-			if strings.TrimSpace(m.ID) == "" {
-				inputErr = errors.New("model id must not be empty")
-				return inputErr
-			}
-			if seen[m.ID] {
-				inputErr = fmt.Errorf("duplicate model id %q", m.ID)
-				return inputErr
-			}
-			seen[m.ID] = true
-		}
-		prof.Upstreams[idx].Models = body.Models
-		cfg.Profiles[name] = prof
-		return nil
-	})
-	if errors.Is(err, profile.ErrProfileNotFound) {
+	err := bootstrap.NewProviderService(configPath()).SetModelsLegacy(c.Request.Context(), name, body.Channel, body.Models)
+	if errors.Is(err, providerusecase.ErrProfileNotFound) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	if errors.Is(err, profile.ErrUnknownChannel) {
+	if errors.Is(err, providerusecase.ErrUnknownChannel) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("unknown channel %q", body.Channel)})
 		return
 	}
-	if inputErr != nil {
-		c.JSON(400, gin.H{"error": inputErr.Error()})
-		return
-	}
 	if err != nil {
+		var validation *providerusecase.ValidationError
+		if errors.As(err, &validation) {
+			c.JSON(400, gin.H{"error": validation.Err.Error()})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
@@ -349,10 +316,20 @@ func handlePutExpose(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	// prof 由 SetExposedModels 内部加载，handler 只负责取 channel 与映射错误。
+	// Provider usecase reloads under the config write lock before changing exposure.
 	channel := c.Query("channel")
-	if err := profile.SetExposedModels(name, channel, body.ModelIds); err != nil {
-		respondProfileError(c, err)
+	err := bootstrap.NewProviderService(configPath()).SetExposedModelsLegacy(c.Request.Context(), name, channel, body.ModelIds)
+	if errors.Is(err, providerusecase.ErrProfileNotFound) {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	if err != nil {
+		var validation *providerusecase.ValidationError
+		if errors.As(err, &validation) || errors.Is(err, providerusecase.ErrUnknownChannel) {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "backup": nil})
@@ -365,38 +342,17 @@ func handlePutSpoof(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	_ = json.Unmarshal(raw, &body)
-	var inputErr error
-	err := config.UpdateAtPath(configPath(), func(cfg *config.PiSwitchConfig) error {
-		prof, ok := cfg.Profiles[name]
-		if !ok {
-			return profile.ErrProfileNotFound
-		}
-		if body.Spoof != nil {
-			v := *body.Spoof
-			if v != "" && v != "claude-code" && v != "codex" && v != "gemini" {
-				inputErr = fmt.Errorf("invalid spoof %q, must be one of '', 'claude-code', 'codex', 'gemini'", v)
-				return inputErr
-			}
-			if v == "" {
-				prof.UserAgent = nil
-			} else {
-				prof.UserAgent = &v
-			}
-		} else {
-			prof.UserAgent = nil
-		}
-		cfg.Profiles[name] = prof
-		return nil
-	})
-	if errors.Is(err, profile.ErrProfileNotFound) {
+	err := bootstrap.NewProviderService(configPath()).SetUserAgentLegacy(c.Request.Context(), name, body.Spoof)
+	if errors.Is(err, providerusecase.ErrProfileNotFound) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	if inputErr != nil {
-		c.JSON(400, gin.H{"error": inputErr.Error()})
-		return
-	}
 	if err != nil {
+		var validation *providerusecase.ValidationError
+		if errors.As(err, &validation) {
+			c.JSON(400, gin.H{"error": validation.Err.Error()})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

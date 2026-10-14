@@ -509,7 +509,7 @@ func handleProvider(args []string) int {
 				ExposedModels: []string{},
 			}}
 		}
-		if err := profile.CreateProfile(name, prof); err != nil {
+		if _, err := bootstrap.NewProviderService(cfgPath).CreateLegacy(context.Background(), name, prof); err != nil {
 			fmt.Fprintf(os.Stderr, "provider add failed: %v\n", err)
 			return 1
 		}
@@ -525,7 +525,11 @@ func handleProvider(args []string) int {
 			return 1
 		}
 		src, as := positional[0], flags["--as"]
-		if err := profile.DuplicateProfile(src, as); err != nil {
+		if _, err := bootstrap.NewProviderService(cfgPath).DuplicateLegacy(context.Background(), src, as); err != nil {
+			var persistence *providerusecase.PersistenceError
+			if errors.As(err, &persistence) {
+				err = fmt.Errorf("failed to save config: %w", persistence.Err)
+			}
 			fmt.Fprintf(os.Stderr, "provider duplicate failed: %v\n", err)
 			return 1
 		}
@@ -617,7 +621,14 @@ func handleProvider(args []string) int {
 			fmt.Fprintln(os.Stderr, "provider expose: --channel <channel> required (profile has multiple channels)")
 			return 1
 		}
-		if err := profile.SetExposedModels(name, channel, ids); err != nil {
+		if err := bootstrap.NewProviderService(cfgPath).SetExposedModelsLegacy(context.Background(), name, channel, ids); err != nil {
+			if errors.Is(err, providerusecase.ErrProfileNotFound) {
+				err = fmt.Errorf("profile %q not found", name)
+			}
+			var persistence *providerusecase.PersistenceError
+			if errors.As(err, &persistence) {
+				err = fmt.Errorf("failed to save config: %w", persistence.Err)
+			}
 			fmt.Fprintf(os.Stderr, "provider expose failed: %v\n", err)
 			return 1
 		}

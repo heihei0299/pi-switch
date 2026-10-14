@@ -3,18 +3,40 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/heihei0299/pi-switch/internal/domain/provider"
 )
 
 var (
-	ErrProfileNotFound  = errors.New("profile not found")
-	ErrProfileExists    = errors.New("profile already exists")
-	ErrRevisionConflict = errors.New("configuration changed; reload before saving")
-	ErrPersistence      = errors.New("provider configuration persistence failed")
-	ErrNameRequired     = errors.New("name required")
+	ErrProfileNotFound    = errors.New("profile not found")
+	ErrProfileExists      = errors.New("profile already exists")
+	ErrRevisionConflict   = errors.New("configuration changed; reload before saving")
+	ErrPersistence        = errors.New("provider configuration persistence failed")
+	ErrNameRequired       = errors.New("name required")
+	ErrTargetNameRequired = errors.New("as required")
+	ErrUnknownChannel     = errors.New("unknown channel")
 )
+
+type namedProfileError struct {
+	name   string
+	exists bool
+}
+
+func (e namedProfileError) Error() string {
+	if e.exists {
+		return fmt.Sprintf("target %q already exists", e.name)
+	}
+	return fmt.Sprintf("profile %q not found", e.name)
+}
+
+func (e namedProfileError) Is(target error) bool {
+	if e.exists {
+		return target == ErrProfileExists
+	}
+	return target == ErrProfileNotFound
+}
 
 type StoredProfile struct {
 	Profile  provider.Profile
@@ -32,6 +54,7 @@ type Store interface {
 
 type Validator interface {
 	Validate(context.Context, provider.Profile) error
+	ValidateDuplicate(context.Context, provider.Profile) error
 }
 
 type Service struct {
@@ -94,6 +117,58 @@ func (s *Service) PutLegacy(ctx context.Context, cmd PutLegacyCommand) (Result, 
 		return Result{}, err
 	}
 	return Result{Name: cmd.Name}, nil
+}
+
+func (s *Service) CreateLegacy(ctx context.Context, name string, prof provider.Profile) (Result, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Result{}, ErrNameRequired
+	}
+	if err := s.validate(ctx, prof); err != nil {
+		return Result{}, err
+	}
+	err := s.update(ctx, false, func(state *State) error {
+		if state.Profiles == nil {
+			state.Profiles = make(map[string]StoredProfile)
+		}
+		if _, exists := state.Profiles[name]; exists {
+			return ErrProfileExists
+		}
+		state.Profiles[name] = StoredProfile{Profile: prof}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Name: name}, nil
+}
+
+func (s *Service) DuplicateLegacy(ctx context.Context, source, name string) (Result, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Result{}, ErrTargetNameRequired
+	}
+	err := s.update(ctx, false, func(state *State) error {
+		profile, ok := state.Profiles[source]
+		if !ok {
+			return namedProfileError{name: source}
+		}
+		if _, exists := state.Profiles[name]; exists {
+			return namedProfileError{name: name, exists: true}
+		}
+		if s.validator == nil {
+			return &ValidationError{Err: errors.New("provider validator is unavailable")}
+		}
+		if err := s.validator.ValidateDuplicate(ctx, profile.Profile); err != nil {
+			return &ValidationError{Err: err}
+		}
+		state.Profiles[name] = StoredProfile{Profile: profile.Profile}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Name: name}, nil
 }
 
 func (s *Service) Save(ctx context.Context, cmd SaveCommand) (Result, error) {
@@ -180,6 +255,87 @@ func (s *Service) DeleteIfPresentLegacy(ctx context.Context, name string) (Resul
 	return Result{Name: name}, nil
 }
 
+func (s *Service) SetModelsLegacy(ctx context.Context, name, channel string, models []provider.ModelEntry) error {
+	return s.update(ctx, false, func(state *State) error {
+		stored, ok := state.Profiles[name]
+		if !ok {
+			return ErrProfileNotFound
+		}
+		if channel == "" {
+			return &ValidationError{Err: errors.New("channel is required")}
+		}
+		profile := stored.Profile
+		idx := provider.EnsureMutationChannel(&profile, channel)
+		if idx < 0 {
+			return fmt.Errorf("%w %q", ErrUnknownChannel, channel)
+		}
+		seen := make(map[string]bool, len(models))
+		for _, model := range models {
+			if strings.TrimSpace(model.ID) == "" {
+				return &ValidationError{Err: errors.New("model id must not be empty")}
+			}
+			if seen[model.ID] {
+				return &ValidationError{Err: fmt.Errorf("duplicate model id %q", model.ID)}
+			}
+			seen[model.ID] = true
+		}
+		profile.Upstreams[idx].Models = models
+		state.Profiles[name] = StoredProfile{Profile: profile, Revision: stored.Revision}
+		return nil
+	})
+}
+
+func (s *Service) SetExposedModelsLegacy(ctx context.Context, name, channel string, modelIDs []string) error {
+	return s.update(ctx, false, func(state *State) error {
+		stored, ok := state.Profiles[name]
+		if !ok {
+			return ErrProfileNotFound
+		}
+		if channel == "" {
+			return &ValidationError{Err: errors.New("channel is required")}
+		}
+		profile := stored.Profile
+		idx := provider.EnsureMutationChannel(&profile, channel)
+		if idx < 0 {
+			return fmt.Errorf("%w %q", ErrUnknownChannel, channel)
+		}
+		models := make(map[string]bool, len(profile.Upstreams[idx].Models))
+		for _, model := range profile.Upstreams[idx].Models {
+			models[model.ID] = true
+		}
+		for _, id := range modelIDs {
+			if !models[id] {
+				return &ValidationError{Err: fmt.Errorf("exposedModels references unknown model %q in channel %q", id, channel)}
+			}
+		}
+		profile.Upstreams[idx].ExposedModels = modelIDs
+		state.Profiles[name] = StoredProfile{Profile: profile, Revision: stored.Revision}
+		return nil
+	})
+}
+
+func (s *Service) SetUserAgentLegacy(ctx context.Context, name string, spoof *string) error {
+	return s.update(ctx, false, func(state *State) error {
+		stored, ok := state.Profiles[name]
+		if !ok {
+			return ErrProfileNotFound
+		}
+		profile := stored.Profile
+		profile.UserAgent = nil
+		if spoof != nil && *spoof != "" {
+			switch *spoof {
+			case "claude-code", "codex", "gemini":
+				value := *spoof
+				profile.UserAgent = &value
+			default:
+				return &ValidationError{Err: fmt.Errorf("invalid spoof %q, must be one of '', 'claude-code', 'codex', 'gemini'", *spoof)}
+			}
+		}
+		state.Profiles[name] = StoredProfile{Profile: profile, Revision: stored.Revision}
+		return nil
+	})
+}
+
 func (s *Service) Delete(ctx context.Context, cmd DeleteCommand) (Result, error) {
 	err := s.update(ctx, true, func(state *State) error {
 		profile, ok := state.Profiles[cmd.Name]
@@ -213,7 +369,8 @@ func (s *Service) update(ctx context.Context, backup bool, mutate func(*State) e
 		return &PersistenceError{Err: errors.New("provider store is unavailable")}
 	}
 	if err := s.store.Update(ctx, backup, mutate); err != nil {
-		if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrProfileExists) || errors.Is(err, ErrRevisionConflict) {
+		var validation *ValidationError
+		if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrProfileExists) || errors.Is(err, ErrRevisionConflict) || errors.Is(err, ErrUnknownChannel) || errors.As(err, &validation) {
 			return err
 		}
 		var persistence *PersistenceError

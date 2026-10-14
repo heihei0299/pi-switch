@@ -15,3 +15,15 @@ func (Validator) Validate(ctx context.Context, prof provider.Profile) error {
 	}
 	return profile.ValidateProfile(prof)
 }
+
+func (Validator) ValidateDuplicate(ctx context.Context, prof provider.Profile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if prof.API != "" {
+		if err := profile.ValidateResponsesMode(prof); err != nil {
+			return err
+		}
+	}
+	return profile.ValidateResolvedCapability(prof)
+}
