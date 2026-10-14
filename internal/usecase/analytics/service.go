@@ -549,9 +549,7 @@ func (s Service) ConversationRequestsContext(ctx context.Context, id string, pag
 	if limit <= 0 {
 		limit = 50
 	}
-	start := page * limit
-	end := start + limit
-	matched := make([]ConversationRequestDTO, 0, limit)
+	matched := []ConversationRequestDTO{}
 	total := 0
 	err := s.forEachFact(ctx, nil, NewestFirst, func(fact RequestFact) error {
 		if err := ctx.Err(); err != nil {
@@ -560,7 +558,7 @@ func (s Service) ConversationRequestsContext(ctx context.Context, id string, pag
 		if s.match(matcher, fact).ID != id {
 			return nil
 		}
-		if total >= start && total < end {
+		if total/limit == page {
 			matched = append(matched, detailRequestDTO(fact, id))
 		}
 		total++
@@ -767,16 +765,16 @@ func pageItems[T any](items []T, page, limit int) []T {
 	if limit <= 0 {
 		limit = 50
 	}
-	start := page * limit
-	if start > len(items) {
-		start = len(items)
-	}
-	end := start + limit
-	if end > len(items) {
-		end = len(items)
-	}
 	if items == nil {
 		return []T{}
+	}
+	if page > len(items)/limit {
+		return []T{}
+	}
+	start := page * limit
+	end := len(items)
+	if limit <= len(items)-start {
+		end = start + limit
 	}
 	return items[start:end]
 }

@@ -71,6 +71,32 @@ func TestRepositoryPageFactsIsNewestFirstAndStableByID(t *testing.T) {
 	}
 }
 
+func TestRepositoryPageFactsExtremeValues(t *testing.T) {
+	db := openRepositoryDB(t)
+	insertRepositoryFact(t, db, "2026-09-10T12:00:00Z", "only", 1, 1)
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct {
+		name        string
+		page, limit int
+		wantRows    int
+	}{
+		{name: "page beyond total", page: 1, limit: 50, wantRows: 0},
+		{name: "maximum page", page: maxInt, limit: 1, wantRows: 0},
+		{name: "maximum limit", page: 0, limit: maxInt, wantRows: 1},
+		{name: "maximum page and limit", page: maxInt, limit: maxInt, wantRows: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := New(db).PageFacts(context.Background(), nil, tc.page, tc.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != tc.wantRows {
+				t.Fatalf("rows=%d, want %d", len(got), tc.wantRows)
+			}
+		})
+	}
+}
+
 func TestRepositoryWindowQueryUsesTimestampIndex(t *testing.T) {
 	db := openRepositoryDB(t)
 	query := "SELECT " + requestFactsColumns + " FROM requests WHERE " + timestampEpochMillisSQL + " >= ? AND " + timestampEpochMillisSQL + " < ? ORDER BY id DESC"

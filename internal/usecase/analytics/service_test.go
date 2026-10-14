@@ -41,9 +41,7 @@ func (rows factMemory) PageFacts(ctx context.Context, window *Window, page, limi
 		limit = 50
 	}
 	selected := rows.selected(window, NewestFirst)
-	start := min(page*limit, len(selected))
-	end := min(start+limit, len(selected))
-	return selected[start:end], nil
+	return pageItems(selected, page, limit), nil
 }
 
 func (rows factMemory) selected(window *Window, order Order) []RequestFact {
@@ -192,6 +190,112 @@ func TestStatsServicePaginationIsDeterministic(t *testing.T) {
 	if *first.RecentRequests[0].TS != base.Add(time.Minute).Format(time.RFC3339) || *second.RecentRequests[0].TS != base.Add(2*time.Minute).Format(time.RFC3339) {
 		t.Fatalf("pages are not deterministic by request id: first=%s second=%s", *first.RecentRequests[0].TS, *second.RecentRequests[0].TS)
 	}
+}
+
+func TestPaginationExtremeValues(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	rows := factMemory{
+		{ID: 1, TS: ptr("2026-09-10T12:00:00Z"), Success: ptr(true), ConversationID: ptr("c")},
+		{ID: 2, TS: ptr("2026-09-10T12:01:00Z"), Success: ptr(true), ConversationID: ptr("c")},
+		{ID: 3, TS: ptr("2026-09-10T12:02:00Z"), Success: ptr(true), ConversationID: ptr("c")},
+	}
+	service := NewService(rows, conversation.SourceProxy, nil)
+
+	t.Run("stats normal page and ordering", func(t *testing.T) {
+		got, err := service.Stats(nil, 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.TotalRequests != 3 || len(got.RecentRequests) != 3 {
+			t.Fatalf("total=%d rows=%d", got.TotalRequests, len(got.RecentRequests))
+		}
+		for i, want := range []string{"2026-09-10T12:02:00Z", "2026-09-10T12:01:00Z", "2026-09-10T12:00:00Z"} {
+			if got.RecentRequests[i].TS == nil || *got.RecentRequests[i].TS != want {
+				t.Fatalf("row %d = %+v, want ts %s", i, got.RecentRequests[i], want)
+			}
+		}
+	})
+
+	for _, tc := range []struct {
+		name        string
+		page, limit int
+		wantRows    int
+	}{
+		{name: "page beyond result total", page: 1, limit: 50, wantRows: 0},
+		{name: "maximum page", page: maxInt, limit: 50, wantRows: 0},
+		{name: "maximum limit", page: 0, limit: maxInt, wantRows: 3},
+		{name: "maximum page and limit", page: maxInt, limit: maxInt, wantRows: 0},
+		{name: "negative page", page: -1, limit: 50, wantRows: 3},
+		{name: "zero limit defaults", page: 0, limit: 0, wantRows: 3},
+		{name: "negative limit defaults", page: 0, limit: -1, wantRows: 3},
+	} {
+		t.Run("stats/"+tc.name, func(t *testing.T) {
+			got, err := service.Stats(nil, tc.page, tc.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.TotalRequests != 3 || len(got.RecentRequests) != tc.wantRows {
+				t.Fatalf("total=%d rows=%d, want total=3 rows=%d", got.TotalRequests, len(got.RecentRequests), tc.wantRows)
+			}
+		})
+	}
+
+	t.Run("nil and empty data", func(t *testing.T) {
+		empty := NewService(factMemory(nil), conversation.SourceProxy, nil)
+		got, err := empty.Stats(nil, maxInt, maxInt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.TotalRequests != 0 || len(got.RecentRequests) != 0 {
+			t.Fatalf("stats=%+v", got)
+		}
+		conversations, total, err := empty.Conversations(nil, maxInt, maxInt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 0 || len(conversations) != 0 {
+			t.Fatalf("conversations total=%d rows=%d", total, len(conversations))
+		}
+		requests, total, err := empty.ConversationRequests("c", maxInt, maxInt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 0 || len(requests) != 0 {
+			t.Fatalf("requests total=%d rows=%d", total, len(requests))
+		}
+	})
+
+	t.Run("conversations and conversation requests", func(t *testing.T) {
+		conversations, total, err := service.Conversations(nil, 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(conversations) != 1 || conversations[0].ConversationID != "c" {
+			t.Fatalf("conversations total=%d rows=%+v", total, conversations)
+		}
+		conversations, total, err = service.Conversations(nil, maxInt, maxInt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(conversations) != 0 {
+			t.Fatalf("extreme conversations total=%d rows=%+v", total, conversations)
+		}
+
+		requests, total, err := service.ConversationRequests("c", 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 3 || len(requests) != 3 || requests[0].TS == nil || *requests[0].TS != "2026-09-10T12:02:00Z" {
+			t.Fatalf("requests total=%d rows=%+v", total, requests)
+		}
+		requests, total, err = service.ConversationRequests("c", maxInt, maxInt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 3 || len(requests) != 0 {
+			t.Fatalf("extreme requests total=%d rows=%+v", total, requests)
+		}
+	})
 }
 
 func TestSummaryAggregatesSuccessfulRequests(t *testing.T) {

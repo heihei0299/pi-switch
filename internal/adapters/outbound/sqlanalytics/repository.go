@@ -75,6 +75,9 @@ func (r Repository) PageFacts(ctx context.Context, window *analytics.Window, pag
 		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
 		args = append(args, window.From, window.To)
 	}
+	if page > int(^uint(0)>>1)/limit {
+		return []analytics.RequestFact{}, nil
+	}
 	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, page*limit)
 	rows, err := r.DB.QueryContext(ctx, query, args...)
@@ -82,7 +85,7 @@ func (r Repository) PageFacts(ctx context.Context, window *analytics.Window, pag
 		return nil, err
 	}
 	defer rows.Close()
-	facts := make([]analytics.RequestFact, 0, limit)
+	facts := []analytics.RequestFact{}
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
