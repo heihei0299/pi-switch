@@ -45,6 +45,11 @@ func (s *Store) Read(ctx context.Context) (map[string]interface{}, error) {
 	return readCurrent(s.path)
 }
 
+func (s *Store) Exists(context.Context) bool {
+	_, err := os.Stat(s.path)
+	return err == nil
+}
+
 func readCurrent(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

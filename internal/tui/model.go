@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
 
@@ -75,9 +76,9 @@ func (m Model) Init() tea.Cmd { return nil }
 
 func (m *Model) refreshGateway() {
 	// Config-derived model count for the status line. It is not the publishable
-	// preview payload (that is gateway.BuildEnrichedGeneratedPlan, used by publish
+	// preview payload (that is the enriched usecase plan, used by publish
 	// below): enrichment only fills model metadata, so it cannot change this count.
-	preview := gateway.BuildGeneratedPlan(m.cfg, nil).Proposed
+	preview := domaingateway.BuildGeneratedPlan(m.cfg, nil).Proposed
 	total := 0
 	if provs, ok := preview["providers"].(map[string]interface{}); ok {
 		for _, pv := range provs {
@@ -158,14 +159,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = 2
 			return m, nil
 		case "g":
-			current, err := gateway.ReadCurrent()
+			service := bootstrap.NewGatewayService()
+			current, err := service.ReadCurrent(context.Background())
 			if err != nil {
 				m.statusMsg = "gateway publish failed: " + err.Error()
 				return m, nil
 			}
 			// Same enriched generated flow as Native Desktop and CLI.
-			plan, _ := gateway.BuildEnrichedGeneratedPlan(m.cfg, current)
-			if err := gateway.PublishPlan(plan); err != nil {
+			plan, _, err := service.BuildGeneratedPlan(context.Background(), m.cfg, current)
+			if err != nil {
+				m.statusMsg = "gateway publish failed: " + err.Error()
+				return m, nil
+			}
+			if err := service.Publish(context.Background(), plan); err != nil {
 				m.statusMsg = "gateway publish failed: " + err.Error()
 			} else {
 				m.statusMsg = "gateway published"

@@ -5,12 +5,13 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
 func Run() error {
 	cfgPath := config.ResolvePath()
-	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := bootstrap.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}

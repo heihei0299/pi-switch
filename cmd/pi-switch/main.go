@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
@@ -465,7 +465,7 @@ func handleProvider(args []string) int {
 		return 0
 	}
 	cfgPath := config.ResolvePath()
-	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := bootstrap.LoadConfig(cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
@@ -845,7 +845,7 @@ func handleDoctor() int {
 
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("config: %s (not created yet)\n", cfgPath)
-	} else if cfg, source, err := config.LoadConfigAtPath(cfgPath); err != nil {
+	} else if cfg, source, err := bootstrap.LoadConfig(cfgPath); err != nil {
 		// Strict reading: a corrupt or unreadable config is a real problem, not a
 		// default config that happens to look healthy.
 		fmt.Printf("config: %s unreadable: %v\n", cfgPath, err)
@@ -928,21 +928,26 @@ func handleGatewayCLI(args []string) {
 		os.Exit(0)
 	}
 	cfgPath := config.ResolvePath()
-	cfg, _, err := config.LoadConfigAtPath(cfgPath)
+	cfg, _, err := bootstrap.LoadConfig(cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+	service := bootstrap.NewGatewayService()
 	switch args[0] {
 	case "publish", "apply":
-		current, err := gateway.ReadCurrent()
+		current, err := service.ReadCurrent(context.Background())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
 		// Same enriched generated flow as Native Desktop preview/publish.
-		plan, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
-		if err := gateway.PublishPlan(plan); err != nil {
+		plan, _, err := service.BuildGeneratedPlan(context.Background(), cfg, current)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
+			os.Exit(1)
+		}
+		if err := service.Publish(context.Background(), plan); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -957,13 +962,17 @@ func handleGatewayCLI(args []string) {
 	case "status":
 		fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
 	case "preview":
-		current, err := gateway.ReadCurrent()
+		current, err := service.ReadCurrent(context.Background())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
 			os.Exit(1)
 		}
 		// Same generated flow as publish, so the preview shows what publish writes.
-		plan, _ := gateway.BuildEnrichedGeneratedPlan(cfg, current)
+		plan, _, err := service.BuildGeneratedPlan(context.Background(), cfg, current)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
+			os.Exit(1)
+		}
 		b, _ := json.MarshalIndent(plan.Proposed, "", "  ")
 		fmt.Println(string(b))
 	default:
@@ -988,7 +997,7 @@ func handleConfigCLI(args []string) int {
 			fmt.Fprintf(os.Stderr, "config invalid: %s does not exist\n", cfgPath)
 			return 1
 		}
-		cfg, _, err := config.LoadConfigAtPath(cfgPath)
+		cfg, _, err := bootstrap.LoadConfig(cfgPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "config invalid: %v\n", err)
 			return 1

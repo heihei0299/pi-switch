@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/egoist/mygo"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 func main() {
@@ -71,8 +71,8 @@ func prepareDesktopShell(args []string) (*desktopShell, error) {
 	shell.complexPreview = newNativeComplexPreview()
 	complex := shell.complexPreview
 	gatewayState := &complex.nativeGatewayState
-	gatewayState.refreshGateway = func(selections []gateway.GatewaySelection) { gatewayState.refresh(shell, selections) }
-	gatewayState.publishGateway = func(selections []gateway.GatewaySelection) { gatewayState.publishSelection(shell, selections) }
+	gatewayState.refreshGateway = func(selections []domaingateway.GatewaySelection) { gatewayState.refresh(shell, selections) }
+	gatewayState.publishGateway = func(selections []domaingateway.GatewaySelection) { gatewayState.publishSelection(shell, selections) }
 	complex.nativeJSONState.publishGatewayDraft = func(raw string) { gatewayState.publishDraft(shell, &complex.nativeJSONState, raw) }
 	complex.nativePackagesState.runPackageTask = func(task func() (string, error)) { complex.nativePackagesState.runTask(shell, task) }
 	complex.nativeStatsState.refreshStats = func(requestPage, conversationPage int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) {

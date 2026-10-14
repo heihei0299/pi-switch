@@ -13,6 +13,7 @@ import (
 
 type Store interface {
 	Read(context.Context) (map[string]interface{}, error)
+	Exists(context.Context) bool
 	Publish(context.Context, domaingateway.CanonicalGatewayPlan) error
 }
 
@@ -43,6 +44,10 @@ func (s *Service) ReadCurrent(ctx context.Context) (map[string]interface{}, erro
 		return nil, errors.New("gateway store is unavailable")
 	}
 	return s.store.Read(ctx)
+}
+
+func (s *Service) CurrentExists(ctx context.Context) bool {
+	return s.store != nil && s.store.Exists(ctx)
 }
 
 func (s *Service) BuildGeneratedPlan(ctx context.Context, cfg domainconfig.PiSwitchConfig, current map[string]interface{}) (domaingateway.CanonicalGatewayPlan, EnrichSummary, error) {

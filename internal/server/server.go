@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/domain/conversation"
 	"github.com/heihei0299/pi-switch/internal/scan"
@@ -37,7 +38,7 @@ func configPath() string {
 // loadConfig is the server's single config read path. It returns the error
 // instead of a fallback so no handler continues with a silently empty config.
 func loadConfig() (config.PiSwitchConfig, error) {
-	cfg, _, err := config.LoadConfigAtPath(configPath())
+	cfg, _, err := bootstrap.LoadConfig(configPath())
 	return cfg, err
 }
 

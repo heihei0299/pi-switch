@@ -14,10 +14,12 @@ import (
 
 type fakeStore struct {
 	current   map[string]interface{}
+	exists    bool
 	published []domaingateway.CanonicalGatewayPlan
 }
 
 func (s *fakeStore) Read(context.Context) (map[string]interface{}, error) { return s.current, nil }
+func (s *fakeStore) Exists(context.Context) bool                          { return s.exists }
 func (s *fakeStore) Publish(_ context.Context, plan domaingateway.CanonicalGatewayPlan) error {
 	s.published = append(s.published, plan)
 	return nil
@@ -27,6 +29,15 @@ type fakeCatalog struct{ snapshot domaincatalog.Snapshot }
 
 func (c fakeCatalog) Snapshot(context.Context) (domaincatalog.Snapshot, bool, string, error) {
 	return c.snapshot, false, "", nil
+}
+
+func TestCurrentExistsUsesStoreAndHandlesUnavailableStore(t *testing.T) {
+	if gatewayusecase.New(nil, nil).CurrentExists(context.Background()) {
+		t.Fatal("unavailable store reported models.json as existing")
+	}
+	if !gatewayusecase.New(&fakeStore{exists: true}, nil).CurrentExists(context.Background()) {
+		t.Fatal("existing models.json was not reported")
+	}
 }
 
 func TestPublishNoOpDoesNotCallStore(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +9,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 type nativeJSONState struct {
@@ -28,31 +29,32 @@ type nativeJSONState struct {
 }
 
 func loadNativeGatewayDraft() (string, error) {
-	cfg, _, err := config.LoadConfigAtPath(config.ResolvePath())
+	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.MarshalIndent(application.BuildProposedGatewayEntry(cfg), "", "  ")
+	encoded, err := json.MarshalIndent(domaingateway.BuildProposedGatewayEntry(cfg), "", "  ")
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
 }
-func nativeGatewayDraftPlan(raw string) (gateway.CanonicalGatewayPlan, error) {
+func nativeGatewayDraftPlan(raw string) (domaingateway.CanonicalGatewayPlan, error) {
 	var draft map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &draft); err != nil {
-		return gateway.CanonicalGatewayPlan{}, err
+		return domaingateway.CanonicalGatewayPlan{}, err
 	}
-	cfg, _, err := config.LoadConfigAtPath(config.ResolvePath())
+	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
 	if err != nil {
-		return gateway.CanonicalGatewayPlan{}, err
+		return domaingateway.CanonicalGatewayPlan{}, err
 	}
-	current, err := application.ReadCurrentGateway()
+	service := bootstrap.NewGatewayService()
+	current, err := service.ReadCurrent(context.Background())
 	if err != nil {
-		return gateway.CanonicalGatewayPlan{}, err
+		return domaingateway.CanonicalGatewayPlan{}, err
 	}
-	plan, _ := application.BuildDraftGatewayPlan(cfg, current, draft)
-	return plan, nil
+	plan, _, err := service.BuildDraftPlan(context.Background(), cfg, current, draft)
+	return plan, err
 }
 func nativeJSONSyntaxErrorOffset(raw string) (int, bool) {
 	var value interface{}
@@ -117,7 +119,7 @@ func publishNativeGatewayDraft(raw string) (nativeGatewayPreview, error) {
 	if plan.PendingCount == 0 {
 		return nativeGatewayPreview{}, fmt.Errorf("gateway draft has no changes to publish")
 	}
-	if err := application.PublishGatewayPlan(plan); err != nil {
+	if err := bootstrap.NewGatewayService().Publish(context.Background(), plan); err != nil {
 		return nativeGatewayPreview{}, err
 	}
 	return loadNativeGatewayPreview()
@@ -193,7 +195,7 @@ func (a *nativeJSONState) editor(c *ui.Context, gatewayState *nativeGatewayState
 		a.jsonPublishConfirm = true
 	}
 	if ui.AlertDialog(c, &a.jsonPublishConfirm, "Publish Gateway draft?",
-		fmt.Sprintf("Write this Gateway draft to %s? Third-party providers are preserved.", gateway.ModelsPath()),
+		fmt.Sprintf("Write this Gateway draft to %s? Third-party providers are preserved.", bootstrap.GatewayModelsPath()),
 		"Cancel", "Publish") == 1 && a.publishGatewayDraft != nil {
 		gatewayState.gatewayPublishMessage = ""
 		a.publishGatewayDraft(a.jsonDraft)

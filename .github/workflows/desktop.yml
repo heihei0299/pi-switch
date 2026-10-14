@@ -44,7 +44,7 @@ jobs:
           go run -mod=readonly github.com/egoist/mygo/cmd/mygo vet .
 
       - name: Test shared daemon service
-        run: go test ./internal/daemon
+        run: go test ./internal/adapters/outbound/daemon
 
       - name: Scan tracked source for secrets
         run: bash scripts/check-secrets.sh

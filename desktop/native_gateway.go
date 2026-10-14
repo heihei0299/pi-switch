@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 type nativeGatewayPreview struct {
@@ -26,7 +27,7 @@ type nativeGatewayPreview struct {
 type nativeGatewayCandidate struct {
 	key       string
 	label     string
-	selection gateway.GatewaySelection
+	selection domaingateway.GatewaySelection
 	status    string
 	selected  bool
 }
@@ -38,8 +39,8 @@ type nativeGatewayState struct {
 	gatewayError             string
 	gatewayList              ui.ListState
 	gatewaySelectionExplicit bool
-	refreshGateway           func([]gateway.GatewaySelection)
-	publishGateway           func([]gateway.GatewaySelection)
+	refreshGateway           func([]domaingateway.GatewaySelection)
+	publishGateway           func([]domaingateway.GatewaySelection)
 	gatewayPublishConfirm    bool
 	gatewayPublishing        bool
 	gatewayPublishMessage    string
@@ -48,25 +49,26 @@ type nativeGatewayState struct {
 func loadNativeGatewayPreview() (nativeGatewayPreview, error) {
 	return loadNativeGatewayPreviewForSelection(nil)
 }
-func loadNativeGatewayPreviewForSelection(selections []gateway.GatewaySelection) (nativeGatewayPreview, error) {
+func loadNativeGatewayPreviewForSelection(selections []domaingateway.GatewaySelection) (nativeGatewayPreview, error) {
 	preview, _, err := loadNativeGatewaySelectionPlan(selections)
 	return preview, err
 }
-func loadNativeGatewaySelectionPlan(selections []gateway.GatewaySelection) (nativeGatewayPreview, gateway.CanonicalGatewayPlan, error) {
-	cfg, _, err := config.LoadConfigAtPath(config.ResolvePath())
+func loadNativeGatewaySelectionPlan(selections []domaingateway.GatewaySelection) (nativeGatewayPreview, domaingateway.CanonicalGatewayPlan, error) {
+	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
 	if err != nil {
-		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
+		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
 	}
-	current, err := application.ReadCurrentGateway()
+	service := bootstrap.NewGatewayService()
+	current, err := service.ReadCurrent(context.Background())
 	if err != nil {
-		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
+		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
 	}
-	selectedPlan, err := application.BuildSelectedGatewayPlan(cfg, current, selections)
+	selectedPlan, _, err := service.BuildSelectedPlan(context.Background(), cfg, current, selections)
 	if err != nil {
-		return nativeGatewayPreview{}, gateway.CanonicalGatewayPlan{}, err
+		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
 	}
 	selected := selectedPlan.Selected
-	selectedSet := make(map[gateway.GatewaySelection]bool, len(selected))
+	selectedSet := make(map[domaingateway.GatewaySelection]bool, len(selected))
 	for _, selection := range selected {
 		selectedSet[selection] = true
 	}
@@ -85,7 +87,7 @@ func loadNativeGatewaySelectionPlan(selections []gateway.GatewaySelection) (nati
 	}
 	for _, group := range generated.Groups {
 		for _, model := range group.Models {
-			selection := gateway.GatewaySelection{Supplier: group.Supplier, Channel: group.Channel, Model: model.ID}
+			selection := domaingateway.GatewaySelection{Supplier: group.Supplier, Channel: group.Channel, Model: model.ID}
 			preview.candidates = append(preview.candidates, nativeGatewayCandidate{
 				key:       group.Supplier + "\x00" + group.Channel + "\x00" + model.ID,
 				label:     fmt.Sprintf("%s / %s / %s · %s", group.Supplier, group.Channel, model.ID, model.Status),
@@ -97,7 +99,7 @@ func loadNativeGatewaySelectionPlan(selections []gateway.GatewaySelection) (nati
 	}
 	return preview, plan, nil
 }
-func publishNativeGatewaySelection(selections []gateway.GatewaySelection) (nativeGatewayPreview, error) {
+func publishNativeGatewaySelection(selections []domaingateway.GatewaySelection) (nativeGatewayPreview, error) {
 	_, plan, err := loadNativeGatewaySelectionPlan(selections)
 	if err != nil {
 		return nativeGatewayPreview{}, err
@@ -108,7 +110,7 @@ func publishNativeGatewaySelection(selections []gateway.GatewaySelection) (nativ
 	if plan.PendingCount == 0 {
 		return nativeGatewayPreview{}, fmt.Errorf("gateway has no changes to publish")
 	}
-	if err := application.PublishGatewayPlan(plan); err != nil {
+	if err := bootstrap.NewGatewayService().Publish(context.Background(), plan); err != nil {
 		return nativeGatewayPreview{}, err
 	}
 	return loadNativeGatewayPreviewForSelection(selections)
@@ -175,17 +177,17 @@ func (a *nativeGatewayState) gatewayDiff(c *ui.Context) {
 		a.gatewayPublishConfirm = true
 	}
 	if ui.AlertDialog(c, &a.gatewayPublishConfirm, "Publish Gateway changes?",
-		fmt.Sprintf("Write %d selected model(s) to %s? Third-party providers are preserved.", a.gateway.selectedCount, gateway.ModelsPath()),
+		fmt.Sprintf("Write %d selected model(s) to %s? Third-party providers are preserved.", a.gateway.selectedCount, bootstrap.GatewayModelsPath()),
 		"Cancel", "Publish") == 1 && a.publishGateway != nil {
 		a.gatewayPublishMessage = ""
 		a.publishGateway(nativeGatewaySelections(a))
 	}
 }
-func nativeGatewaySelections(preview *nativeGatewayState) []gateway.GatewaySelection {
+func nativeGatewaySelections(preview *nativeGatewayState) []domaingateway.GatewaySelection {
 	if !preview.gatewaySelectionExplicit {
 		return nil
 	}
-	selected := make([]gateway.GatewaySelection, 0, preview.gateway.selectedCount)
+	selected := make([]domaingateway.GatewaySelection, 0, preview.gateway.selectedCount)
 	for _, candidate := range preview.gateway.candidates {
 		if candidate.selected {
 			selected = append(selected, candidate.selection)
@@ -200,7 +202,7 @@ func joinNativeNames(names []string) string {
 	return fmt.Sprint(names)
 }
 
-func (p *nativeGatewayState) refresh(shell *desktopShell, selections []gateway.GatewaySelection) {
+func (p *nativeGatewayState) refresh(shell *desktopShell, selections []domaingateway.GatewaySelection) {
 	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
 		return
 	}
@@ -237,7 +239,7 @@ func (p *nativeGatewayState) refresh(shell *desktopShell, selections []gateway.G
 	}()
 }
 
-func (p *nativeGatewayState) publishSelection(shell *desktopShell, selections []gateway.GatewaySelection) {
+func (p *nativeGatewayState) publishSelection(shell *desktopShell, selections []domaingateway.GatewaySelection) {
 	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
 		return
 	}

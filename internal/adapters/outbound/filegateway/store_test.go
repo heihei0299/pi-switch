@@ -110,3 +110,17 @@ func TestPublishCancelsWhileWaitingForLockWithoutTouchingModels(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExistsTracksModelsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	store := New(path)
+	if store.Exists(context.Background()) {
+		t.Fatal("missing models.json reported as existing")
+	}
+	if err := os.WriteFile(path, []byte(`{"providers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Exists(context.Background()) {
+		t.Fatal("existing models.json reported as missing")
+	}
+}

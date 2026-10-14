@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
@@ -64,7 +65,7 @@ func executablePath(path string) (string, error) {
 }
 
 func desktopProxyAddress() (string, uint16, error) {
-	cfg, _, err := config.LoadConfigAtPath(config.ResolvePath())
+	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
 	if err != nil {
 		return "", 0, err
 	}
