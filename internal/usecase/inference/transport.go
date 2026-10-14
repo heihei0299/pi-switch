@@ -40,9 +40,10 @@ type OutboundRequest interface {
 	Do(context.Context) (OutboundResponse, error)
 }
 
-type StreamWriter interface {
-	SetHeader(string, string)
-	WriteHeader(int)
+type StreamSink interface {
 	Write([]byte) (int, error)
 	Flush()
 }
+
+// StreamResponseStarter applies transport metadata before the first SSE byte.
+type StreamResponseStarter func(status int, headers Header)

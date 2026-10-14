@@ -1,12 +1,11 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
@@ -44,35 +43,34 @@ func (b *relayTestBody) Read(p []byte) (int, error) {
 
 func (b *relayTestBody) Close() error { b.closed = true; return nil }
 
-type relayTestRecorder struct {
-	*httptest.ResponseRecorder
-	flushes int
+type relayTestSink struct {
+	bytes.Buffer
+	flushes  int
+	writes   int
+	writeErr error
 }
 
-func newRelayTestRecorder() *relayTestRecorder {
-	return &relayTestRecorder{ResponseRecorder: httptest.NewRecorder()}
+func newRelayTestSink() *relayTestSink { return &relayTestSink{} }
+
+func (w *relayTestSink) Flush() { w.flushes++ }
+
+func (w *relayTestSink) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writeErr != nil {
+		return 0, w.writeErr
+	}
+	return w.Buffer.Write(p)
 }
 
-func (w *relayTestRecorder) SetHeader(key, value string) { w.ResponseRecorder.Header().Set(key, value) }
-
-func (w *relayTestRecorder) Flush() {
-	w.flushes++
-	w.ResponseRecorder.Flush()
-}
-
-func TestRelayStreamPassThroughPreservesBytesHeadersAndUsage(t *testing.T) {
+func TestRelayStreamPassThroughPreservesBytesAndUsage(t *testing.T) {
 	chunks := [][]byte{
 		[]byte("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"cached_tokens\":0}}\n\n"),
 		[]byte("data: [DONE]\n\n"),
 	}
 	body := &relayTestBody{chunks: chunks}
-	writer := newRelayTestRecorder()
+	writer := newRelayTestSink()
 	input := StreamInput{
-		UpstreamStatus: http.StatusOK,
-		UpstreamHeaders: Header{
-			"Content-Length": {"99"},
-			"X-Upstream":     {"kept"},
-		},
+		UpstreamStatus: 200,
 		Body:           body,
 		UpstreamFormat: protocol.FormatOpenAIChat,
 		ModelEntry: &provider.ModelEntry{Cost: &provider.ModelCost{
@@ -81,17 +79,14 @@ func TestRelayStreamPassThroughPreservesBytesHeadersAndUsage(t *testing.T) {
 	}
 
 	facts := RelayStream(context.Background(), input, writer)
-	if !facts.Success || facts.Status != http.StatusOK {
+	if !facts.Success || facts.Status != 200 {
 		t.Fatalf("stream facts = %+v, want success/200", facts)
 	}
-	if got, want := writer.Body.String(), string(chunks[0])+string(chunks[1]); got != want {
+	if got, want := writer.String(), string(chunks[0])+string(chunks[1]); got != want {
 		t.Fatalf("relayed bytes = %q, want %q", got, want)
 	}
-	if writer.Code != http.StatusOK || writer.Header().Get("X-Upstream") != "kept" || writer.Header().Get("Content-Length") != "" {
-		t.Fatalf("status/headers = %d/%v", writer.Code, writer.Header())
-	}
-	if writer.Header().Get("Content-Type") != "text/event-stream" || writer.Header().Get("Cache-Control") != "no-cache" || writer.flushes != 2 {
-		t.Fatalf("stream headers/flush count = %v/%d", writer.Header(), writer.flushes)
+	if writer.flushes != 2 {
+		t.Fatalf("flush count = %d", writer.flushes)
 	}
 	if facts.Usage == nil || facts.Usage.PromptTokens != 10 || facts.Usage.CompletionTokens != 5 || !facts.Usage.CachedTokensKnown {
 		t.Fatalf("stream usage = %+v", facts.Usage)
@@ -101,18 +96,6 @@ func TestRelayStreamPassThroughPreservesBytesHeadersAndUsage(t *testing.T) {
 	}
 	if !body.closed {
 		t.Fatal("upstream body was not closed")
-	}
-}
-
-func TestRelayStreamWritesTheUpstreamStatus(t *testing.T) {
-	writer := newRelayTestRecorder()
-	RelayStream(context.Background(), StreamInput{
-		UpstreamStatus: http.StatusPartialContent,
-		Body:           &relayTestBody{chunks: [][]byte{[]byte("data: [DONE]\n\n")}},
-		UpstreamFormat: protocol.FormatOpenAIChat,
-	}, writer)
-	if writer.Code != http.StatusPartialContent {
-		t.Fatalf("status = %d, want 206", writer.Code)
 	}
 }
 
@@ -130,9 +113,9 @@ func TestRelayStreamConversionRequiresSuccessfulTerminalEvent(t *testing.T) {
 		{"read error", "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n", io.ErrUnexpectedEOF, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			writer := newRelayTestRecorder()
+			writer := newRelayTestSink()
 			facts := RelayStream(context.Background(), StreamInput{
-				UpstreamStatus:   http.StatusOK,
+				UpstreamStatus:   200,
 				Body:             &relayTestBody{chunks: [][]byte{[]byte(tc.payload)}, err: tc.readErr},
 				UpstreamFormat:   protocol.FormatOpenAIResponses,
 				DownstreamFormat: protocol.FormatOpenAIChat,
@@ -141,10 +124,10 @@ func TestRelayStreamConversionRequiresSuccessfulTerminalEvent(t *testing.T) {
 			if facts.Success != tc.success {
 				t.Fatalf("success = %t, facts=%+v", facts.Success, facts)
 			}
-			if got := strings.Contains(writer.Body.String(), "data: [DONE]"); got != tc.done {
-				t.Fatalf("DONE presence = %t, body=%s", got, writer.Body.String())
+			if got := strings.Contains(writer.String(), "data: [DONE]"); got != tc.done {
+				t.Fatalf("DONE presence = %t, body=%s", got, writer.String())
 			}
-			if tc.success && facts.Status != http.StatusOK || !tc.success && facts.Status != http.StatusBadGateway {
+			if tc.success && facts.Status != 200 || !tc.success && facts.Status != 502 {
 				t.Fatalf("logged status = %d, success=%t", facts.Status, facts.Success)
 			}
 		})
@@ -153,11 +136,11 @@ func TestRelayStreamConversionRequiresSuccessfulTerminalEvent(t *testing.T) {
 
 func TestRelayStreamDoesNotFabricateUnknownUsage(t *testing.T) {
 	facts := RelayStream(context.Background(), StreamInput{
-		UpstreamStatus: http.StatusOK,
+		UpstreamStatus: 200,
 		Body:           &relayTestBody{chunks: [][]byte{[]byte("data: [DONE]\n\n")}},
 		UpstreamFormat: protocol.FormatOpenAIChat,
 		ModelEntry:     &provider.ModelEntry{Cost: &provider.ModelCost{Input: 1, Output: 1, CacheRead: 1}},
-	}, newRelayTestRecorder())
+	}, newRelayTestSink())
 	if !facts.Success || facts.Usage != nil || facts.Cost != nil {
 		t.Fatalf("unknown usage facts = %+v, want success with unknown usage/cost", facts)
 	}
@@ -174,14 +157,14 @@ func TestRelayStreamPassThroughFailsOnReadErrorOrFailureEvent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			facts := RelayStream(context.Background(), StreamInput{
-				UpstreamStatus: http.StatusOK,
+				UpstreamStatus: 200,
 				Body: &relayTestBody{
 					chunks: [][]byte{[]byte(tc.payload)},
 					err:    tc.readErr,
 				},
 				UpstreamFormat: tc.format,
-			}, newRelayTestRecorder())
-			if facts.Success || facts.Status != http.StatusBadGateway {
+			}, newRelayTestSink())
+			if facts.Success || facts.Status != 502 {
 				t.Fatalf("facts = %+v, want failed/502", facts)
 			}
 		})
@@ -191,30 +174,22 @@ func TestRelayStreamPassThroughFailsOnReadErrorOrFailureEvent(t *testing.T) {
 func TestRelayStreamCancellationStopsBeforeTerminalWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	body := &relayTestBody{chunks: [][]byte{[]byte("data: [DONE]\n\n")}, err: context.Canceled, cancel: cancel}
-	writer := newRelayTestRecorder()
+	writer := newRelayTestSink()
 	facts := RelayStream(ctx, StreamInput{
-		UpstreamStatus: http.StatusOK,
+		UpstreamStatus: 200,
 		Body:           body,
 		UpstreamFormat: protocol.FormatOpenAIChat,
 	}, writer)
-	if facts.Success || facts.Status != 499 || writer.Body.Len() != 0 || !body.closed {
-		t.Fatalf("canceled stream facts=%+v body=%q closed=%t", facts, writer.Body.String(), body.closed)
+	if facts.Success || facts.Status != 499 || writer.Len() != 0 || !body.closed {
+		t.Fatalf("canceled stream facts=%+v body=%q closed=%t", facts, writer.String(), body.closed)
 	}
 }
 
 type relayFailingWriter struct {
-	header http.Header
 	writes int
 }
 
-func (w *relayFailingWriter) SetHeader(key, value string) {
-	if w.header == nil {
-		w.header = make(http.Header)
-	}
-	w.header.Set(key, value)
-}
-func (*relayFailingWriter) WriteHeader(int) {}
-func (*relayFailingWriter) Flush()          {}
+func (*relayFailingWriter) Flush() {}
 func (w *relayFailingWriter) Write([]byte) (int, error) {
 	w.writes++
 	return 0, errors.New("client connection closed")
@@ -224,7 +199,7 @@ func TestRelayStreamDownstreamWriteFailureClosesUpstream(t *testing.T) {
 	body := &relayTestBody{chunks: [][]byte{[]byte("data: [DONE]\n\n"), []byte("data: later\n\n")}}
 	writer := &relayFailingWriter{}
 	facts := RelayStream(context.Background(), StreamInput{
-		UpstreamStatus: http.StatusOK,
+		UpstreamStatus: 200,
 		Body:           body,
 		UpstreamFormat: protocol.FormatOpenAIChat,
 	}, writer)
@@ -239,9 +214,7 @@ type relayDiscardWriter struct {
 	flushes int
 }
 
-func (*relayDiscardWriter) SetHeader(string, string) {}
-func (*relayDiscardWriter) WriteHeader(int)          {}
-func (w *relayDiscardWriter) Flush()                 { w.flushes++ }
+func (w *relayDiscardWriter) Flush() { w.flushes++ }
 func (w *relayDiscardWriter) Write(p []byte) (int, error) {
 	w.writes++
 	w.bytes += len(p)
@@ -308,9 +281,7 @@ type heapSamplingWriter struct {
 	sampled  int
 }
 
-func (w *heapSamplingWriter) SetHeader(string, string) {}
-func (*heapSamplingWriter) WriteHeader(int)            {}
-func (*heapSamplingWriter) Flush()                     {}
+func (*heapSamplingWriter) Flush() {}
 func (w *heapSamplingWriter) Write(p []byte) (int, error) {
 	w.bytes += len(p)
 	if w.bytes-w.sampled >= 1<<20 {
@@ -328,11 +299,11 @@ func (w *heapSamplingWriter) Write(p []byte) (int, error) {
 func TestRelayStreamRejectsOversizedSSEFrame(t *testing.T) {
 	body := &generatedBytesBody{remaining: maxSSEFrameBytes + 4096, value: 'x'}
 	facts := RelayStream(context.Background(), StreamInput{
-		UpstreamStatus: http.StatusOK,
+		UpstreamStatus: 200,
 		Body:           body,
 		UpstreamFormat: protocol.FormatOpenAIChat,
 	}, &relayDiscardWriter{})
-	if facts.Success || facts.Status != http.StatusBadGateway || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
+	if facts.Success || facts.Status != 502 || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
 		t.Fatalf("oversized stream facts=%+v closed=%t", facts, body.closed)
 	}
 }
@@ -340,13 +311,13 @@ func TestRelayStreamRejectsOversizedSSEFrame(t *testing.T) {
 func TestRelayStreamConversionRejectsOversizedSSEFrame(t *testing.T) {
 	body := &generatedBytesBody{remaining: maxSSEFrameBytes + 4096, value: 'x'}
 	facts := RelayStream(context.Background(), StreamInput{
-		UpstreamStatus:   http.StatusOK,
+		UpstreamStatus:   200,
 		Body:             body,
 		UpstreamFormat:   protocol.FormatOpenAIResponses,
 		DownstreamFormat: protocol.FormatOpenAIChat,
 		Converter:        protocol.NewResponsesSseToChat("model"),
 	}, &relayDiscardWriter{})
-	if facts.Success || facts.Status != http.StatusBadGateway || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
+	if facts.Success || facts.Status != 502 || facts.Error != errSSEFrameTooLarge.Error() || !body.closed {
 		t.Fatalf("oversized converted stream facts=%+v closed=%t", facts, body.closed)
 	}
 }
@@ -358,7 +329,7 @@ func TestRelayStreamLongPassThroughDoesNotRetainWholeResponse(t *testing.T) {
 	runtime.ReadMemStats(&before)
 	writer := &heapSamplingWriter{}
 	facts := RelayStream(context.Background(), StreamInput{
-		UpstreamStatus: http.StatusOK,
+		UpstreamStatus: 200,
 		Body:           &generatedSSEBody{remaining: streamBytes},
 		UpstreamFormat: protocol.FormatOpenAIChat,
 	}, writer)
@@ -385,7 +356,7 @@ func BenchmarkRelayStreamLongPassThrough(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				facts := RelayStream(context.Background(), StreamInput{
-					UpstreamStatus: http.StatusOK,
+					UpstreamStatus: 200,
 					Body:           &generatedSSEBody{remaining: streamBytes},
 					UpstreamFormat: protocol.FormatOpenAIChat,
 				}, &relayDiscardWriter{})

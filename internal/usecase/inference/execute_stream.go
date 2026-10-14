@@ -27,7 +27,7 @@ type StreamOutcome struct {
 	Facts     StreamFacts
 }
 
-func ExecuteStream(ctx context.Context, prepared PreparedRequest, build OutboundRequestBuilder, sink StreamWriter) StreamOutcome {
+func ExecuteStream(ctx context.Context, prepared PreparedRequest, build OutboundRequestBuilder, start StreamResponseStarter, sink StreamSink) StreamOutcome {
 	body, _ := json.Marshal(prepared.Body)
 	outbound, err := build(body)
 	if err != nil {
@@ -54,9 +54,11 @@ func ExecuteStream(ctx context.Context, prepared PreparedRequest, build Outbound
 			Facts: StreamFacts{Status: response.Status, Error: string(body)},
 		}
 	}
+	if start != nil {
+		start(response.Status, response.Headers)
+	}
 	facts := RelayStream(ctx, StreamInput{
 		UpstreamStatus:   response.Status,
-		UpstreamHeaders:  response.Headers,
 		Body:             response.Body,
 		UpstreamFormat:   prepared.ProtocolPlan.To,
 		DownstreamFormat: prepared.ProtocolPlan.From,

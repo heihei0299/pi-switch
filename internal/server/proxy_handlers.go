@@ -264,7 +264,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 		GlobalUserAgent:  cfg.Settings.Proxy.UserAgent,
 		Timeout:          0,
 	}
-	outcome := inference.ExecuteStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan), proxyadapter.NewStreamWriter(c.Writer))
+	outcome := inference.ExecuteStream(c.Request.Context(), prepared, proxyadapter.OutboundRequestBuilder(outboundPlan), proxyadapter.NewStreamResponseStarter(c.Writer), proxyadapter.NewStreamWriter(c.Writer))
 	logOutcome := func() {
 		if outcome.ShouldLog {
 			logRequest(name, realModel, outcome.Facts.Success, outcome.Facts.Usage, outcome.Facts.Cost, convID, convName,
@@ -278,12 +278,7 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 		logOutcome()
 		c.JSON(outcome.Facts.Status, inferenceError(outcome.Facts.Error, outcome.ErrorType))
 	case inference.StreamOutcomeUpstreamResponse:
-		for key, values := range outcome.Headers {
-			for _, value := range values {
-				c.Header(key, value)
-			}
-		}
-		c.Data(outcome.Facts.Status, outcome.Headers.Get("Content-Type"), outcome.Body)
+		proxyadapter.WriteResponse(c.Writer, outcome.Facts.Status, outcome.Headers, outcome.Body)
 		logOutcome()
 	case inference.StreamOutcomeRelayed:
 		logOutcome()

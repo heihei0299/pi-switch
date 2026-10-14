@@ -14,10 +14,9 @@ import (
 	"github.com/heihei0299/pi-switch/internal/domain/usage"
 )
 
-// StreamInput describes the upstream response and the conversion plan for one SSE relay.
+// StreamInput describes the upstream body and conversion plan for one SSE relay.
 type StreamInput struct {
 	UpstreamStatus   int
-	UpstreamHeaders  Header
 	Body             io.ReadCloser
 	UpstreamFormat   protocol.Format
 	DownstreamFormat protocol.Format
@@ -34,28 +33,16 @@ type StreamFacts struct {
 	Cost    *float64
 }
 
-// RelayStream sets upstream headers/status, relays the SSE body, and returns request facts.
-func RelayStream(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
+// RelayStream relays the SSE body and returns request facts.
+func RelayStream(ctx context.Context, input StreamInput, sink StreamSink) StreamFacts {
 	defer input.Body.Close()
-	for key, values := range input.UpstreamHeaders {
-		for _, value := range values {
-			if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Connection") {
-				continue
-			}
-			sink.SetHeader(key, value)
-		}
-	}
-	sink.SetHeader("Content-Type", "text/event-stream")
-	sink.SetHeader("Cache-Control", "no-cache")
-	sink.SetHeader("Connection", "keep-alive")
-	sink.WriteHeader(input.UpstreamStatus)
 	if input.Converter == nil {
 		return relayPassthrough(ctx, input, sink)
 	}
 	return relayConverted(ctx, input, sink)
 }
 
-func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
+func relayPassthrough(ctx context.Context, input StreamInput, sink StreamSink) StreamFacts {
 	parser := usage.NewSseUsageParser()
 	flusher := sink
 	buf := make([]byte, 4096)
@@ -134,7 +121,7 @@ func relayPassthrough(ctx context.Context, input StreamInput, sink StreamWriter)
 	return StreamFacts{Success: !streamFailed, Status: status, Error: errorMessage, Usage: usageSum, Cost: usage.CalcUsageCost(input.ModelEntry, usageSum)}
 }
 
-func relayConverted(ctx context.Context, input StreamInput, sink StreamWriter) StreamFacts {
+func relayConverted(ctx context.Context, input StreamInput, sink StreamSink) StreamFacts {
 	parser := usage.NewSseUsageParser()
 	flusher := sink
 	streamFailed := false
