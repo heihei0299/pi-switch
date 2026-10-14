@@ -28,9 +28,7 @@ var (
 	BuildDirty  = "unknown"
 )
 
-// configPath is the server's single config path helper. All read-modify-write
-// management mutations use config.UpdateAtPath directly so the latest file is
-// loaded while holding the cross-process write lock.
+// configPath is the server's shared config path for adapters and usecases.
 func configPath() string {
 	return config.ResolvePath()
 }

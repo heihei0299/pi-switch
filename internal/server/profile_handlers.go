@@ -37,11 +37,12 @@ func handlePutConfig(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid config: " + err.Error()})
 		return
 	}
-	if err := application.ValidateWritableConfig(cfg); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := config.SaveAtPath(cfg, configPath()); err != nil {
+	if err := application.ReplaceConfig(configPath(), cfg); err != nil {
+		var validation *application.ManagementValidationError
+		if errors.As(err, &validation) {
+			c.JSON(400, gin.H{"error": validation.Message})
+			return
+		}
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
 		return
 	}

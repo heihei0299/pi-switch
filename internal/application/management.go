@@ -77,6 +77,13 @@ func SaveProvider(path, original, name string, prof config.ProviderProfile, expe
 	return saveProviderContext(context.Background(), path, original, name, prof, expected)
 }
 
+func ReplaceConfig(path string, cfg config.PiSwitchConfig) error {
+	if err := ValidateWritableConfig(cfg); err != nil {
+		return &ManagementValidationError{Message: err.Error()}
+	}
+	return fileconfig.New(path, config.DefaultConfig).Save(cfg)
+}
+
 func saveProviderContext(ctx context.Context, path, original, name string, prof config.ProviderProfile, expected string) error {
 	_, err := bootstrap.NewProviderService(path).Save(ctx, providerusecase.SaveCommand{
 		Original: original, Name: name, Profile: prof, ExpectedRevision: expected,
