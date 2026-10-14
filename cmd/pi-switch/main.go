@@ -13,7 +13,6 @@ import (
 	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
@@ -545,7 +544,7 @@ func handleProvider(args []string) int {
 			fmt.Fprintf(os.Stderr, "unknown profile %q\n", args[1])
 			return 1
 		}
-		success, message, ms := profile.TestProfileUpstream(prof)
+		success, message, ms := application.TestProviderUpstream(prof)
 		if !success {
 			fmt.Fprintf(os.Stderr, "provider test %s: %s (%dms)\n", args[1], message, ms)
 			return 1
@@ -589,7 +588,7 @@ func handleProvider(args []string) int {
 			fmt.Println(string(b))
 			return 0
 		}
-		ids, lastErr := profile.FetchUpstreamModelIDs(prof)
+		ids, lastErr := application.FetchProviderModelIDs(prof)
 		if lastErr != "" {
 			fmt.Fprintf(os.Stderr, "provider fetch-models %s: %s\n", name, lastErr)
 			return 1

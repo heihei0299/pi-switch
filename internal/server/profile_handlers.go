@@ -10,7 +10,6 @@ import (
 	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
@@ -91,13 +90,13 @@ func handleGetProfile(c *gin.Context) {
 // cannot misread a storage failure as a missing profile.
 func respondProfileError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, profile.ErrProfileNotFound), errors.Is(err, providerusecase.ErrProfileNotFound):
+	case errors.Is(err, providerusecase.ErrProfileNotFound):
 		c.JSON(404, gin.H{"error": "not found"})
-	case errors.Is(err, profile.ErrProfileExists), errors.Is(err, providerusecase.ErrProfileExists):
+	case errors.Is(err, providerusecase.ErrProfileExists):
 		c.JSON(400, gin.H{"error": "target exists"})
 	case errors.Is(err, providerusecase.ErrPersistence):
 		c.JSON(500, gin.H{"error": "failed to save config: " + err.Error()})
-	case errors.Is(err, profile.ErrUpstreamFetchFailed):
+	case errors.Is(err, application.ErrUpstreamFetchFailed):
 		c.JSON(500, gin.H{"error": err.Error()})
 	default:
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -210,7 +209,7 @@ func handleTestProfile(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
 	}
-	success, message, ms := profile.TestProfileUpstream(prof)
+	success, message, ms := application.TestProviderUpstream(prof)
 	c.JSON(200, gin.H{"success": success, "message": message, "responseTimeMs": ms})
 }
 
@@ -254,30 +253,15 @@ func handleFetchModels(c *gin.Context) {
 		handleFetchModelsForChannel(c, name, channel)
 		return
 	}
-	baseURL := prof.PrimaryBaseURL()
-	if baseURL == "" {
-		c.JSON(200, gin.H{"models": []string{}, "enrich": gin.H{"enriched": 0, "skipped": 0, "failed": 0}})
+	// 只读列出：渠道定向路径使用同一 fetch 原语，此处不写盘。
+	ids, counts, err := application.FetchProviderModels(prof)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	// 只读列出：拉取复用 fetchUpstreamIDs（渠道定向路径用同一原语），此处不写盘。
-	ids, lastErr := profile.FetchUpstreamModelIDs(prof)
-	if ids == nil {
-		c.JSON(500, gin.H{"error": lastErr})
-		return
-	}
-	models := make([]map[string]interface{}, 0, len(ids))
-	for _, id := range ids {
-		models = append(models, map[string]interface{}{
-			"id":            id,
-			"contextWindow": uint32(128000),
-			"maxTokens":     uint32(16384),
-			"input":         []string{"text"},
-		})
-	}
-	enriched, skipped, failed, warning := profile.EnrichModelsWithCatalog(models, prof)
-	enrich := gin.H{"enriched": enriched, "skipped": skipped, "failed": failed}
-	if warning != "" {
-		enrich["warning"] = warning
+	enrich := gin.H{"enriched": counts.Enriched, "skipped": counts.Skipped, "failed": counts.Failed}
+	if counts.Warning != "" {
+		enrich["warning"] = counts.Warning
 	}
 	c.JSON(200, gin.H{"models": ids, "enrich": enrich})
 }

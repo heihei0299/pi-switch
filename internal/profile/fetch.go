@@ -94,10 +94,9 @@ func FetchUpstreamIDs(baseURL, apiKey string, headers map[string]string) ([]stri
 }
 
 // FetchUpstreamModelIDs lists the models a profile's primary upstream reports.
-// It is the read-only half of POST /api/profiles/:name/fetch-models (the handler
-// additionally enriches and persists for channel-directed fetches) and the whole
-// of `pi-switch provider fetch-models`. Returns a human-readable reason instead
-// of an error so callers can surface it as their own kind of failure.
+// It is the read-only fetch primitive used by the application workflows. Returns
+// a human-readable reason instead of an error so entrypoints can keep their
+// existing failure formats.
 func FetchUpstreamModelIDs(prof config.ProviderProfile) ([]string, string) {
 	return FetchUpstreamIDs(prof.PrimaryBaseURL(), prof.PrimaryAPIKey(), prof.PrimaryHeaders())
 }

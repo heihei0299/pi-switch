@@ -159,6 +159,23 @@ func TestChannelFetch_LegacyNoParamUnchanged(t *testing.T) {
 	}
 }
 
+func TestChannelFetch_LegacyNoParamWithoutBaseURLReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	p := writeChannelConfig(t, dir, `{"version":2,"profiles":{"sup":{"api":"openai-completions","responsesMode":"auto","upstreams":[{"name":"main"}]}},"settings":{}}`)
+	before, _ := os.ReadFile(p)
+	code, resp := postFetch(t, NewMgmtRouter(), "/api/profiles/sup/fetch-models")
+	if code != http.StatusOK {
+		t.Fatalf("fetch code = %d, want 200 (%v)", code, resp)
+	}
+	if models, _ := resp["models"].([]interface{}); len(models) != 0 {
+		t.Fatalf("models = %v, want empty", models)
+	}
+	after, _ := os.ReadFile(p)
+	if string(before) != string(after) {
+		t.Fatal("empty fetch rewrote config")
+	}
+}
+
 func TestChannelFetch_FailureDoesNotTouchOtherChannel(t *testing.T) {
 	dir := t.TempDir()
 	failMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

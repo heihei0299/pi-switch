@@ -13,6 +13,8 @@ import (
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 )
 
+var ErrUpstreamFetchFailed = profile.ErrUpstreamFetchFailed
+
 type namedProviderNotFoundError struct{ name string }
 
 func (e namedProviderNotFoundError) Error() string {
@@ -87,12 +89,41 @@ type ProviderProbe struct {
 	Milliseconds int64
 }
 
+func TestProviderUpstream(prof config.ProviderProfile) (bool, string, int64) {
+	return profile.TestProfileUpstream(prof)
+}
+
+func FetchProviderModelIDs(prof config.ProviderProfile) ([]string, string) {
+	return profile.FetchUpstreamModelIDs(prof)
+}
+
+func FetchProviderModels(prof config.ProviderProfile) ([]string, profile.EnrichCounts, error) {
+	if prof.PrimaryBaseURL() == "" {
+		return []string{}, profile.EnrichCounts{}, nil
+	}
+	ids, lastErr := FetchProviderModelIDs(prof)
+	if ids == nil {
+		return nil, profile.EnrichCounts{}, errors.New(lastErr)
+	}
+	models := make([]map[string]interface{}, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, map[string]interface{}{
+			"id":            id,
+			"contextWindow": uint32(128000),
+			"maxTokens":     uint32(16384),
+			"input":         []string{"text"},
+		})
+	}
+	enriched, skipped, failed, warning := profile.EnrichModelsWithCatalog(models, prof)
+	return ids, profile.EnrichCounts{Enriched: enriched, Skipped: skipped, Failed: failed, Warning: warning}, nil
+}
+
 func TestProviderDraft(path, original, raw, expected string, keys map[string]string) (ProviderProbe, error) {
 	prof, err := ProviderFromDraft(path, original, raw, expected, keys)
 	if err != nil {
 		return ProviderProbe{}, err
 	}
-	ok, _, ms := profile.TestProfileUpstream(prof)
+	ok, _, ms := TestProviderUpstream(prof)
 	return ProviderProbe{OK: ok, Milliseconds: ms}, nil
 }
 
