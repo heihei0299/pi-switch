@@ -266,6 +266,67 @@ func TestExportRequestsPreservesAliasesUnknownsAndOrder(t *testing.T) {
 	}
 }
 
+func TestExportRequestsJSONStreamsRowsWithoutLargeWrites(t *testing.T) {
+	const rows = 10_000
+	facts := make(factMemory, rows)
+	for i := range facts {
+		facts[i] = RequestFact{ID: int64(i + 1), TS: ptr("2026-09-10T12:00:00Z"), Provider: ptr("supplier"), Model: ptr("model"), Success: ptr(true)}
+	}
+	service := NewService(facts, conversation.SourceOff, nil)
+	writer := &maxWriteSizeWriter{max: 2048}
+	if err := service.ExportRequestsContext(context.Background(), writer, "json"); err != nil {
+		t.Fatal(err)
+	}
+	if writer.writes < rows {
+		t.Fatalf("stream writes = %d, want at least one write per row", writer.writes)
+	}
+	if writer.maxSeen > writer.max {
+		t.Fatalf("largest stream write = %d, want <= %d", writer.maxSeen, writer.max)
+	}
+}
+
+func TestExportRequestsContextStopsWhenWriterCancelsRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	writer := cancelOnFirstWrite{cancel: cancel}
+	service := NewService(factMemory{
+		{ID: 1, TS: ptr("2026-09-10T12:00:00Z"), Success: ptr(true)},
+		{ID: 2, TS: ptr("2026-09-10T12:01:00Z"), Success: ptr(true)},
+	}, conversation.SourceOff, nil)
+	if err := service.ExportRequestsContext(ctx, &writer, "json"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("export error = %v, want context.Canceled", err)
+	}
+}
+
+type maxWriteSizeWriter struct {
+	max     int
+	maxSeen int
+	writes  int
+}
+
+func (w *maxWriteSizeWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if len(p) > w.maxSeen {
+		w.maxSeen = len(p)
+	}
+	if len(p) > w.max {
+		return 0, fmt.Errorf("write size %d exceeds %d", len(p), w.max)
+	}
+	return len(p), nil
+}
+
+type cancelOnFirstWrite struct {
+	cancel context.CancelFunc
+	once   bool
+}
+
+func (w *cancelOnFirstWrite) Write(p []byte) (int, error) {
+	if !w.once {
+		w.once = true
+		w.cancel()
+	}
+	return len(p), nil
+}
+
 func TestServiceReturnsRepositoryErrors(t *testing.T) {
 	service := NewService(failingRepository{err: fmt.Errorf("read failed")}, conversation.SourceOff, nil)
 	if _, err := service.Summary(nil); err == nil || err.Error() != "read failed" {

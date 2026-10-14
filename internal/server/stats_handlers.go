@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -128,7 +127,7 @@ func handleStats(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	response, err := service.Stats(window, page, limit)
+	response, err := service.StatsContext(c.Request.Context(), window, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -154,7 +153,7 @@ func handleStatsConversations(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	conversations, total, err := service.Conversations(window, page, limit)
+	conversations, total, err := service.ConversationsContext(c.Request.Context(), window, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -185,7 +184,7 @@ func handleConversationRequests(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	requests, total, err := service.ConversationRequests(id, page, limit)
+	requests, total, err := service.ConversationRequestsContext(c.Request.Context(), id, page, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -204,11 +203,6 @@ func handleLogsExport(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	var output bytes.Buffer
-	if err := bootstrap.NewSummaryAnalyticsService(db).ExportRequests(&output, format); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
 	if format == "csv" {
 		c.Header("Content-Type", "text/csv")
 		c.Header("Content-Disposition", `attachment; filename="pi-switch-logs.csv"`)
@@ -216,5 +210,7 @@ func handleLogsExport(c *gin.Context) {
 		c.Header("Content-Type", "application/json")
 		c.Header("Content-Disposition", `attachment; filename="pi-switch-logs.json"`)
 	}
-	c.Data(200, c.Writer.Header().Get("Content-Type"), output.Bytes())
+	if err := bootstrap.NewSummaryAnalyticsService(db).ExportRequestsContext(c.Request.Context(), c.Writer, format); err != nil && !c.Writer.Written() {
+		c.JSON(500, gin.H{"error": err.Error()})
+	}
 }

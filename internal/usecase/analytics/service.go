@@ -227,8 +227,8 @@ func (s Service) ExportRequestsContext(ctx context.Context, w io.Writer, format 
 		return fmt.Errorf("unsupported stats export format %q", format)
 	}
 	if format == "json" {
-		requests := make([]map[string]any, 0)
-		if err := s.forEachFact(ctx, nil, OldestFirst, func(fact RequestFact) error {
+		started := false
+		err := s.forEachFact(ctx, nil, OldestFirst, func(fact RequestFact) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -248,19 +248,44 @@ func (s Service) ExportRequestsContext(ctx context.Context, w io.Writer, format 
 			if fact.TS != nil {
 				request["timestamp"] = *fact.TS
 			}
-			requests = append(requests, request)
+			encoded, err := json.Marshal(request)
+			if err != nil {
+				return err
+			}
+			if !started {
+				if _, err := io.WriteString(w, "["); err != nil {
+					return err
+				}
+				started = true
+			} else if _, err := io.WriteString(w, ","); err != nil {
+				return err
+			}
+			if _, err := w.Write(encoded); err != nil {
+				return err
+			}
 			return nil
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		return json.NewEncoder(w).Encode(requests)
+		if !started {
+			_, err = io.WriteString(w, "[]\n")
+			return err
+		}
+		_, err = io.WriteString(w, "]\n")
+		return err
 	}
 
 	csvWriter := csv.NewWriter(w)
-	if err := csvWriter.Write([]string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}); err != nil {
-		return err
-	}
+	headerWritten := false
+	header := []string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}
 	err := s.forEachFact(ctx, nil, OldestFirst, func(fact RequestFact) error {
+		if !headerWritten {
+			if err := csvWriter.Write(header); err != nil {
+				return err
+			}
+			headerWritten = true
+		}
 		cost := ""
 		if fact.Cost != nil {
 			cost = strconv.FormatFloat(*fact.Cost, 'f', -1, 64)
@@ -273,6 +298,11 @@ func (s Service) ExportRequestsContext(ctx context.Context, w io.Writer, format 
 			exportField(fact.ConversationName), cost, cost, exportField(fact.CachedTokens), exportField(fact.ReasoningTokens),
 		})
 	})
+	if err == nil && !headerWritten {
+		if writeErr := csvWriter.Write(header); writeErr != nil {
+			return writeErr
+		}
+	}
 	csvWriter.Flush()
 	if err != nil {
 		return err
