@@ -122,6 +122,19 @@ func TestCheckArchitectureDependencies(t *testing.T) {
 			},
 			wantViolation: module + "/desktop",
 		},
+		{
+			name: "root-level production file rejects desktop module",
+			files: map[string]string{
+				"main.go": "package main\nimport \"github.com/heihei0299/pi-switch/desktop\"\n",
+			},
+			wantViolation: module + "/desktop",
+		},
+		{
+			name: "test-only imports do not become production violations",
+			files: map[string]string{
+				"internal/usecase/providers/service_test.go": "package providers\nimport \"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig\"\n",
+			},
+		},
 	}
 
 	for _, tt := range tests {

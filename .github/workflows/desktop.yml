@@ -36,6 +36,9 @@ jobs:
       - name: Check architecture dependencies
         run: go run ./internal/archcheck
 
+      - name: Test architecture checker rules
+        run: go test ./internal/archcheck -count=1
+
       - name: Test and vet desktop module
         working-directory: desktop
         run: |
