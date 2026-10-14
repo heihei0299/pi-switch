@@ -11,6 +11,7 @@ import (
 const timestampEpochMillisSQL = "(CAST(strftime('%s', ts) AS INTEGER) * 1000 + CASE WHEN instr(ts, '.') = 0 THEN 0 WHEN substr(ts, instr(ts, '.') + 3, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 3) AS INTEGER) WHEN substr(ts, instr(ts, '.') + 2, 1) GLOB '[0-9]' THEN CAST(substr(ts, instr(ts, '.') + 1, 2) AS INTEGER) * 10 ELSE CAST(substr(ts, instr(ts, '.') + 1, 1) AS INTEGER) * 100 END)"
 
 const requestFactsColumns = "id,ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url"
+const aggregationFactsColumns = "ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms"
 
 type Repository struct {
 	DB *sql.DB
@@ -46,6 +47,44 @@ func (r Repository) ForEachFact(ctx context.Context, window *analytics.Window, o
 			return err
 		}
 		fact, err := scanFact(rows)
+		if err != nil {
+			return err
+		}
+		if err := visit(fact); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (r Repository) ForEachAggregationFact(ctx context.Context, window *analytics.Window, order analytics.Order, visit func(analytics.AggregationFact) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.DB == nil {
+		return fmt.Errorf("stats database is nil")
+	}
+	query := "SELECT " + aggregationFactsColumns + " FROM requests"
+	args := []any{}
+	if window != nil {
+		query += ` WHERE ` + timestampEpochMillisSQL + ` >= ? AND ` + timestampEpochMillisSQL + ` < ?`
+		args = append(args, window.From, window.To)
+	}
+	direction := "DESC"
+	if order == analytics.OldestFirst {
+		direction = "ASC"
+	}
+	query += ` ORDER BY id ` + direction
+	rows, err := r.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fact, err := scanAggregationFact(rows)
 		if err != nil {
 			return err
 		}
@@ -100,6 +139,27 @@ func (r Repository) PageFacts(ctx context.Context, window *analytics.Window, pag
 		return nil, err
 	}
 	return facts, nil
+}
+
+func scanAggregationFact(rows *sql.Rows) (analytics.AggregationFact, error) {
+	var ts, provider, model, conversationID, conversationName sql.NullString
+	var success, prompt, completion, cached, reasoning, latency sql.NullInt64
+	var cost sql.NullFloat64
+	if err := rows.Scan(&ts, &provider, &model, &success, &prompt, &completion, &cached, &reasoning, &cost, &conversationID, &conversationName, &latency); err != nil {
+		return analytics.AggregationFact{}, err
+	}
+	return analytics.AggregationFact{
+		TS: ts.String, TSKnown: ts.Valid,
+		Provider: provider.String, Model: model.String,
+		Success: success.Int64 == 1, SuccessKnown: success.Valid,
+		PromptTokens: prompt.Int64, PromptTokensKnown: prompt.Valid,
+		CompletionTokens: completion.Int64, CompletionKnown: completion.Valid,
+		CachedTokens: cached.Int64, CachedKnown: cached.Valid,
+		ReasoningTokens: reasoning.Int64, ReasoningKnown: reasoning.Valid,
+		Cost: cost.Float64, CostKnown: cost.Valid,
+		ConversationID: conversationID.String, ConversationName: conversationName.String,
+		LatencyMs: latency.Int64, LatencyKnown: latency.Valid,
+	}, nil
 }
 
 func scanFact(rows *sql.Rows) (analytics.RequestFact, error) {

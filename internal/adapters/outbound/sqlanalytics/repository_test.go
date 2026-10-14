@@ -53,6 +53,39 @@ func TestRepositoryForEachUsesMillisecondRightOpenWindowAndPreservesNulls(t *tes
 	}
 }
 
+func TestRepositoryForEachAggregationFactPreservesNulls(t *testing.T) {
+	db := openRepositoryDB(t)
+	if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,cached_tokens,cost,conversation_id,latency_ms) VALUES(?,?,?,?,?,?,?,?,?)`,
+		"2026-09-10T12:00:00Z", "supplier", "model", 1, 10, 0, 0.25, "conversation", 12); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []analytics.AggregationFact
+	err := New(db).ForEachAggregationFact(context.Background(), nil, analytics.NewestFirst, func(fact analytics.AggregationFact) error {
+		got = append(got, fact)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("facts = %+v", got)
+	}
+	fact := got[0]
+	if !fact.TSKnown || fact.TS != "2026-09-10T12:00:00Z" || fact.Provider != "supplier" || fact.Model != "model" || !fact.SuccessKnown || !fact.Success {
+		t.Fatalf("known aggregation fields = %+v", fact)
+	}
+	if !fact.PromptTokensKnown || fact.PromptTokens != 10 || !fact.CachedKnown || fact.CachedTokens != 0 || !fact.CostKnown || fact.Cost != 0.25 || !fact.LatencyKnown || fact.LatencyMs != 12 {
+		t.Fatalf("numeric aggregation fields = %+v", fact)
+	}
+	if fact.CompletionKnown || fact.CompletionTokens != 0 || fact.ReasoningKnown || fact.ReasoningTokens != 0 {
+		t.Fatalf("nullable token fields = %+v", fact)
+	}
+	if fact.ConversationID != "conversation" || fact.ConversationName != "" {
+		t.Fatalf("conversation fields = %+v", fact)
+	}
+}
+
 func TestRepositoryPageFactsIsNewestFirstAndStableByID(t *testing.T) {
 	db := openRepositoryDB(t)
 	insertRepositoryFact(t, db, "2026-09-10T12:00:00Z", "first", 1, 1)

@@ -31,6 +31,39 @@ type Repository interface {
 	PageFacts(context.Context, *Window, int, int) ([]RequestFact, error)
 }
 
+// AggregationFact contains only the fields needed while folding stats and
+// conversation aggregates. Value fields avoid per-row pointer allocations on
+// the hot analytics path while their Known flags preserve SQL nullability.
+type AggregationFact struct {
+	TS                string
+	TSKnown           bool
+	Provider          string
+	Model             string
+	Success           bool
+	SuccessKnown      bool
+	PromptTokens      int64
+	PromptTokensKnown bool
+	CompletionTokens  int64
+	CompletionKnown   bool
+	CachedTokens      int64
+	CachedKnown       bool
+	ReasoningTokens   int64
+	ReasoningKnown    bool
+	Cost              float64
+	CostKnown         bool
+	ConversationID    string
+	ConversationName  string
+	LatencyMs         int64
+	LatencyKnown      bool
+}
+
+// AggregationRepository is an optional optimized read path. Repositories that
+// do not implement it use the nullable RequestFact path without changing
+// results.
+type AggregationRepository interface {
+	ForEachAggregationFact(context.Context, *Window, Order, func(AggregationFact) error) error
+}
+
 type Service struct {
 	repository Repository
 	Source     conversation.Source
@@ -107,6 +140,51 @@ type RequestFact struct {
 	ConversationID   *string
 	ConversationName *string
 	LatencyMs        *int64
+}
+
+func aggregationFact(f RequestFact) AggregationFact {
+	out := AggregationFact{}
+	if f.TS != nil {
+		out.TS, out.TSKnown = *f.TS, true
+	}
+	if f.Provider != nil {
+		out.Provider = *f.Provider
+	}
+	if f.Model != nil {
+		out.Model = *f.Model
+	}
+	if f.Success != nil {
+		out.Success, out.SuccessKnown = *f.Success, true
+	}
+	if f.PromptTokens != nil {
+		out.PromptTokens, out.PromptTokensKnown = *f.PromptTokens, true
+	}
+	if f.CompletionTokens != nil {
+		out.CompletionTokens, out.CompletionKnown = *f.CompletionTokens, true
+	}
+	if f.CachedTokens != nil {
+		out.CachedTokens, out.CachedKnown = *f.CachedTokens, true
+	}
+	if f.ReasoningTokens != nil {
+		out.ReasoningTokens, out.ReasoningKnown = *f.ReasoningTokens, true
+	}
+	if f.Cost != nil {
+		out.Cost, out.CostKnown = *f.Cost, true
+	}
+	if f.ConversationID != nil {
+		out.ConversationID = *f.ConversationID
+	}
+	if f.ConversationName != nil {
+		out.ConversationName = *f.ConversationName
+	}
+	if f.LatencyMs != nil {
+		out.LatencyMs, out.LatencyKnown = *f.LatencyMs, true
+	}
+	return out
+}
+
+func (f AggregationFact) countable() bool {
+	return f.SuccessKnown && f.Success && f.PromptTokensKnown && f.CompletionKnown
 }
 
 type ProviderStat struct {
@@ -351,86 +429,86 @@ func (s Service) StatsContext(ctx context.Context, window *Window, page, limit i
 	}
 	factIndex := 0
 
-	err := s.forEachFact(ctx, window, NewestFirst, func(fact RequestFact) error {
+	err := s.forEachAggregationFact(ctx, window, NewestFirst, func(fact AggregationFact) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		response.TotalRequests++
-		if fact.Success != nil && *fact.Success {
+		if fact.SuccessKnown && fact.Success {
 			response.OKRequests++
 		}
-		if fact.LatencyMs != nil {
-			totalLatency += *fact.LatencyMs
+		if fact.LatencyKnown {
+			totalLatency += fact.LatencyMs
 			latencyCount++
 		}
-		if fact.Success != nil && *fact.Success && fact.Cost == nil {
+		if fact.SuccessKnown && fact.Success && !fact.CostKnown {
 			response.CostUnknown++
 		}
 		countable := fact.countable()
 		if countable {
-			totalInput += *fact.PromptTokens
-			totalOutput += *fact.CompletionTokens
-			if fact.CachedTokens != nil {
-				totalCached += *fact.CachedTokens
-				cacheInput += *fact.PromptTokens
+			totalInput += fact.PromptTokens
+			totalOutput += fact.CompletionTokens
+			if fact.CachedKnown {
+				totalCached += fact.CachedTokens
+				cacheInput += fact.PromptTokens
 			}
-			if fact.ReasoningTokens != nil {
-				totalReasoning += *fact.ReasoningTokens
+			if fact.ReasoningKnown {
+				totalReasoning += fact.ReasoningTokens
 			}
-			if fact.Cost != nil {
-				totalCost = addCost(totalCost, *fact.Cost)
+			if fact.CostKnown {
+				totalCost = addCost(totalCost, fact.Cost)
 			}
 		}
 
-		provider := fact.valueOr(fact.Provider, "unknown")
+		provider := valueOr(fact.Provider, "unknown")
 		providerStat := response.ByProvider[provider]
 		providerStat.Total++
-		if fact.Success != nil && *fact.Success {
+		if fact.SuccessKnown && fact.Success {
 			providerStat.OK++
 		} else {
 			providerStat.Failed++
 		}
 		if countable {
-			providerStat.PromptTokens += *fact.PromptTokens
-			providerStat.OutputTokens += *fact.CompletionTokens
-			if fact.CachedTokens != nil {
-				providerStat.CachedTokens += *fact.CachedTokens
-				providerStat.cacheInput += *fact.PromptTokens
+			providerStat.PromptTokens += fact.PromptTokens
+			providerStat.OutputTokens += fact.CompletionTokens
+			if fact.CachedKnown {
+				providerStat.CachedTokens += fact.CachedTokens
+				providerStat.cacheInput += fact.PromptTokens
 			}
-			if fact.ReasoningTokens != nil {
-				providerStat.Reasoning += *fact.ReasoningTokens
+			if fact.ReasoningKnown {
+				providerStat.Reasoning += fact.ReasoningTokens
 			}
-			if fact.Cost != nil {
-				providerStat.Cost = addCost(providerStat.Cost, *fact.Cost)
+			if fact.CostKnown {
+				providerStat.Cost = addCost(providerStat.Cost, fact.Cost)
 			}
 		}
 		response.ByProvider[provider] = providerStat
 
-		model := fact.valueOr(fact.Model, "unknown")
+		model := valueOr(fact.Model, "unknown")
 		modelStat := response.ByModel[model]
 		modelStat.Total++
-		if fact.Success != nil && *fact.Success {
+		if fact.SuccessKnown && fact.Success {
 			modelStat.OK++
 		}
 		if countable {
-			modelStat.PromptTokens += *fact.PromptTokens
-			modelStat.OutputTokens += *fact.CompletionTokens
-			if fact.CachedTokens != nil {
-				modelStat.CachedTokens += *fact.CachedTokens
-				modelStat.cacheInput += *fact.PromptTokens
+			modelStat.PromptTokens += fact.PromptTokens
+			modelStat.OutputTokens += fact.CompletionTokens
+			if fact.CachedKnown {
+				modelStat.CachedTokens += fact.CachedTokens
+				modelStat.cacheInput += fact.PromptTokens
 			}
-			if fact.ReasoningTokens != nil {
-				modelStat.Reasoning += *fact.ReasoningTokens
+			if fact.ReasoningKnown {
+				modelStat.Reasoning += fact.ReasoningTokens
 			}
-			if fact.Cost != nil {
-				modelStat.Cost = addCost(modelStat.Cost, *fact.Cost)
+			if fact.CostKnown {
+				modelStat.Cost = addCost(modelStat.Cost, fact.Cost)
 			}
 		}
 		response.ByModel[model] = modelStat
 
 		var result conversation.MatchResult
 		if s.Source != conversation.SourceOff {
-			result = s.match(matcher, fact)
+			result = s.matchAggregation(matcher, fact)
 			aggregateConversation(conversations, fact, result, countable)
 		}
 		factIndex++
@@ -523,11 +601,11 @@ func (s Service) ConversationsContext(ctx context.Context, window *Window, page,
 	}
 	groups := map[string]*conversationAggregate{}
 	matcher := s.matcher()
-	err := s.forEachFact(ctx, window, NewestFirst, func(fact RequestFact) error {
+	err := s.forEachAggregationFact(ctx, window, NewestFirst, func(fact AggregationFact) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		aggregateConversation(groups, fact, s.match(matcher, fact), fact.countable())
+		aggregateConversation(groups, fact, s.matchAggregation(matcher, fact), fact.countable())
 		return nil
 	})
 	if err != nil {
@@ -584,13 +662,25 @@ func (s Service) forEachFact(ctx context.Context, window *Window, order Order, v
 	return s.repository.ForEachFact(ctx, window, order, visit)
 }
 
+func (s Service) forEachAggregationFact(ctx context.Context, window *Window, order Order, visit func(AggregationFact) error) error {
+	if s.repository == nil {
+		return fmt.Errorf("stats database is nil")
+	}
+	if repository, ok := s.repository.(AggregationRepository); ok {
+		return repository.ForEachAggregationFact(ctx, window, order, visit)
+	}
+	return s.repository.ForEachFact(ctx, window, order, func(fact RequestFact) error {
+		return visit(aggregationFact(fact))
+	})
+}
+
 func (f RequestFact) countable() bool {
 	return f.Success != nil && *f.Success && f.PromptTokens != nil && f.CompletionTokens != nil
 }
 
-func (f RequestFact) valueOr(value *string, fallback string) string {
-	if value != nil && *value != "" {
-		return *value
+func valueOr(value, fallback string) string {
+	if value != "" {
+		return value
 	}
 	return fallback
 }
@@ -626,6 +716,30 @@ func (s Service) match(matcher *conversation.Matcher, fact RequestFact) conversa
 	return matcher.Match(s.Source, input)
 }
 
+func (s Service) matchAggregation(matcher *conversation.Matcher, fact AggregationFact) conversation.MatchResult {
+	var timestamp time.Time
+	if fact.TSKnown {
+		timestamp, _ = parseTimestamp(fact.TS)
+	}
+	var promptTokens *uint64
+	if fact.PromptTokensKnown && fact.PromptTokens >= 0 {
+		value := uint64(fact.PromptTokens)
+		promptTokens = &value
+	}
+	input := conversation.MatchInput{
+		ExplicitID:   fact.ConversationID,
+		ExplicitName: fact.ConversationName,
+		Provider:     fact.Provider,
+		Model:        fact.Model,
+		Timestamp:    timestamp,
+		PromptTokens: promptTokens,
+	}
+	if matcher == nil {
+		return conversation.Match(s.Source, input, nil)
+	}
+	return matcher.Match(s.Source, input)
+}
+
 type conversationAggregate struct {
 	CacheInput int64
 	ID         string
@@ -639,7 +753,7 @@ type conversationAggregate struct {
 	Last       *string
 }
 
-func aggregateConversation(groups map[string]*conversationAggregate, fact RequestFact, result conversation.MatchResult, countable bool) {
+func aggregateConversation(groups map[string]*conversationAggregate, fact AggregationFact, result conversation.MatchResult, countable bool) {
 	if groups == nil {
 		return
 	}
@@ -652,28 +766,28 @@ func aggregateConversation(groups map[string]*conversationAggregate, fact Reques
 	if result.Name != "" {
 		name := result.Name
 		group.Name = &name
-	} else if group.Name == nil && fact.ConversationName != nil && *fact.ConversationName != "" {
-		name := *fact.ConversationName
+	} else if group.Name == nil && fact.ConversationName != "" {
+		name := fact.ConversationName
 		group.Name = &name
 	}
-	if fact.TS != nil && (group.Last == nil || *fact.TS > *group.Last) {
-		last := *fact.TS
+	if fact.TSKnown && (group.Last == nil || fact.TS > *group.Last) {
+		last := fact.TS
 		group.Last = &last
 	}
 	if !countable {
 		return
 	}
-	group.Input += *fact.PromptTokens
-	group.Output += *fact.CompletionTokens
-	if fact.CachedTokens != nil {
-		group.Cached += *fact.CachedTokens
-		group.CacheInput += *fact.PromptTokens
+	group.Input += fact.PromptTokens
+	group.Output += fact.CompletionTokens
+	if fact.CachedKnown {
+		group.Cached += fact.CachedTokens
+		group.CacheInput += fact.PromptTokens
 	}
-	if fact.ReasoningTokens != nil {
-		group.Reasoning += *fact.ReasoningTokens
+	if fact.ReasoningKnown {
+		group.Reasoning += fact.ReasoningTokens
 	}
-	if fact.Cost != nil {
-		group.Cost = addCost(group.Cost, *fact.Cost)
+	if fact.CostKnown {
+		group.Cost = addCost(group.Cost, fact.Cost)
 	}
 }
 
