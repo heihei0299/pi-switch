@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/daemon"
-	"github.com/heihei0299/pi-switch/internal/server"
 	"golang.org/x/sys/unix"
 )
 
@@ -429,7 +429,7 @@ func TestHandleDoctor_NoSuccessTokenWhenDatabaseExists(t *testing.T) {
 	if code, out := runCLI(t, func() int { return handlePackage([]string{"add", "npm:seed"}) }); code != 0 {
 		t.Fatalf("setup add failed: %d %q", code, out)
 	}
-	if _, err := os.Stat(server.PiSwitchDBPath()); err != nil {
+	if _, err := os.Stat(bootstrap.PiSwitchDBPath()); err != nil {
 		t.Fatalf("setup did not create a database: %v", err)
 	}
 	if err := os.WriteFile(os.Getenv("PI_SWITCH_CONFIG"), []byte("{not json"), 0644); err != nil {

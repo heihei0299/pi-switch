@@ -1,15 +1,14 @@
 package main
 
 import (
-	"errors"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/packages"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
+	packagesusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 )
 
 type nativePackage struct {
@@ -37,29 +36,24 @@ type nativePackagesState struct {
 }
 
 func loadNativePackages() ([]nativePackage, error) {
-	if _, err := os.Stat(packages.PiSwitchDBPath()); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	rows, err := packages.ListInstalledPackages()
+	rows, err := bootstrap.NewPackagesService().ListInstalled()
 	if err != nil {
 		return nil, err
 	}
 	packages := make([]nativePackage, 0, len(rows))
 	for _, row := range rows {
 		pkg := nativePackage{
-			id:       nativePackageString(row, "id"),
-			typeName: nativePackageString(row, "type"),
-			name:     nativePackageString(row, "name"),
-			version:  nativePackageString(row, "version"),
-			enabled:  nativePackageBool(row, "enabled"),
+			id:       row.ID,
+			typeName: row.Type,
+			name:     row.Name,
+			version:  row.Version,
+			enabled:  row.Enabled,
 		}
 		for _, capability := range []struct {
-			key   string
-			label string
-		}{{"hasExtensions", "extensions"}, {"hasSkills", "skills"}, {"hasPrompts", "prompts"}, {"hasThemes", "themes"}} {
-			if nativePackageBool(row, capability.key) {
+			available bool
+			label     string
+		}{{row.HasExtensions, "extensions"}, {row.HasSkills, "skills"}, {row.HasPrompts, "prompts"}, {row.HasThemes, "themes"}} {
+			if capability.available {
 				pkg.capabilities = append(pkg.capabilities, capability.label)
 			}
 		}
@@ -67,14 +61,7 @@ func loadNativePackages() ([]nativePackage, error) {
 	}
 	return packages, nil
 }
-func nativePackageString(row map[string]interface{}, key string) string {
-	value, _ := row[key].(string)
-	return value
-}
-func nativePackageBool(row map[string]interface{}, key string) bool {
-	value, _ := row[key].(bool)
-	return value
-}
+
 func nativePackageDisplayName(pkg nativePackage) string {
 	if parsed, err := url.Parse(pkg.name); err == nil && parsed.Host != "" {
 		name := path.Base(strings.TrimSuffix(parsed.Path, ".git"))
@@ -108,7 +95,7 @@ func (a *nativePackagesState) packagesSection(c *ui.Context) {
 		}
 		if ui.Button(c, "Import from Pi Agent").Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() && a.runPackageTask != nil {
 			a.runPackageTask(func() (string, error) {
-				result, err := packages.ImportPiPackages()
+				result, err := bootstrap.NewPackagesService().ImportPiPackages()
 				if err != nil {
 					return "", err
 				}
@@ -121,7 +108,7 @@ func (a *nativePackagesState) packagesSection(c *ui.Context) {
 		if ui.PrimaryButton(c, "Register package").Disabled(a.packagesLoading || a.runPackageTask == nil || strings.TrimSpace(a.packageSpec) == "").Clicked() && a.runPackageTask != nil {
 			spec := strings.TrimSpace(a.packageSpec)
 			a.runPackageTask(func() (string, error) {
-				if err := packages.AddInstalledPackage(spec, true); err != nil {
+				if err := bootstrap.NewPackagesService().Add(packagesusecase.AddCommand{Spec: spec, Enabled: true}); err != nil {
 					return "", err
 				}
 				return "Package registered with pi-switch", nil
@@ -154,7 +141,7 @@ func (a *nativePackagesState) packagesSection(c *ui.Context) {
 				if ui.Button(c, label).Disabled(a.packagesLoading || a.runPackageTask == nil).Clicked() && a.runPackageTask != nil {
 					id := pkg.id
 					a.runPackageTask(func() (string, error) {
-						enabled, err := packages.ToggleInstalledPackage(id)
+						enabled, err := bootstrap.NewPackagesService().ToggleInstalled(id)
 						if err != nil {
 							return "", err
 						}
@@ -177,7 +164,7 @@ func (a *nativePackagesState) packagesSection(c *ui.Context) {
 		"Cancel", "Remove registration") == 1 && a.runPackageTask != nil {
 		id, name := a.packageDeleteID, a.packageDeleteName
 		a.runPackageTask(func() (string, error) {
-			if err := packages.DeleteInstalledPackage(id); err != nil {
+			if err := bootstrap.NewPackagesService().DeleteInstalled(id); err != nil {
 				return "", err
 			}
 			return "Removed registration for " + name, nil

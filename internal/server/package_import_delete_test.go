@@ -2,12 +2,16 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
+	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 )
 
 func TestPackageDeleteSupportsScopedImportedID(t *testing.T) {
@@ -66,20 +70,35 @@ func TestPackageDeleteSupportsScopedImportedID(t *testing.T) {
 	}
 }
 
+func TestPackageImportWithoutPiSettingsDoesNotCreateDatabase(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_SWITCH_DB", filepath.Join(dir, "requests.db"))
+	t.Setenv("PI_AGENT_ROOT", filepath.Join(dir, "missing-pi-agent"))
+	service := bootstrap.NewPackagesService()
+	result, err := service.ImportPiPackages()
+	if err != nil || result.Status != packageusecase.StatusNotFound {
+		t.Fatalf("missing Pi settings result = %+v, %v", result, err)
+	}
+	if _, err := os.Stat(bootstrap.PiSwitchDBPath()); !os.IsNotExist(err) {
+		t.Fatalf("missing Pi settings created package database: %v", err)
+	}
+}
+
 func TestToggleInstalledPackageReturnsStateAndRejectsMissing(t *testing.T) {
 	t.Setenv("PI_SWITCH_DB", filepath.Join(t.TempDir(), "requests.db"))
-	if err := AddInstalledPackage("npm:demo", true); err != nil {
+	service := bootstrap.NewPackagesService()
+	if err := service.Add(packageusecase.AddCommand{Spec: "npm:demo", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	enabled, err := ToggleInstalledPackage("npm:demo")
+	enabled, err := service.ToggleInstalled("npm:demo")
 	if err != nil || enabled {
 		t.Fatalf("disable package = %v, %v; want false, nil", enabled, err)
 	}
-	enabled, err = ToggleInstalledPackage("npm:demo")
+	enabled, err = service.ToggleInstalled("npm:demo")
 	if err != nil || !enabled {
 		t.Fatalf("enable package = %v, %v; want true, nil", enabled, err)
 	}
-	if _, err := ToggleInstalledPackage("missing"); err != ErrPackageNotFound {
+	if _, err := service.ToggleInstalled("missing"); !errors.Is(err, packageusecase.ErrPackageNotFound) {
 		t.Fatalf("toggle missing package error = %v, want ErrPackageNotFound", err)
 	}
 }

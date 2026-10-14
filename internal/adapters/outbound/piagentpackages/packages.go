@@ -1,4 +1,4 @@
-package piagent
+package piagentpackages
 
 import (
 	"encoding/json"
@@ -8,44 +8,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 )
 
 const (
-	StatusImported = "imported"
-	StatusEmpty    = "empty"
-	StatusNotFound = "not_found"
+	StatusImported = packageusecase.StatusImported
+	StatusEmpty    = packageusecase.StatusEmpty
+	StatusNotFound = packageusecase.StatusNotFound
 )
 
-// Package is the normalized metadata pi exposes through its package system.
-// SourcePath is kept for the importer/DB projection and is not required in the
-// browser response.
-type Package struct {
-	ID            string
-	Spec          string
-	Type          string
-	Name          string
-	Version       string
-	Description   string
-	Homepage      string
-	HasExtensions bool
-	HasSkills     bool
-	HasPrompts    bool
-	HasThemes     bool
-	Enabled       bool
-	SourcePath    string
-	Manifest      string
-}
+type Package = packageusecase.ImportedPackage
+type ImportResult = packageusecase.ImportResult
 
-type ImportResult struct {
-	OK         bool      `json:"ok"`
-	Count      int       `json:"count"`
-	Discovered int       `json:"discovered"`
-	Skipped    int       `json:"skipped"`
-	Status     string    `json:"status"`
-	Message    string    `json:"message"`
-	Warnings   []string  `json:"warnings,omitempty"`
-	Packages   []Package `json:"-"`
-}
+type Source struct{}
+
+func (Source) DiscoverPackages() (ImportResult, error) { return DiscoverPackages() }
 
 type sourceInfo struct {
 	spec           string

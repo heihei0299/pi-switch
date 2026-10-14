@@ -7,40 +7,19 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/heihei0299/pi-switch/internal/packages"
-	"github.com/heihei0299/pi-switch/internal/piagent"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
+	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 )
 
-func PiSwitchDBPath() string { return packages.PiSwitchDBPath() }
-
-func ListInstalledPackages() ([]map[string]interface{}, error) {
-	return packages.ListInstalledPackages()
-}
-
-func AddInstalledPackage(spec string, enabled bool) error {
-	return packages.AddInstalledPackage(spec, enabled)
-}
-
-func GetInstalledPackage(id string) (map[string]interface{}, error) {
-	return packages.GetInstalledPackage(id)
-}
-
-func DeleteInstalledPackage(id string) error { return packages.DeleteInstalledPackage(id) }
-
-func ToggleInstalledPackage(id string) (bool, error) { return packages.ToggleInstalledPackage(id) }
-
-func ImportPiPackages() (piagent.ImportResult, error) { return packages.ImportPiPackages() }
-
-var ErrPackageNotFound = packages.ErrPackageNotFound
-
 func handlePackagesList(c *gin.Context) {
-	out, err := ListInstalledPackages()
+	out, err := bootstrap.NewPackagesService().ListInstalled()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"packages": out})
 }
+
 func handlePackageAdd(c *gin.Context) {
 	var body struct {
 		Spec    string `json:"spec"`
@@ -54,36 +33,39 @@ func handlePackageAdd(c *gin.Context) {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
-	if err := AddInstalledPackage(body.Spec, enabled); err != nil {
+	if err := bootstrap.NewPackagesService().Add(packageusecase.AddCommand{Spec: body.Spec, Enabled: enabled}); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "id": strings.TrimSpace(body.Spec)})
 }
+
 func handlePackageImport(c *gin.Context) {
-	result, err := ImportPiPackages()
+	result, err := bootstrap.NewPackagesService().ImportPiPackages()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	if result.Status == piagent.StatusNotFound {
+	if result.Status == packageusecase.StatusNotFound {
 		c.JSON(404, gin.H{"error": result.Message, "ok": result.OK, "count": result.Count, "status": result.Status, "message": result.Message, "warnings": result.Warnings})
 		return
 	}
 	c.JSON(200, result)
 }
+
 func handlePackageGet(c *gin.Context) {
-	m, err := GetInstalledPackage(c.Param("id"))
+	pkg, err := bootstrap.NewPackagesService().GetInstalled(c.Param("id"))
 	if err != nil {
-		if errors.Is(err, ErrPackageNotFound) {
+		if errors.Is(err, packageusecase.ErrPackageNotFound) {
 			c.JSON(404, gin.H{"error": "not found"})
 			return
 		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, m)
+	c.JSON(200, pkg)
 }
+
 func handlePackageDelete(c *gin.Context) {
 	id := strings.TrimPrefix(c.Param("id"), "/")
 	decoded, err := url.PathUnescape(id)
@@ -96,8 +78,8 @@ func handlePackageDelete(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "package id is required"})
 		return
 	}
-	if err := DeleteInstalledPackage(id); err != nil {
-		if errors.Is(err, ErrPackageNotFound) {
+	if err := bootstrap.NewPackagesService().DeleteInstalled(id); err != nil {
+		if errors.Is(err, packageusecase.ErrPackageNotFound) {
 			c.JSON(404, gin.H{"error": "package not found"})
 			return
 		}
@@ -106,10 +88,11 @@ func handlePackageDelete(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
+
 func handlePackageToggle(c *gin.Context) {
-	enabled, err := ToggleInstalledPackage(c.Param("id"))
+	enabled, err := bootstrap.NewPackagesService().ToggleInstalled(c.Param("id"))
 	if err != nil {
-		if errors.Is(err, ErrPackageNotFound) {
+		if errors.Is(err, packageusecase.ErrPackageNotFound) {
 			c.JSON(404, gin.H{"error": "not found"})
 			return
 		}

@@ -11,9 +11,8 @@ import (
 
 // Review finding (Standards axis, hard): the profile handlers classified errors
 // by matching message text — `strings.Contains(err.Error(), "not found")` — even
-// though this repo already established the alternative in the package domain
-// (package_handlers.go's ErrPackageNotFound, used via errors.Is by both the HTTP
-// handlers and the CLI).
+// though this repo already established the alternative with the package
+// usecase's ErrPackageNotFound, classified via errors.Is by HTTP and CLI callers.
 //
 // These tests pin the two consequences that motive the change:
 //   1. a persist failure whose PATH happens to contain "not found" was answered

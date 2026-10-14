@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
@@ -16,6 +17,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
+	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 )
 
 var (
@@ -688,12 +690,14 @@ func handlePackage(args []string) int {
 	}
 	switch args[0] {
 	case "list", "ls":
-		packages, err := server.ListInstalledPackages()
+		packages, err := bootstrap.NewPackagesService().ListInstalled()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "package list failed: %v\n", err)
 			return 1
 		}
-		b, _ := json.Marshal(map[string]interface{}{"packages": packages})
+		b, _ := json.Marshal(struct {
+			Packages []packageusecase.PackageDTO `json:"packages"`
+		}{Packages: packages})
 		fmt.Println(string(b))
 	case "add":
 		enabled := true
@@ -716,7 +720,7 @@ func handlePackage(args []string) int {
 			return 1
 		}
 		spec := positionals[0]
-		if err := server.AddInstalledPackage(spec, enabled); err != nil {
+		if err := bootstrap.NewPackagesService().Add(packageusecase.AddCommand{Spec: spec, Enabled: enabled}); err != nil {
 			fmt.Fprintf(os.Stderr, "package add failed: %v\n", err)
 			return 1
 		}
@@ -727,7 +731,7 @@ func handlePackage(args []string) int {
 		fmt.Fprintln(os.Stderr, `package sync is not implemented; use "pi-switch package import" to sync packages from the pi agent directory`)
 		return 2
 	case "import":
-		result, err := server.ImportPiPackages()
+		result, err := bootstrap.NewPackagesService().ImportPiPackages()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "package import failed: %v\n", err)
 			return 1
@@ -739,24 +743,24 @@ func handlePackage(args []string) int {
 			fmt.Fprintln(os.Stderr, "package show <id> required")
 			return 1
 		}
-		m, err := server.GetInstalledPackage(args[1])
+		pkg, err := bootstrap.NewPackagesService().GetInstalled(args[1])
 		if err != nil {
-			if errors.Is(err, server.ErrPackageNotFound) {
+			if errors.Is(err, packageusecase.ErrPackageNotFound) {
 				fmt.Fprintf(os.Stderr, "package %q not found\n", args[1])
 				return 1
 			}
 			fmt.Fprintf(os.Stderr, "package show failed: %v\n", err)
 			return 1
 		}
-		b, _ := json.MarshalIndent(m, "", "  ")
+		b, _ := json.MarshalIndent(pkg, "", "  ")
 		fmt.Println(string(b))
 	case "delete", "remove", "rm":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "package delete <id> required")
 			return 1
 		}
-		if err := server.DeleteInstalledPackage(args[1]); err != nil {
-			if errors.Is(err, server.ErrPackageNotFound) {
+		if err := bootstrap.NewPackagesService().DeleteInstalled(args[1]); err != nil {
+			if errors.Is(err, packageusecase.ErrPackageNotFound) {
 				fmt.Fprintf(os.Stderr, "package %q not found\n", args[1])
 				return 1
 			}
@@ -850,7 +854,7 @@ func handleDoctor() int {
 		fmt.Printf("config: %s (%d profiles, %s)\n", cfgPath, len(cfg.Profiles), source)
 	}
 
-	dbPath := server.PiSwitchDBPath()
+	dbPath := bootstrap.PiSwitchDBPath()
 	if _, err := os.Stat(dbPath); err != nil {
 		fmt.Printf("database: %s (not created yet)\n", dbPath)
 	} else if db, err := sql.Open("sqlite", dbPath); err != nil {
