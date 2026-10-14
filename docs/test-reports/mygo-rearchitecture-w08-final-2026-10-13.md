@@ -32,6 +32,8 @@ The in-place npm package audit found four ignored binaries dated 2026-08-31 (`da
 
 After the documentation-only commit `80f011a`, the following were rerun against that exact HEAD: full root tests/vet, full Desktop tests/vet/MyGo vet, architecture check, Secrets Scan, root build-identity/help/functional smoke, Node CLI tests (8/8), amd64/arm64 root builds and isolated npm package audit, plus Desktop amd64/arm64 package builds, architecture metadata checks, installer smoke, and packaged amd64 CLI/API/Proxy smoke. All passed. The isolated root test DB was `/tmp/pi-switch-w08-head.JbVpfq/requests.db`; the clean npm package audit tree was `/tmp/pi-switch-npm-head.CWmneY/`.
 
+The packaged arm64 CLI's `--version`, `--build-info`, and `--help` also passed under `qemu-aarch64-static`, reporting `linux/arm64` and commit `80f011a`. This is emulation evidence only, not a substitute for the native arm64 CI run.
+
 ## Gates not verified / limits
 
 - Actual Root/Desktop GitHub Actions were not triggered. The local Node runtime is v26, while the workflows specify Node 22 (Root) and Node 24 (Desktop).
