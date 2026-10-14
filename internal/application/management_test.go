@@ -2,6 +2,7 @@ package application
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
@@ -186,7 +188,7 @@ func TestSettingsBackupRestoreAndPermissions(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	settings := cfg.Settings
 	settings.Proxy.Port++
-	if err := SaveSettings(path, settings, Revision(cfg.Settings)); err != nil {
+	if err := bootstrap.NewSettingsService(path).Save(context.Background(), settings, Revision(cfg.Settings)); err != nil {
 		t.Fatal(err)
 	}
 	backups, err := ListConfigBackups(path)
@@ -230,11 +232,12 @@ func TestBackupFailureAndInvalidSettingsDoNotWrite(t *testing.T) {
 	}
 	settings := cfg.Settings
 	settings.Proxy.Port++
-	if err := SaveSettings(path, settings, Revision(cfg.Settings)); err == nil {
+	service := bootstrap.NewSettingsService(path)
+	if err := service.Save(context.Background(), settings, Revision(cfg.Settings)); err == nil {
 		t.Fatal("backup failure ignored")
 	}
 	settings.Proxy.Port = 0
-	if err := SaveSettings(path, settings, Revision(cfg.Settings)); err == nil {
+	if err := service.Save(context.Background(), settings, Revision(cfg.Settings)); err == nil {
 		t.Fatal("invalid port accepted")
 	}
 	after, _ := os.ReadFile(path)
@@ -398,7 +401,8 @@ func TestRestoreRejectsUnsupportedCapabilityWithoutWrites(t *testing.T) {
 
 func TestSettingsDraftKeepsNormalizedRevisionAndRejectsInvalidDraft(t *testing.T) {
 	path, _ := managementFixture(t)
-	draft, err := LoadSettingsDraft(path)
+	service := bootstrap.NewSettingsService(path)
+	draft, err := service.LoadDraft(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +417,7 @@ func TestSettingsDraftKeepsNormalizedRevisionAndRejectsInvalidDraft(t *testing.T
 	}
 	delete(fields, "conversationSource")
 	raw, _ = json.Marshal(fields)
-	saved, err := SaveSettingsDraft(path, string(raw), draft.Revision)
+	saved, err := service.SaveDraft(context.Background(), string(raw), draft.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +426,7 @@ func TestSettingsDraftKeepsNormalizedRevisionAndRejectsInvalidDraft(t *testing.T
 		t.Fatal("returned settings revision is not the persisted normalized revision")
 	}
 	before, _ := os.ReadFile(path)
-	if _, err := SaveSettingsDraft(path, "{fake-secret", saved.Revision); err == nil || strings.Contains(err.Error(), "fake-secret") {
+	if _, err := service.SaveDraft(context.Background(), "{fake-secret", saved.Revision); err == nil || strings.Contains(err.Error(), "fake-secret") {
 		t.Fatal("invalid settings draft accepted or leaked")
 	}
 	after, _ := os.ReadFile(path)

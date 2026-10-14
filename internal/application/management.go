@@ -11,7 +11,6 @@ import (
 	"github.com/heihei0299/pi-switch/internal/domain/revision"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
-	settingsusecase "github.com/heihei0299/pi-switch/internal/usecase/settings"
 )
 
 var ErrManagementConflict = providerusecase.ErrRevisionConflict
@@ -71,24 +70,6 @@ func RestoreConfigBackup(path, name, expected string) error {
 		}
 		return restored, nil
 	})
-}
-
-func SaveSettings(path string, settings config.Settings, expected string) error {
-	return mapSettingsError(bootstrap.NewSettingsService(path).Save(context.Background(), settings, expected))
-}
-
-func mapSettingsError(err error) error {
-	if errors.Is(err, settingsusecase.ErrRevisionConflict) {
-		return ErrManagementConflict
-	}
-	var validation *settingsusecase.ValidationError
-	if errors.As(err, &validation) {
-		return &ManagementValidationError{Message: validation.Message}
-	}
-	if errors.Is(err, fileconfig.ErrBackupDirectory) {
-		return &ManagementValidationError{Message: err.Error()}
-	}
-	return err
 }
 
 // shortcut: Native provider pages retain application error mapping, upgrade when those adapters map usecase errors directly.

@@ -1,12 +1,15 @@
 package application
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 )
 
 func TestBackupMetadataNewestFirstAndStableWhenTimesEqual(t *testing.T) {
@@ -47,11 +50,12 @@ func TestManagementKnownValidationErrorsAreSafeAndActionable(t *testing.T) {
 	}
 	settings := cfg.Settings
 	settings.Proxy.Port = 0
-	assertSafe(SaveSettings(path, settings, Revision(cfg.Settings)), "65535")
-	if _, err := SaveSettingsDraft(path, `{"conversationSource":"fake-secret"}`, Revision(cfg.Settings)); err != nil {
-		assertSafe(err, "settings JSON")
-	} else {
-		t.Fatal("invalid settings accepted")
+	service := bootstrap.NewSettingsService(path)
+	if err := service.Save(context.Background(), settings, Revision(cfg.Settings)); err == nil || !strings.Contains(err.Error(), "65535") || strings.Contains(err.Error(), "fake-secret") {
+		t.Fatalf("invalid settings error is not safe/actionable: %v", err)
+	}
+	if _, err := service.SaveDraft(context.Background(), `{"conversationSource":"fake-secret"}`, Revision(cfg.Settings)); err == nil || strings.Contains(err.Error(), "fake-secret") {
+		t.Fatalf("invalid settings draft accepted or leaked: %v", err)
 	}
 	assertSafe(RestoreConfigBackup(path, "../fake-secret", mustConfigFileRevision(t, path)), "backup name")
 	if err := os.Mkdir(path+".backups", 0755); err != nil {
