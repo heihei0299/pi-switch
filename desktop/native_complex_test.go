@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/usecase/analytics"
 )
@@ -252,7 +253,7 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 	if preview.gatewayPublishing || !tester.HasText("Published Gateway draft.") {
 		t.Fatalf("draft publish status = %q / %q", preview.jsonStatus, tester.Texts())
 	}
-	published, err := gateway.ReadCurrent()
+	published, err := bootstrap.NewGatewayService().ReadCurrent(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestNativeGatewayDraftLoadsWithoutSecretsAndUsesSharedValidation(t *testing
 
 func TestNativeComplexGatewayAndPackagesSections(t *testing.T) {
 	preview := newNativeComplexPreview()
-	preview.refreshGateway = func([]gateway.GatewaySelection) {}
+	preview.refreshGateway = func([]domaingateway.GatewaySelection) {}
 	tester := ui.NewTester(preview.view, 900, 720)
 	if err := tester.Click("Gateway Diff"); err != nil {
 		t.Fatal(err)
@@ -908,7 +909,7 @@ func TestNativeGatewayPreviewUsesSharedPlanWithoutWritingOrShowingSecrets(t *tes
 	preview.tab = 1
 	preview.gateway = loaded
 	preview.gatewayLoaded = true
-	preview.refreshGateway = func(selections []gateway.GatewaySelection) {
+	preview.refreshGateway = func(selections []domaingateway.GatewaySelection) {
 		updated, err := loadNativeGatewayPreviewForSelection(selections)
 		if err != nil {
 			t.Errorf("load selected Gateway preview: %v", err)
@@ -917,7 +918,7 @@ func TestNativeGatewayPreviewUsesSharedPlanWithoutWritingOrShowingSecrets(t *tes
 		preview.gateway = updated
 		preview.gatewaySelectionExplicit = true
 	}
-	preview.publishGateway = func(selections []gateway.GatewaySelection) {
+	preview.publishGateway = func(selections []domaingateway.GatewaySelection) {
 		updated, err := publishNativeGatewaySelection(selections)
 		if err != nil {
 			t.Errorf("publish selected Gateway preview: %v", err)
@@ -983,7 +984,7 @@ func TestNativeGatewayPreviewUsesSharedPlanWithoutWritingOrShowingSecrets(t *tes
 	if preview.gatewayPublishing || preview.gateway.pendingCount != 0 || !tester.HasText("Published selected Gateway models.") {
 		t.Fatalf("confirmed Gateway publish state = %#v / %q", preview.gateway, tester.Texts())
 	}
-	published, err := gateway.ReadCurrent()
+	published, err := bootstrap.NewGatewayService().ReadCurrent(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1048,7 @@ func TestNativeGatewayPublishRejectsConflictWithoutWriting(t *testing.T) {
 	t.Setenv("PI_SWITCH_MODELS", modelsPath)
 	t.Setenv("PI_SWITCH_CATALOG", catalogPath)
 
-	_, err := publishNativeGatewaySelection([]gateway.GatewaySelection{{Supplier: "supplier", Channel: "primary", Model: "model-a"}, {Supplier: "other", Channel: "backup", Model: "model-a"}})
+	_, err := publishNativeGatewaySelection([]domaingateway.GatewaySelection{{Supplier: "supplier", Channel: "primary", Model: "model-a"}, {Supplier: "other", Channel: "backup", Model: "model-a"}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate exposed model ids") {
 		t.Fatalf("conflicting Gateway publish error = %v", err)
 	}

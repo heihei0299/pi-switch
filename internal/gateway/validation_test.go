@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 func TestValidateProposedGatewayRejectsDuplicateExposedModel(t *testing.T) {
@@ -14,7 +15,7 @@ func TestValidateProposedGatewayRejectsDuplicateExposedModel(t *testing.T) {
 		"beta":  {Upstreams: []config.Upstream{{Name: &b, API: "openai-completions", ExposedModels: []string{"same"}}}},
 	}}
 	proposed := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy",
 			"models": []interface{}{map[string]interface{}{"id": "same"}},
 		},

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/config"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 func TestMergeGatewayExtraMigratesLegacyModelFieldsWithFixedPriority(t *testing.T) {
@@ -17,7 +18,7 @@ func TestMergeGatewayExtraMigratesLegacyModelFieldsWithFixedPriority(t *testing.
 				"id": "m1", "compat": map[string]interface{}{"legacy": true, "shared": "legacy"}, "legacyField": "keep",
 			}},
 		},
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "apiKey": "pi-switch-proxy",
 			"models": []interface{}{map[string]interface{}{
 				"id": "m1", "compat": map[string]interface{}{"fixed": true, "shared": "fixed"}, "fixedField": "wins",
@@ -25,14 +26,14 @@ func TestMergeGatewayExtraMigratesLegacyModelFieldsWithFixedPriority(t *testing.
 		},
 	}}
 	proposed := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "apiKey": "pi-switch-proxy",
 			"models": []interface{}{map[string]interface{}{"id": "m1", "contextWindow": float64(100)}},
 		},
 	}}
 	merged := MergeGatewayExtra(current, proposed)
 	providers := merged["providers"].(map[string]interface{})
-	entry := providers[gatewayChatProvider].(map[string]interface{})
+	entry := providers[domaingateway.ChatProvider].(map[string]interface{})
 	model := entry["models"].([]interface{})[0].(map[string]interface{})
 	compat := model["compat"].(map[string]interface{})
 	if compat["fixed"] != true || compat["shared"] != "fixed" || compat["legacy"] != true {
@@ -55,10 +56,10 @@ func TestMergeGatewayExtraForConfigRecognizesManagedLegacyProvider(t *testing.T)
 		"sup/main": map[string]interface{}{"models": []interface{}{map[string]interface{}{"id": "m1", "manual": true}}},
 	}}
 	proposed := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{"models": []interface{}{map[string]interface{}{"id": "m1"}}},
+		domaingateway.ChatProvider: map[string]interface{}{"models": []interface{}{map[string]interface{}{"id": "m1"}}},
 	}}
 	merged := MergeGatewayExtraForConfig(cfg, current, proposed)
-	model := merged["providers"].(map[string]interface{})[gatewayChatProvider].(map[string]interface{})["models"].([]interface{})[0].(map[string]interface{})
+	model := merged["providers"].(map[string]interface{})[domaingateway.ChatProvider].(map[string]interface{})["models"].([]interface{})[0].(map[string]interface{})
 	if model["manual"] != true {
 		t.Fatalf("managed legacy model fields = %#v", model)
 	}
@@ -84,7 +85,7 @@ func TestPublishRemovesLegacyProvidersAndKeepsThirdParty(t *testing.T) {
 		"legacy": {Upstreams: []config.Upstream{{Name: strptr("main"), API: "openai-completions", ExposedModels: []string{"m1"}}}},
 	}}
 	edited := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy",
 			"models": []interface{}{map[string]interface{}{"id": "m1"}},
 		},
@@ -107,7 +108,7 @@ func TestPublishRemovesLegacyProvidersAndKeepsThirdParty(t *testing.T) {
 	if _, ok := providers["third-party"]; !ok {
 		t.Fatalf("third-party provider was removed: %#v", providers)
 	}
-	model := providers[gatewayChatProvider].(map[string]interface{})["models"].([]interface{})[0].(map[string]interface{})
+	model := providers[domaingateway.ChatProvider].(map[string]interface{})["models"].([]interface{})[0].(map[string]interface{})
 	if model["legacyField"] != "migrated" {
 		t.Fatalf("legacy model field not migrated: %#v", model)
 	}

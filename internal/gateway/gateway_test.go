@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/filegateway"
 	"github.com/heihei0299/pi-switch/internal/config"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
 func strptr(s string) *string { return &s }
@@ -51,8 +53,8 @@ func TestPublishPlanRejectsStaleSnapshotWithoutOverwritingConcurrentChange(t *te
 	if err := os.WriteFile(path, concurrent, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := PublishPlan(plan); !errors.Is(err, errGatewayPlanStale) {
-		t.Fatalf("stale preview error = %v, want %v", err, errGatewayPlanStale)
+	if err := PublishPlan(plan); !errors.Is(err, filegateway.ErrStale) {
+		t.Fatalf("stale preview error = %v, want %v", err, filegateway.ErrStale)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -199,8 +201,8 @@ func TestFixedGatewayProvidersContract(t *testing.T) {
 		if !IsFixedGatewayProvider(p.Key) {
 			t.Fatalf("FixedGatewayProviders contains non-fixed key %q", p.Key)
 		}
-		if gatewayProviderForAPI(p.API) != p.Key {
-			t.Fatalf("api %q maps to %q, not %q", p.API, gatewayProviderForAPI(p.API), p.Key)
+		if domaingateway.ProviderForAPI(p.API) != p.Key {
+			t.Fatalf("api %q maps to %q, not %q", p.API, domaingateway.ProviderForAPI(p.API), p.Key)
 		}
 	}
 	want := map[string]string{
@@ -222,7 +224,7 @@ func TestCanonicalGatewayPlanUnifiesViews(t *testing.T) {
 	cfg.Settings.Proxy.Host = "127.0.0.1"
 	cfg.Settings.Proxy.Port = 43112
 	current := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
 			"models": []interface{}{map[string]interface{}{"id": "m1", "contextWindow": float64(100), "maxTokens": float64(10)}},
 		},
@@ -543,7 +545,7 @@ func TestPublishRejectsInvalidCanonicalPlanWithoutWrite(t *testing.T) {
 		"beta":  {Upstreams: []config.Upstream{{Name: &backup, API: "openai-completions", ExposedModels: []string{"same"}}}},
 	}}
 	edited := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "models": []interface{}{map[string]interface{}{"id": "same"}},
 		},
 	}}
@@ -575,7 +577,7 @@ func TestGeneratedPlanPreservesPublishedMetadataDraftDoesNot(t *testing.T) {
 	cfg.Settings.Proxy.Host = "127.0.0.1"
 	cfg.Settings.Proxy.Port = 43112
 	current := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
 			"models": []interface{}{map[string]interface{}{
 				"id": "m1", "contextWindow": float64(999), "maxTokens": float64(99), "name": "PublishedName",
@@ -593,7 +595,7 @@ func TestGeneratedPlanPreservesPublishedMetadataDraftDoesNot(t *testing.T) {
 	}
 
 	draft := map[string]interface{}{"providers": map[string]interface{}{
-		gatewayChatProvider: map[string]interface{}{
+		domaingateway.ChatProvider: map[string]interface{}{
 			"api": "openai-completions", "baseUrl": "http://127.0.0.1:43112/v1", "apiKey": "pi-switch-proxy", "proxy": false,
 			"models": []interface{}{map[string]interface{}{
 				"id": "m1", "contextWindow": float64(111), "maxTokens": float64(11), "name": "DraftName",
@@ -617,9 +619,9 @@ func TestGeneratedPlanPreservesPublishedMetadataDraftDoesNot(t *testing.T) {
 
 func modelByID(t *testing.T, gateway map[string]interface{}, id string) map[string]interface{} {
 	t.Helper()
-	providers, ok := getProviders(gateway)[gatewayChatProvider].(map[string]interface{})
+	providers, ok := getProviders(gateway)[domaingateway.ChatProvider].(map[string]interface{})
 	if !ok {
-		t.Fatalf("missing %s provider in %#v", gatewayChatProvider, gateway)
+		t.Fatalf("missing %s provider in %#v", domaingateway.ChatProvider, gateway)
 	}
 	for _, raw := range providers["models"].([]interface{}) {
 		model, ok := raw.(map[string]interface{})
@@ -710,4 +712,9 @@ func TestPublishNoopDoesNotTouchModelsFile(t *testing.T) {
 	if string(after) != string(original) || !info.ModTime().Equal(oldTime) {
 		t.Fatalf("no-op publish touched models.json: bytes=%q mtime=%s", after, info.ModTime())
 	}
+}
+
+func getProviders(value map[string]interface{}) map[string]interface{} {
+	providers, _ := value["providers"].(map[string]interface{})
+	return providers
 }

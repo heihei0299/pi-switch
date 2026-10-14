@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/gateway"
+	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 	"github.com/heihei0299/pi-switch/internal/store"
 )
 
@@ -81,7 +81,7 @@ func TestTuiDaemon_S1_ModelList(t *testing.T) {
 func TestTuiDaemon_S1_RefreshGatewayBuild(t *testing.T) {
 	cfg := config.DefaultConfig()
 	// BuildProposedGatewayEntry should be used - now returns providers wrapper (may be empty if no exposed)
-	proposed := gateway.BuildProposedGatewayEntry(cfg)
+	proposed := domaingateway.BuildProposedGatewayEntry(cfg)
 	if _, ok := proposed["providers"]; !ok {
 		t.Fatalf("proposed missing providers: %v", proposed)
 	}

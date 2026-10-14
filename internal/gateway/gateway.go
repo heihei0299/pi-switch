@@ -11,15 +11,6 @@ import (
 	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
-const (
-	gatewayResponsesProvider = domaingateway.ResponsesProvider
-	gatewayChatProvider      = domaingateway.ChatProvider
-	gatewayResponsesAPI      = domaingateway.ResponsesAPI
-	gatewayChatAPI           = domaingateway.ChatAPI
-)
-
-var errGatewayPlanStale = filegateway.ErrStale
-
 type FixedGatewayProvider = domaingateway.FixedGatewayProvider
 type GatewayDiagnostic = domaingateway.GatewayDiagnostic
 type GatewaySelection = domaingateway.GatewaySelection
@@ -77,11 +68,4 @@ func BuildDraftPlan(cfg domainconfig.PiSwitchConfig, current, draft map[string]i
 }
 func BuildPreviewGroups(cfg domainconfig.PiSwitchConfig, current, proposed map[string]interface{}) ([]PreviewGroup, []string) {
 	return domaingateway.BuildPreviewGroups(cfg, current, proposed)
-}
-
-// These helpers remain package-private only for legacy same-package contract tests.
-func gatewayProviderForAPI(api string) string { return domaingateway.ProviderForAPI(api) }
-func getProviders(value map[string]interface{}) map[string]interface{} {
-	providers, _ := value["providers"].(map[string]interface{})
-	return providers
 }
