@@ -2,9 +2,12 @@ package analytics
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -15,8 +18,11 @@ import (
 
 type factMemory []RequestFact
 
-func (rows factMemory) ForEachFact(window *Window, order Order, visit func(RequestFact) error) error {
+func (rows factMemory) ForEachFact(ctx context.Context, window *Window, order Order, visit func(RequestFact) error) error {
 	for _, row := range rows.selected(window, order) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := visit(row); err != nil {
 			return err
 		}
@@ -24,7 +30,10 @@ func (rows factMemory) ForEachFact(window *Window, order Order, visit func(Reque
 	return nil
 }
 
-func (rows factMemory) PageFacts(window *Window, page, limit int) ([]RequestFact, error) {
+func (rows factMemory) PageFacts(ctx context.Context, window *Window, page, limit int) ([]RequestFact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if page < 0 {
 		page = 0
 	}
@@ -66,14 +75,14 @@ type countedFactRepository struct {
 	pageFacts int
 }
 
-func (r *countedFactRepository) ForEachFact(window *Window, order Order, visit func(RequestFact) error) error {
+func (r *countedFactRepository) ForEachFact(ctx context.Context, window *Window, order Order, visit func(RequestFact) error) error {
 	r.forEach++
-	return r.rows.ForEachFact(window, order, visit)
+	return r.rows.ForEachFact(ctx, window, order, visit)
 }
 
-func (r *countedFactRepository) PageFacts(window *Window, page, limit int) ([]RequestFact, error) {
+func (r *countedFactRepository) PageFacts(ctx context.Context, window *Window, page, limit int) ([]RequestFact, error) {
 	r.pageFacts++
-	return r.rows.PageFacts(window, page, limit)
+	return r.rows.PageFacts(ctx, window, page, limit)
 }
 
 func ptr[T any](value T) *T { return &value }
@@ -266,5 +275,40 @@ func TestServiceReturnsRepositoryErrors(t *testing.T) {
 
 type failingRepository struct{ err error }
 
-func (r failingRepository) ForEachFact(*Window, Order, func(RequestFact) error) error { return r.err }
-func (r failingRepository) PageFacts(*Window, int, int) ([]RequestFact, error)        { return nil, r.err }
+func (r failingRepository) ForEachFact(context.Context, *Window, Order, func(RequestFact) error) error {
+	return r.err
+}
+func (r failingRepository) PageFacts(context.Context, *Window, int, int) ([]RequestFact, error) {
+	return nil, r.err
+}
+
+func TestContextQueriesMatchLegacyResults(t *testing.T) {
+	rows := factMemory{
+		{ID: 1, TS: ptr("2026-09-10T12:00:00Z"), Provider: ptr("p"), Model: ptr("m"), Success: ptr(true), PromptTokens: ptr(int64(10)), CompletionTokens: ptr(int64(5)), CachedTokens: ptr(int64(2)), Cost: ptr(0.25), ConversationID: ptr("c")},
+		{ID: 2, TS: ptr("2026-09-10T12:01:00Z"), Provider: ptr("p"), Model: ptr("m"), Success: ptr(false), Status: ptr(int64(502))},
+	}
+	service := NewService(rows, conversation.SourceProxy, nil)
+	legacy, err := service.Stats(nil, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withContext, err := service.StatsContext(context.Background(), nil, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(legacy, withContext) {
+		t.Fatalf("context stats changed result:\nlegacy=%+v\ncontext=%+v", legacy, withContext)
+	}
+}
+
+func TestContextQueryStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service := NewService(factMemory{{ID: 1, Success: ptr(true)}}, conversation.SourceOff, nil)
+	if _, err := service.StatsContext(ctx, nil, 0, 50); !errors.Is(err, context.Canceled) {
+		t.Fatalf("StatsContext error = %v, want context.Canceled", err)
+	}
+	if _, err := service.SummaryContext(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SummaryContext error = %v, want context.Canceled", err)
+	}
+}

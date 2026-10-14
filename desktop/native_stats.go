@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -170,6 +171,10 @@ func nativeStatsWindow(rangeChoice int, fromDate, toDate, now time.Time) (*analy
 	return &analytics.Window{From: from.UnixMilli(), To: to.UnixMilli()}, nil
 }
 func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) (nativeStatsSnapshot, error) {
+	return loadNativeStatsContext(context.Background(), requestPage, conversationPage, limit, statsFilters, sessionsFilters)
+}
+
+func loadNativeStatsContext(ctx context.Context, requestPage, conversationPage, limit int, statsFilters nativeStatsFilters, sessionsFilters nativeSessionsFilters) (nativeStatsSnapshot, error) {
 	now := time.Now()
 	requestWindow, err := nativeStatsWindow(statsFilters.requestRange, statsFilters.requestFrom, statsFilters.requestTo, now)
 	if err != nil {
@@ -191,7 +196,7 @@ func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nati
 	if err != nil {
 		return nativeStatsSnapshot{}, err
 	}
-	result, conversations, conversationTotal, err := service.StatsAndConversations(requestWindow, conversationWindow, requestPage, conversationPage, limit)
+	result, conversations, conversationTotal, err := service.StatsAndConversationsContext(ctx, requestWindow, conversationWindow, requestPage, conversationPage, limit)
 	if err != nil {
 		return nativeStatsSnapshot{}, err
 	}
@@ -300,13 +305,17 @@ func loadNativeStats(requestPage, conversationPage, limit int, statsFilters nati
 	return loaded, nil
 }
 func writeNativeStatsExport(path, format string, service analytics.Service) error {
+	return writeNativeStatsExportContext(context.Background(), path, format, service)
+}
+
+func writeNativeStatsExportContext(ctx context.Context, path, format string, service analytics.Service) error {
 	temp, err := os.CreateTemp(filepath.Dir(path), ".pi-switch-stats-export-*")
 	if err != nil {
 		return err
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	if err := service.ExportRequests(temp, format); err != nil {
+	if err := service.ExportRequestsContext(ctx, temp, format); err != nil {
 		_ = temp.Close()
 		return err
 	}
@@ -511,7 +520,7 @@ func (p *nativeStatsState) refresh(shell *desktopShell, sessions *nativeSessions
 	preview.statsError = ""
 	window.Invalidate()
 	go func() {
-		loaded, err := loadNativeStats(requestPage, conversationPage, 10, statsFilters, sessionsFilters)
+		loaded, err := loadNativeStatsContext(ctx, requestPage, conversationPage, 10, statsFilters, sessionsFilters)
 		if ctx.Err() != nil {
 			return
 		}
@@ -580,7 +589,7 @@ func (p *nativeStatsState) export(shell *desktopShell, format string) {
 				} else if path == "" {
 					status = "Export canceled."
 				} else if ctx.Err() == nil {
-					if err := writeNativeStatsExport(path, format, service); err != nil {
+					if err := writeNativeStatsExportContext(ctx, path, format, service); err != nil {
 						status = "Export failed: " + err.Error()
 					} else {
 						status = "Exported request history to " + filepath.Base(path)

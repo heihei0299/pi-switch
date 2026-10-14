@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -26,8 +27,8 @@ const (
 )
 
 type Repository interface {
-	ForEachFact(*Window, Order, func(RequestFact) error) error
-	PageFacts(*Window, int, int) ([]RequestFact, error)
+	ForEachFact(context.Context, *Window, Order, func(RequestFact) error) error
+	PageFacts(context.Context, *Window, int, int) ([]RequestFact, error)
 }
 
 type Service struct {
@@ -56,8 +57,15 @@ type Summary struct {
 // completion usage contribute tokens/cost, so a partial usage fact is never
 // summed into a total. Requests counts every successful row.
 func (s Service) Summary(window *Window) (Summary, error) {
+	return s.SummaryContext(context.Background(), window)
+}
+
+func (s Service) SummaryContext(ctx context.Context, window *Window) (Summary, error) {
 	var out Summary
-	err := s.forEachFact(window, OldestFirst, func(fact RequestFact) error {
+	err := s.forEachFact(ctx, window, OldestFirst, func(fact RequestFact) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if fact.Success == nil || !*fact.Success {
 			return nil
 		}
@@ -208,6 +216,10 @@ type StatsResponse struct {
 // ExportRequests writes the complete raw request history in chronological order.
 // Its JSON aliases and CSV columns preserve the existing logs export contract.
 func (s Service) ExportRequests(w io.Writer, format string) error {
+	return s.ExportRequestsContext(context.Background(), w, format)
+}
+
+func (s Service) ExportRequestsContext(ctx context.Context, w io.Writer, format string) error {
 	if w == nil {
 		return fmt.Errorf("stats export writer is nil")
 	}
@@ -216,7 +228,10 @@ func (s Service) ExportRequests(w io.Writer, format string) error {
 	}
 	if format == "json" {
 		requests := make([]map[string]any, 0)
-		if err := s.forEachFact(nil, OldestFirst, func(fact RequestFact) error {
+		if err := s.forEachFact(ctx, nil, OldestFirst, func(fact RequestFact) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			request := map[string]any{
 				"ts": exportValue(fact.TS), "provider": exportValue(fact.Provider), "model": exportValue(fact.Model),
 				"success": exportValue(fact.Success), "ok": exportValue(fact.Success),
@@ -245,7 +260,7 @@ func (s Service) ExportRequests(w io.Writer, format string) error {
 	if err := csvWriter.Write([]string{"timestamp", "ok", "provider", "model", "status", "latency_ms", "error", "retry", "skipped", "converted", "upstream_url", "promptTokens", "completionTokens", "cachedTokens", "reasoningTokens", "conversationId", "conversationName", "costTotal", "cost", "cached_tokens", "reasoning_tokens"}); err != nil {
 		return err
 	}
-	err := s.forEachFact(nil, OldestFirst, func(fact RequestFact) error {
+	err := s.forEachFact(ctx, nil, OldestFirst, func(fact RequestFact) error {
 		cost := ""
 		if fact.Cost != nil {
 			cost = strconv.FormatFloat(*fact.Cost, 'f', -1, 64)
@@ -280,6 +295,10 @@ func exportField[T any](value *T) string {
 }
 
 func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
+	return s.StatsContext(context.Background(), window, page, limit)
+}
+
+func (s Service) StatsContext(ctx context.Context, window *Window, page, limit int) (StatsResponse, error) {
 	matcher := s.matcher()
 	if page < 0 {
 		page = 0
@@ -302,7 +321,10 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	}
 	factIndex := 0
 
-	err := s.forEachFact(window, NewestFirst, func(fact RequestFact) error {
+	err := s.forEachFact(ctx, window, NewestFirst, func(fact RequestFact) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		response.TotalRequests++
 		if fact.Success != nil && *fact.Success {
 			response.OKRequests++
@@ -387,7 +409,10 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 	if err != nil {
 		return StatsResponse{}, err
 	}
-	recentFacts, err := s.pageFacts(window, page, limit)
+	if err := ctx.Err(); err != nil {
+		return StatsResponse{}, err
+	}
+	recentFacts, err := s.pageFacts(ctx, window, page, limit)
 	if err != nil {
 		return StatsResponse{}, err
 	}
@@ -433,14 +458,18 @@ func (s Service) Stats(window *Window, page, limit int) (StatsResponse, error) {
 // StatsAndConversations reuses Stats' conversation aggregation when both views
 // request the same window; distinct windows remain independent reads.
 func (s Service) StatsAndConversations(statsWindow, conversationWindow *Window, requestPage, conversationPage, limit int) (StatsResponse, []ConversationSummary, int, error) {
-	stats, err := s.Stats(statsWindow, requestPage, limit)
+	return s.StatsAndConversationsContext(context.Background(), statsWindow, conversationWindow, requestPage, conversationPage, limit)
+}
+
+func (s Service) StatsAndConversationsContext(ctx context.Context, statsWindow, conversationWindow *Window, requestPage, conversationPage, limit int) (StatsResponse, []ConversationSummary, int, error) {
+	stats, err := s.StatsContext(ctx, statsWindow, requestPage, limit)
 	if err != nil {
 		return StatsResponse{}, nil, 0, err
 	}
 	if sameWindow(statsWindow, conversationWindow) {
 		return stats, pageItems(stats.ByConversation, conversationPage, limit), len(stats.ByConversation), nil
 	}
-	conversations, total, err := s.Conversations(conversationWindow, conversationPage, limit)
+	conversations, total, err := s.ConversationsContext(ctx, conversationWindow, conversationPage, limit)
 	if err != nil {
 		return StatsResponse{}, nil, 0, err
 	}
@@ -455,12 +484,19 @@ func sameWindow(left, right *Window) bool {
 }
 
 func (s Service) Conversations(window *Window, page, limit int) ([]ConversationSummary, int, error) {
+	return s.ConversationsContext(context.Background(), window, page, limit)
+}
+
+func (s Service) ConversationsContext(ctx context.Context, window *Window, page, limit int) ([]ConversationSummary, int, error) {
 	if s.Source == conversation.SourceOff {
 		return []ConversationSummary{}, 0, nil
 	}
 	groups := map[string]*conversationAggregate{}
 	matcher := s.matcher()
-	err := s.forEachFact(window, NewestFirst, func(fact RequestFact) error {
+	err := s.forEachFact(ctx, window, NewestFirst, func(fact RequestFact) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		aggregateConversation(groups, fact, s.match(matcher, fact), fact.countable())
 		return nil
 	})
@@ -472,6 +508,10 @@ func (s Service) Conversations(window *Window, page, limit int) ([]ConversationS
 }
 
 func (s Service) ConversationRequests(id string, page, limit int) ([]ConversationRequestDTO, int, error) {
+	return s.ConversationRequestsContext(context.Background(), id, page, limit)
+}
+
+func (s Service) ConversationRequestsContext(ctx context.Context, id string, page, limit int) ([]ConversationRequestDTO, int, error) {
 	matcher := s.matcher()
 	if page < 0 {
 		page = 0
@@ -483,7 +523,10 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 	end := start + limit
 	matched := make([]ConversationRequestDTO, 0, limit)
 	total := 0
-	err := s.forEachFact(nil, NewestFirst, func(fact RequestFact) error {
+	err := s.forEachFact(ctx, nil, NewestFirst, func(fact RequestFact) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if s.match(matcher, fact).ID != id {
 			return nil
 		}
@@ -499,18 +542,18 @@ func (s Service) ConversationRequests(id string, page, limit int) ([]Conversatio
 	return matched, total, nil
 }
 
-func (s Service) pageFacts(window *Window, page, limit int) ([]RequestFact, error) {
+func (s Service) pageFacts(ctx context.Context, window *Window, page, limit int) ([]RequestFact, error) {
 	if s.repository == nil {
 		return nil, fmt.Errorf("stats database is nil")
 	}
-	return s.repository.PageFacts(window, page, limit)
+	return s.repository.PageFacts(ctx, window, page, limit)
 }
 
-func (s Service) forEachFact(window *Window, order Order, visit func(RequestFact) error) error {
+func (s Service) forEachFact(ctx context.Context, window *Window, order Order, visit func(RequestFact) error) error {
 	if s.repository == nil {
 		return fmt.Errorf("stats database is nil")
 	}
-	return s.repository.ForEachFact(window, order, visit)
+	return s.repository.ForEachFact(ctx, window, order, visit)
 }
 
 func (f RequestFact) countable() bool {

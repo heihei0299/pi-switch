@@ -1,7 +1,9 @@
 package sqlanalytics
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,7 +38,7 @@ func TestRepositoryForEachUsesMillisecondRightOpenWindowAndPreservesNulls(t *tes
 	insertRepositoryFact(t, db, center.Add(500*time.Millisecond).Format(time.RFC3339Nano), "edge", 1, nil)
 
 	var got []analytics.RequestFact
-	err := New(db).ForEachFact(&analytics.Window{From: center.UnixMilli(), To: center.Add(500 * time.Millisecond).UnixMilli()}, analytics.OldestFirst, func(fact analytics.RequestFact) error {
+	err := New(db).ForEachFact(context.Background(), &analytics.Window{From: center.UnixMilli(), To: center.Add(500 * time.Millisecond).UnixMilli()}, analytics.OldestFirst, func(fact analytics.RequestFact) error {
 		got = append(got, fact)
 		return nil
 	})
@@ -56,11 +58,11 @@ func TestRepositoryPageFactsIsNewestFirstAndStableByID(t *testing.T) {
 	insertRepositoryFact(t, db, "2026-09-10T12:00:00Z", "first", 1, 1)
 	insertRepositoryFact(t, db, "2026-09-10T12:01:00Z", "second", 1, 2)
 
-	first, err := New(db).PageFacts(nil, 0, 1)
+	first, err := New(db).PageFacts(context.Background(), nil, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := New(db).PageFacts(nil, 1, 1)
+	second, err := New(db).PageFacts(context.Background(), nil, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,4 +93,17 @@ func TestRepositoryWindowQueryUsesTimestampIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Fatal("timestamp window query plan did not use idx_requests_ts_epoch_ms")
+}
+
+func TestRepositoryQueriesStopOnCancellation(t *testing.T) {
+	db := openRepositoryDB(t)
+	insertRepositoryFact(t, db, "2026-09-10T12:00:00Z", "cancelled", 1, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := New(db).ForEachFact(ctx, nil, analytics.NewestFirst, func(analytics.RequestFact) error { return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ForEachFact error = %v, want context.Canceled", err)
+	}
+	if _, err := New(db).PageFacts(ctx, nil, 0, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PageFacts error = %v, want context.Canceled", err)
+	}
 }

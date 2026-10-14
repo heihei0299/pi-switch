@@ -1,6 +1,7 @@
 package sqlanalytics
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -17,7 +18,10 @@ type Repository struct {
 
 func New(db *sql.DB) Repository { return Repository{DB: db} }
 
-func (r Repository) ForEachFact(window *analytics.Window, order analytics.Order, visit func(analytics.RequestFact) error) error {
+func (r Repository) ForEachFact(ctx context.Context, window *analytics.Window, order analytics.Order, visit func(analytics.RequestFact) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.DB == nil {
 		return fmt.Errorf("stats database is nil")
 	}
@@ -32,12 +36,15 @@ func (r Repository) ForEachFact(window *analytics.Window, order analytics.Order,
 		direction = "ASC"
 	}
 	query += ` ORDER BY id ` + direction
-	rows, err := r.DB.Query(query, args...)
+	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		fact, err := scanFact(rows)
 		if err != nil {
 			return err
@@ -49,7 +56,10 @@ func (r Repository) ForEachFact(window *analytics.Window, order analytics.Order,
 	return rows.Err()
 }
 
-func (r Repository) PageFacts(window *analytics.Window, page, limit int) ([]analytics.RequestFact, error) {
+func (r Repository) PageFacts(ctx context.Context, window *analytics.Window, page, limit int) ([]analytics.RequestFact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if r.DB == nil {
 		return nil, fmt.Errorf("stats database is nil")
 	}
@@ -67,13 +77,16 @@ func (r Repository) PageFacts(window *analytics.Window, page, limit int) ([]anal
 	}
 	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, page*limit)
-	rows, err := r.DB.Query(query, args...)
+	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	facts := make([]analytics.RequestFact, 0, limit)
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		fact, err := scanFact(rows)
 		if err != nil {
 			return nil, err

@@ -1,6 +1,7 @@
 package analytics_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -35,10 +36,11 @@ func BenchmarkStatsHistory(b *testing.B) {
 			} {
 				b.Run(tc.name, func(b *testing.B) {
 					service := analytics.NewService(sqlanalytics.New(db), tc.source, tc.matches)
+					ctx := context.Background()
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						if _, err := service.Stats(nil, 0, 50); err != nil {
+						if _, err := service.StatsContext(ctx, nil, 0, 50); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -62,10 +64,11 @@ func BenchmarkStatsHistorySelectiveWindow(b *testing.B) {
 				To:   base.Add(51 * 24 * time.Hour).UnixMilli(),
 			}
 			service := analytics.NewService(sqlanalytics.New(db), conversation.SourceOff, nil)
+			ctx := context.Background()
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := service.Stats(window, 0, 50); err != nil {
+				if _, err := service.StatsContext(ctx, window, 0, 50); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -94,19 +97,20 @@ func BenchmarkStatsAndConversations(b *testing.B) {
 				{name: "shared_window", shared: true},
 			} {
 				b.Run(tc.name, func(b *testing.B) {
+					ctx := context.Background()
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						if tc.shared {
-							if _, _, _, err := service.StatsAndConversations(nil, nil, 0, 0, 50); err != nil {
+							if _, _, _, err := service.StatsAndConversationsContext(ctx, nil, nil, 0, 0, 50); err != nil {
 								b.Fatal(err)
 							}
 							continue
 						}
-						if _, err := service.Stats(nil, 0, 50); err != nil {
+						if _, err := service.StatsContext(ctx, nil, 0, 50); err != nil {
 							b.Fatal(err)
 						}
-						if _, _, err := service.Conversations(nil, 0, 50); err != nil {
+						if _, _, err := service.ConversationsContext(ctx, nil, 0, 50); err != nil {
 							b.Fatal(err)
 						}
 					}
