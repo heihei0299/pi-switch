@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/heihei0299/pi-switch/internal/store"
-	"github.com/heihei0299/pi-switch/internal/usage"
 )
 
 // Legacy request-log compatibility (旧版本请求日志兼容):
@@ -306,56 +305,6 @@ func legacyFloatPointer(value map[string]interface{}, keys ...string) *float64 {
 		}
 	}
 	return nil
-}
-
-// appendLegacyLog appends one old-shape JSON line to requests.log.
-func appendLegacyLog(entry map[string]interface{}) error {
-	path := legacyLogPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	b, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// legacyLogEntry builds the old-shape log line from a completed request.
-func legacyLogEntry(ts, provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, status int, errMsg, upstreamURL string) map[string]interface{} {
-	prompt, completion, cached, reasoning := summary.NullableTokens()
-	entry := map[string]interface{}{
-		"ts": ts, "provider": provider, "model": model, "ok": success, "status": status,
-		"upstreamUrl":  upstreamURL,
-		"promptTokens": prompt, "completionTokens": completion, "cachedTokens": cached, "reasoningTokens": reasoning,
-	}
-	if errMsg != "" {
-		entry["error"] = errMsg
-	} else {
-		entry["error"] = nil
-	}
-	if cost != nil {
-		entry["costTotal"] = *cost
-	}
-	if convID != "" && convID != "unlabeled" {
-		entry["conversationId"] = convID
-	} else {
-		entry["conversationId"] = nil
-	}
-	if convName != "" {
-		entry["conversationName"] = convName
-	} else {
-		entry["conversationName"] = nil
-	}
-	return entry
 }
 
 // ImportLegacyOnStartup imports requests.log asynchronously. The listener is

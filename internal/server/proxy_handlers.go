@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,11 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	httpinfer "github.com/heihei0299/pi-switch/internal/adapters/inbound/httpinfer"
 	proxyadapter "github.com/heihei0299/pi-switch/internal/adapters/outbound/proxy"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/domain/conversation"
-	"github.com/heihei0299/pi-switch/internal/store"
 	"github.com/heihei0299/pi-switch/internal/usage"
 	"github.com/heihei0299/pi-switch/internal/usecase/inference"
+	requestlog "github.com/heihei0299/pi-switch/internal/usecase/requestlog"
 )
 
 func handleModels(c *gin.Context) {
@@ -287,25 +289,16 @@ func handleStream(c *gin.Context, cfg config.PiSwitchConfig, prepared inference.
 }
 
 func logRequest(provider, model string, success bool, summary *usage.UsageSummary, cost *float64, convID, convName string, latency int64, status int, errMsg, upstreamURL string) {
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	succ := 0
-	if success {
-		succ = 1
+	result := bootstrap.NewRequestLogService().Record(context.Background(), requestlog.Record{
+		TS: time.Now().UTC().Format(time.RFC3339Nano), Provider: provider, Model: model, Success: success,
+		Usage: summary, Cost: cost, ConversationID: convID, ConversationName: convName,
+		LatencyMs: latency, Status: status, Error: errMsg, UpstreamURL: upstreamURL,
+	})
+	if result.DatabaseError != nil {
+		log.Printf("request log database: %v", result.DatabaseError)
 	}
-	var costVal interface{}
-	if cost != nil {
-		costVal = *cost
-	}
-	prompt, completion, cached, reasoning := summary.NullableTokens()
-	entry := legacyLogEntry(ts, provider, model, success, summary, cost, convID, convName, status, errMsg, upstreamURL)
-	if db, err := store.GetDB(); err != nil {
-		log.Printf("request log database: %v", err)
-	} else if _, err := db.Exec(`INSERT INTO requests(ts,provider,model,success,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,cost,conversation_id,conversation_name,latency_ms,status,error,upstream_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''))`,
-		ts, provider, model, succ, prompt, completion, cached, reasoning, costVal, convID, convName, latency, status, errMsg, upstreamURL); err != nil {
-		log.Printf("request log insert: %v", err)
-	}
-	if err := appendLegacyLog(entry); err != nil {
-		log.Printf("request log legacy: %v", err)
+	if result.LegacyError != nil {
+		log.Printf("request log legacy: %v", result.LegacyError)
 	}
 }
 
