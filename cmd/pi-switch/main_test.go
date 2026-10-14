@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/daemon"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
-	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 	"golang.org/x/sys/unix"
 )
 
@@ -56,7 +57,7 @@ func TestStopDaemonReportsOperationLockFailure(t *testing.T) {
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 
-	code, out, errOut := runCLIStreams(t, func() int { return stopDaemon(daemon.Proxy) })
+	code, out, errOut := runCLIStreams(t, func() int { return stopDaemon(proxycontrol.Proxy) })
 	if code == 0 || out != "" || !strings.Contains(errOut, "already in progress") {
 		t.Fatalf("stop CLI = code %d, stdout %q, stderr %q; want failure on stderr", code, out, errOut)
 	}

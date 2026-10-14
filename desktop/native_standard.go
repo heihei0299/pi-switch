@@ -7,8 +7,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/application"
-	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
 type nativeStandardPages struct {
@@ -140,7 +140,7 @@ func nativeManagementError(err error) string {
 	if errors.Is(err, application.ErrManagementConflict) {
 		return err.Error()
 	}
-	if errors.Is(err, daemon.ErrPortInUse) {
+	if errors.Is(err, proxycontrol.ErrPortInUse) {
 		return "Proxy port is occupied by an unverified listener; refusing takeover. Use ss -tlnp to inspect the listener."
 	}
 	if errors.Is(err, profile.ErrProfileExists) {

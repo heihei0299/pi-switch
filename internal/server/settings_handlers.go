@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
-	"github.com/heihei0299/pi-switch/internal/daemon"
 	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 	settingsusecase "github.com/heihei0299/pi-switch/internal/usecase/settings"
 )
 
@@ -38,7 +38,7 @@ func handleBackups(c *gin.Context) {
 }
 
 func handleProxyStatus(c *gin.Context) {
-	res, _ := daemon.Status(daemon.Proxy)
+	res, _ := bootstrap.NewProxyControlService().Status(proxycontrol.Proxy)
 	c.JSON(200, gin.H{"running": res.Running, "message": res.Message, "pid": res.Pid, "host": res.Host, "port": res.Port, "startedAt": res.StartedAt})
 }
 func handleWebUIInfo(c *gin.Context) {
@@ -50,20 +50,20 @@ func handleWebUIInfo(c *gin.Context) {
 
 func handleInit(c *gin.Context) { c.JSON(501, notImplemented("config init")) }
 
-// proxyStartError maps a daemon.Start failure onto the HTTP answer.
+// proxyStartError maps a process-start failure onto the HTTP answer.
 //
 // It classifies by error kind, not by text: the previous version matched
 // `strings.Contains(err.Error(), "already in use")`, so the answer depended on wording
 // owned by the daemon package and free to change.
 //
-// Shape: every error carrying daemon.ErrPortInUse gets {"error":…, "message":…}
+// Shape: every error carrying proxycontrol.ErrPortInUse gets {"error":…, "message":…}
 // (callers read the second field), everything else gets {"error":…}. That now includes
 // the unmanaged-listener failures, which previously got the plain shape because the
 // words the old check looked for appear only in the log-derived failure — the extra
 // field there is the intended consequence of classifying by kind, not drift.
 func proxyStartError(err error) gin.H {
 	body := gin.H{"error": err.Error()}
-	if errors.Is(err, daemon.ErrPortInUse) {
+	if errors.Is(err, proxycontrol.ErrPortInUse) {
 		body["message"] = err.Error()
 	}
 	return body
@@ -99,7 +99,7 @@ func handleProxyStart(c *gin.Context) {
 		// If body empty or missing daemon, treat as true to satisfy already running/EADDRINUSE tests
 		if len(raw) == 0 || strings.Contains(strings.ToLower(string(raw)), "daemon") == false {
 			// keep false -> will still handle as daemon start for test compatibility
-			// But we want to trigger daemon.Start for tests that send daemon:true
+			// But we want to trigger proxy control start for tests that send daemon:true
 			// If daemon false and no query, we still try to start as daemon to handle EADDRINUSE test
 		}
 	}
@@ -112,7 +112,7 @@ func handleProxyStart(c *gin.Context) {
 		port = 43112
 	}
 	// If daemon flag not set but request is POST /api/proxy/start, we still attempt daemon start to satisfy tests
-	// Determine if we should call daemon.Start: if body.Daemon or raw contains daemon:true or query daemon
+	// Determine if we should call proxy control start: if body.Daemon or raw contains daemon:true or query daemon
 	shouldDaemon := body.Daemon
 	if !shouldDaemon && len(raw) > 0 {
 		var m map[string]interface{}
@@ -135,7 +135,7 @@ func handleProxyStart(c *gin.Context) {
 		}
 	}
 	if shouldDaemon {
-		res, err := daemon.Start(daemon.Proxy, host, uint16(port))
+		res, err := bootstrap.NewProxyControlService().Start(proxycontrol.Proxy, host, uint16(port))
 		if err != nil {
 			c.JSON(500, proxyStartError(err))
 			return
@@ -150,7 +150,7 @@ func handleProxyStart(c *gin.Context) {
 	c.JSON(501, notImplemented("in-process proxy start (pass daemon:true, or host and port, to start the daemon)"))
 }
 func handleProxyStop(c *gin.Context) {
-	res, err := daemon.Stop(daemon.Proxy)
+	res, err := bootstrap.NewProxyControlService().Stop(proxycontrol.Proxy)
 	if err != nil {
 		c.JSON(500, managementError("unable to stop Proxy"))
 		return

@@ -13,8 +13,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/profile"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
 func TestNativeStandardNavigationAndEmptyStates(t *testing.T) {
@@ -281,7 +281,7 @@ func TestNativeProxySnapshotDistinguishesUnknownIdentityAndActualAddress(t *test
 		t.Fatal("unchecked identity was healthy")
 	}
 	pid, host, port := uint32(12345), "2001:db8::1", uint16(1234)
-	state = nativeProxyStatus{checked: true, checkedAt: "2026-10-10T22:00:00-07:00", result: daemon.DaemonResult{Running: true, Pid: &pid, Host: &host, Port: &port}}
+	state = nativeProxyStatus{checked: true, checkedAt: "2026-10-10T22:00:00-07:00", result: proxycontrol.Result{Running: true, Pid: &pid, Host: &host, Port: &port}}
 	tester = ui.NewTester(state.view, 1000, 800)
 	if !tester.HasText("Managed PID: 12345") || !tester.HasText("Actual listener: [2001:db8::1]:1234") {
 		t.Fatal("actual listener identity missing")
@@ -291,7 +291,7 @@ func TestNativeProxySnapshotDistinguishesUnknownIdentityAndActualAddress(t *test
 	if tester.HasText("Managed Proxy identity and health verified.") || !tester.HasText("Proxy identity and health: unknown (check failed).") {
 		t.Fatal("failed refresh reported verified identity")
 	}
-	if strings.Contains(nativeManagementError(fmt.Errorf("wrapped: %w", daemon.ErrPortInUse)), "takeover") == false {
+	if strings.Contains(nativeManagementError(fmt.Errorf("wrapped: %w", proxycontrol.ErrPortInUse)), "takeover") == false {
 		t.Fatal("port owner refusal missing")
 	}
 }

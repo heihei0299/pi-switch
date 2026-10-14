@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
 type nativeProxyStatus struct {
-	result          daemon.DaemonResult
+	result          proxycontrol.Result
 	checked, failed bool
 	checkedAt       string
 }
@@ -46,43 +47,46 @@ type nativeProxyController struct {
 	stopConfirm bool
 }
 
-func (p *nativeProxyController) service() (daemon.Service, error) {
+func (p *nativeProxyController) service() (proxycontrol.Target, error) {
 	executable, err := proxyExecutable()
 	if err != nil {
-		return daemon.Service{}, err
+		return proxycontrol.Target{}, err
 	}
-	service := daemon.Proxy
-	service.Executable = executable
-	return service, nil
+	return proxycontrol.Target{Name: proxycontrol.Proxy.Name, Executable: executable}, nil
 }
 
 func (p *nativeProxyController) start(shell *desktopShell) {
-	p.runTask(shell, func() (daemon.DaemonResult, error) {
-		status, err := daemon.Status(daemon.Proxy)
+	p.runTask(shell, func() (proxycontrol.Result, error) {
+		control := bootstrap.NewProxyControlService()
+		status, err := control.Status(proxycontrol.Proxy)
 		if err != nil || status.Running {
 			return status, err
 		}
 		host, port, err := desktopProxyAddress()
 		if err != nil {
-			return daemon.DaemonResult{}, err
+			return proxycontrol.Result{}, err
 		}
 		service, err := p.service()
 		if err != nil {
-			return daemon.DaemonResult{}, err
+			return proxycontrol.Result{}, err
 		}
-		return daemon.Start(service, host, port)
+		return control.Start(service, host, port)
 	})
 }
 
 func (p *nativeProxyController) stop(shell *desktopShell) {
-	p.runTask(shell, func() (daemon.DaemonResult, error) { return daemon.Stop(daemon.Proxy) })
+	p.runTask(shell, func() (proxycontrol.Result, error) {
+		return bootstrap.NewProxyControlService().Stop(proxycontrol.Proxy)
+	})
 }
 
 func (p *nativeProxyController) refresh(shell *desktopShell) {
-	p.runTask(shell, func() (daemon.DaemonResult, error) { return daemon.Status(daemon.Proxy) })
+	p.runTask(shell, func() (proxycontrol.Result, error) {
+		return bootstrap.NewProxyControlService().Status(proxycontrol.Proxy)
+	})
 }
 
-func (p *nativeProxyController) runTask(shell *desktopShell, run func() (daemon.DaemonResult, error)) {
+func (p *nativeProxyController) runTask(shell *desktopShell, run func() (proxycontrol.Result, error)) {
 	if p.busy || shell.exiting || shell.window == nil || shell.window.IsDestroyed() {
 		return
 	}

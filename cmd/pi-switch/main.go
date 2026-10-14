@@ -11,13 +11,13 @@ import (
 
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
-	"github.com/heihei0299/pi-switch/internal/daemon"
 	"github.com/heihei0299/pi-switch/internal/gateway"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
 	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
 var (
@@ -221,7 +221,7 @@ func startWebUIMode(host string, port int, isDaemon bool) {
 		// Resolve before spawning so an exposed bind without credentials fails
 		// here, and so a generated password already exists for the child.
 		mustResolveBindAuth(host)
-		res, err := daemon.Start(daemon.WebUI, host, uint16(port))
+		res, err := bootstrap.NewProxyControlService().Start(proxycontrol.WebUI, host, uint16(port))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
@@ -249,7 +249,7 @@ func handleProxy(args []string) {
 		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43112)
 		if isDaemon {
 			mustResolveBindAuth(host)
-			res, err := daemon.Start(daemon.Proxy, host, uint16(port))
+			res, err := bootstrap.NewProxyControlService().Start(proxycontrol.Proxy, host, uint16(port))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
 				os.Exit(1)
@@ -263,11 +263,11 @@ func handleProxy(args []string) {
 		}
 		startProxy(host, port)
 	case "stop":
-		if stopDaemon(daemon.Proxy) != 0 {
+		if stopDaemon(proxycontrol.Proxy) != 0 {
 			os.Exit(1)
 		}
 	case "status":
-		res, _ := daemon.Status(daemon.Proxy)
+		res, _ := bootstrap.NewProxyControlService().Status(proxycontrol.Proxy)
 		fmt.Println(res.Message)
 		if !res.Running {
 			os.Exit(1)
@@ -277,7 +277,7 @@ func handleProxy(args []string) {
 		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43112)
 		if isDaemon {
 			mustResolveBindAuth(host)
-			res, err := daemon.Start(daemon.Proxy, host, uint16(port))
+			res, err := bootstrap.NewProxyControlService().Start(proxycontrol.Proxy, host, uint16(port))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
 				os.Exit(1)
@@ -306,11 +306,11 @@ func handleWebUI(args []string) {
 		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43110)
 		startWebUIMode(host, port, isDaemon)
 	case "stop":
-		if stopDaemon(daemon.WebUI) != 0 {
+		if stopDaemon(proxycontrol.WebUI) != 0 {
 			os.Exit(1)
 		}
 	case "status":
-		res, _ := daemon.Status(daemon.WebUI)
+		res, _ := bootstrap.NewProxyControlService().Status(proxycontrol.WebUI)
 		fmt.Println(res.Message)
 		if !res.Running {
 			os.Exit(1)
@@ -321,8 +321,8 @@ func handleWebUI(args []string) {
 	}
 }
 
-func stopDaemon(service daemon.Service) int {
-	res, err := daemon.Stop(service)
+func stopDaemon(service proxycontrol.Target) int {
+	res, err := bootstrap.NewProxyControlService().Stop(service)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -871,11 +871,11 @@ func handleDoctor() int {
 		}
 	}
 
-	proxyRes, _ := daemon.Status(daemon.Proxy)
+	proxyRes, _ := bootstrap.NewProxyControlService().Status(proxycontrol.Proxy)
 	fmt.Printf("proxy daemon: %s\n", daemonSummary(proxyRes))
 	// An already-running listener bound beyond loopback without a password is a
 	// real exposure; anything else is just a fact to report.
-	webRes, _ := daemon.Status(daemon.WebUI)
+	webRes, _ := bootstrap.NewProxyControlService().Status(proxycontrol.WebUI)
 	if webRes.Running && !server.IsLoopback(derefString(webRes.Host)) && server.WebUIPasswordConfigured() == "" {
 		fmt.Printf("webui daemon: running on %s with no password, so the management API is exposed\n", derefString(webRes.Host))
 		problems++
@@ -902,7 +902,7 @@ func handleDoctor() int {
 // daemonSummary reports the daemon state without printing pointer addresses and
 // without discarding the explanation Status computed (it returns Running=false
 // with a reason when the process is alive but its port does not answer).
-func daemonSummary(res daemon.DaemonResult) string {
+func daemonSummary(res proxycontrol.Result) string {
 	if !res.Running {
 		if res.Message != "" {
 			return "not running: " + res.Message

@@ -10,7 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/daemon"
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 	"golang.org/x/sys/unix"
 )
 
@@ -51,13 +52,13 @@ func TestProxyStart_EmptyRequestDoesNotClaimTheProxyIsRunning(t *testing.T) {
 // "already in use" in the error text. A typed error whose message does NOT contain
 // those words must still be recognised, which is only possible by kind.
 //
-// The mapping is exercised directly because handleProxyStart calls daemon.Start
+// The mapping is exercised directly because handleProxyStart calls the proxy-control usecase
 // itself, so the only way to feed it a specific error is through a daemon that
 // really fails — and that route always produces the familiar wording, which cannot
 // distinguish the two implementations.
 func TestProxyStartError_ClassifiesByKindNotByWording(t *testing.T) {
 	// Deliberately free of the phrase the old implementation looked for.
-	err := fmt.Errorf("bind failed: %w", daemon.ErrPortInUse)
+	err := fmt.Errorf("bind failed: %w", proxycontrol.ErrPortInUse)
 
 	body := proxyStartError(err)
 	if _, ok := body["message"]; !ok {

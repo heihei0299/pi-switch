@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/heihei0299/pi-switch/internal/daemon"
+	"github.com/heihei0299/pi-switch/internal/adapters/outbound/daemon"
 )
 
 func init() { gin.SetMode(gin.TestMode) }

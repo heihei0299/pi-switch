@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
 
 type Service struct {
@@ -30,7 +32,7 @@ var WebUI = Service{PidFile: "webui.pid", LogFile: "webui.log", Subcommand: "web
 // ErrPortInUse marks a start failure caused by another listener owning the port.
 // Callers must match it with errors.Is instead of looking for the words in the
 // message: the wording is for operators and may change.
-var ErrPortInUse = errors.New("port already in use")
+var ErrPortInUse = proxycontrol.ErrPortInUse
 
 func ServiceByName(name string) *Service {
 	switch name {
