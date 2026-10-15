@@ -92,14 +92,14 @@ desktop/main.go + desktop/shell.go
   → internal/usecase/inference
       Decode → Route → Validate/Clamp → Protocol Plan
   → internal/adapters/outbound/proxy（构造并发送上游请求）
-  → internal/adapters/inbound/httpinfer（status/header/body/SSE/Flush）
+  → internal/adapters/inbound/httpinfer（流式 status/header/body/SSE/Flush；上游流式 passthrough）
   → usage/cost 事实归一化
   → internal/usecase/requestlog
       ├── outbound/requestlog.SQLite
       └── outbound/requestlog.LegacyFile
 ```
 
-`internal/adapters/outbound/proxy` 只负责上游请求构造、header 处理和 HTTP 调用；它不持有 `http.ResponseWriter`，不调用 `WriteHeader`、`Flush` 或写客户端 body。`internal/adapters/inbound/httpinfer` 保留客户端 status/header、SSE 字节顺序、flush 和取消语义。
+`internal/adapters/outbound/proxy` 只负责上游请求构造、header 处理和 HTTP 调用；它不持有 `http.ResponseWriter`，不调用 `WriteHeader`、`Flush` 或写客户端 body。`internal/server` 作为 inbound adapter 负责非流式与错误响应的客户端 HTTP status/header/body 写入；`internal/adapters/inbound/httpinfer` 只适配流式 status/header/body、SSE、flush，以及上游流式 passthrough。
 
 `internal/usecase/inference` 负责流式/非流式共用的路由、协议计划、上游结果归一化和取消处理；HTTP handler 只做输入输出协议协调。裸 model ID、`/v1/*`、错误状态码、工具调用、多轮历史、限额和失败事实记录保持兼容。
 

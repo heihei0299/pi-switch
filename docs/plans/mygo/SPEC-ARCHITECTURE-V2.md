@@ -140,7 +140,7 @@ internal/
 
 - 代理请求链由 `internal/server`、`internal/usecase/inference`、`internal/adapters/outbound/proxy` 和 `internal/adapters/inbound/httpinfer` 协作完成：`Decode → Route → Validate/Clamp → Protocol Plan → Outbound → Response/Stream → Usage/Cost → RequestLog`。
 - 统一流式与非流式共享的 **路由选择、上游请求构造、事实归一化**；流式转换独立实现，避免为了复用而牺牲 SSE backpressure、flush 和错误语义。
-- outbound proxy 只访问上游，不持有客户端 `http.ResponseWriter`；客户端 status/header/body/SSE/flush 由 inbound `httpinfer` 适配。
+- outbound proxy 只访问上游，不持有客户端 `http.ResponseWriter`；`internal/server` 作为 inbound adapter 负责非流式与错误响应的客户端 HTTP 写入，`internal/adapters/inbound/httpinfer` 只适配流式 status/header/body、SSE、flush 及上游流式 passthrough。
 - 保留 `/v1/*` 路径、状态码、错误 envelope、模型裸 ID、失败时记录事实、工具调用和多轮历史、取消与限额规则。
 - 入站 context 显式贯穿 outbound 请求、数据库查询等可取消工作；不可将 `Context` 长期保存在 service struct 中。已经开始且必须提交的文件/进程副作用，需要明确提交点，不因 UI 退出声称已回滚。
 - Proxy 是独立 daemon，启动/停止必须验证进程身份与健康，不得接管未验证监听者。
