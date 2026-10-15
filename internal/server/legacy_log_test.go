@@ -103,12 +103,25 @@ func TestLegacyLog_RequeryDoesNotDuplicate(t *testing.T) {
 
 // T3: 新请求双写请求日志（旧字段形状）与 SQLite
 func TestLegacyLog_NewRequestDualWritesLog(t *testing.T) {
-	t.Skip("failover removed, test skipped")
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "requests.db")
 	mock := newMockUpstream(t, nil, nil)
 	defer mock.Close()
-	cfgPath := writeTempConfig(t, dir, mock.URL, true)
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := fmt.Sprintf(`{
+		"version":2,
+		"current":"test-provider",
+		"profiles":{"test-provider":{
+			"api":"openai-completions",
+			"responsesMode":"auto",
+			"upstreams":[{"name":"main","api":"openai-completions","responsesMode":"auto","baseUrl":%q,"apiKey":"sk-test",
+				"models":[{"id":"gpt-4o-mini","contextWindow":128000,"maxTokens":16384,"cost":{"input":0.15,"output":0.6,"cacheRead":0.075}}],
+				"exposedModels":["gpt-4o-mini"]}]}},
+		"settings":{"providerPrefix":"pi-switch","writeMode":"gateway","gatewayApi":"openai-completions","proxy":{"host":"127.0.0.1","port":43112},"web":{"host":"127.0.0.1","port":43110},"conversationSource":"sessionScan"}
+	}`, mock.URL)
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 	t.Setenv("PI_SWITCH_CONFIG", cfgPath)
 	t.Setenv("PI_SWITCH_DB", dbPath)
 
