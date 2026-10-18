@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/textproto"
 )
 
 type ModelCost struct {
@@ -239,7 +239,7 @@ func MergeHeaders(profile, channel map[string]string) map[string]string {
 	for _, source := range []map[string]string{profile, channel} {
 		for key, value := range source {
 			if key != "" {
-				merged[http.CanonicalHeaderKey(key)] = value
+				merged[textproto.CanonicalMIMEHeaderKey(key)] = value
 			}
 		}
 	}
