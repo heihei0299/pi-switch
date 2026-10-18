@@ -4,7 +4,7 @@ import "testing"
 
 // RED: registry must resolve the OpenAI bidirectional + Anthropic pairs
 // that handleChatCompletions/handleStream currently hard-code in switch statements.
-// Contract: docs/system-contract.md §2.4 and the IMP-04 matrix define the supported inbound/provider/mode combinations.
+// Contract: archive/docs/system-contract.md §2.4 and the IMP-04 matrix define the supported inbound/provider/mode combinations.
 func TestRegistry_PlanRequestPairs(t *testing.T) {
 	cases := []struct {
 		name     string

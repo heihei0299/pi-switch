@@ -86,7 +86,7 @@ func TestRustArtifactsRemoved(t *testing.T) {
 	}
 
 	// Current user-facing docs should not describe the retired Rust implementation.
-	for _, p := range []string{"README.md", "docs/management-api.md"} {
+	for _, p := range []string{"README.md", "archive/docs/management-api.md"} {
 		full := filepath.Join(repoRoot, p)
 		if data, err := os.ReadFile(full); err == nil {
 			content := string(data)

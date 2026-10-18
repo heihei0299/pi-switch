@@ -10,7 +10,7 @@ import (
 	"github.com/heihei0299/pi-switch/internal/domain/provider"
 )
 
-// Contract: docs/system-contract.md §2.4 requires one outbound path for URL, headers, UA, affinity, and timeout policy.
+// Contract: archive/docs/system-contract.md §2.4 requires one outbound path for URL, headers, UA, affinity, and timeout policy.
 func TestBuildOutboundRequestMergesPolicyAndMetadata(t *testing.T) {
 	profileUserAgent := "profile-agent"
 	globalUserAgent := "global-agent"

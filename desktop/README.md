@@ -59,4 +59,4 @@ Run from the repository root in a real Linux GUI session. Replace the CLI path w
 )
 ```
 
-Use only fake credentials and controlled local upstream fixtures. Keep these same data-path variables when checking managed Proxy with the CLI; window close/hide and GUI quit do **not** stop Proxy. Stop only the identity-verified test service explicitly. A compile or headless widget test does not establish the mandatory Wayland/niri, IME, keyboard, scaling, theme, tray, or managed-Proxy GUI gates; record missing evidence as BLOCK in the [T02 report](../docs/test-reports/mygo-t02-native-standard-2026-10-10.md).
+Use only fake credentials and controlled local upstream fixtures. Keep these same data-path variables when checking managed Proxy with the CLI; window close/hide and GUI quit do **not** stop Proxy. Stop only the identity-verified test service explicitly. A compile or headless widget test does not establish the mandatory Wayland/niri, IME, keyboard, scaling, theme, tray, or managed-Proxy GUI gates; record missing evidence as BLOCK in the [T02 report](../archive/docs/test-reports/mygo-t02-native-standard-2026-10-10.md).
