@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -118,11 +119,21 @@ func transportFailure(ctx context.Context, err error, upstreamURL string) NonStr
 	}
 }
 
+const maxNonStreamResponseBytes = 32 << 20
+
+var errResponseTooLarge = errors.New("upstream response exceeds the 32 MiB limit")
+
 func readResponse(ctx context.Context, response OutboundResponse) ([]byte, error) {
-	body, err := io.ReadAll(response.Body)
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxNonStreamResponseBytes+1))
 	_ = response.Body.Close()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
 	}
-	return body, err
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxNonStreamResponseBytes {
+		return nil, errResponseTooLarge
+	}
+	return body, nil
 }

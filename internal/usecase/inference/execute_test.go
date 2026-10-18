@@ -143,3 +143,69 @@ func TestExecuteNonStreamCanceledRetryReturnsNoResponse(t *testing.T) {
 		t.Fatalf("outcome = %+v, calls=%d; want logged cancellation without response", result, calls)
 	}
 }
+
+func TestReadResponseSizeLimit(t *testing.T) {
+	const limit = 32 << 20
+	for _, size := range []int{limit, limit + 1024} {
+		body := &generatedBytesBody{remaining: size}
+		data, err := readResponse(context.Background(), OutboundResponse{Body: body})
+		if !body.closed {
+			t.Fatal("response body not closed")
+		}
+		if size == limit {
+			if err != nil || len(data) != size {
+				t.Fatalf("exact limit: len=%d err=%v", len(data), err)
+			}
+		} else if err == nil || len(data) != 0 || body.remaining != 1023 {
+			t.Fatalf("over limit: len=%d err=%v remaining=%d", len(data), err, body.remaining)
+		}
+	}
+}
+
+func TestExecuteNonStreamRejectsOversizedResponse(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
+			plan, err := protocol.PlanRequest("chat", protocol.OpenAIChat, "auto")
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared := PreparedRequest{Model: "model", ProtocolPlan: plan, Body: map[string]interface{}{"model": "model"}, sourceBody: map[string]interface{}{"model": "model"}}
+			body := &generatedBytesBody{remaining: maxNonStreamResponseBytes + 1024}
+			calls := 0
+			builder := func([]byte) (OutboundRequest, error) {
+				return testOutbound(func(context.Context) (OutboundResponse, error) {
+					calls++
+					if retry && calls == 1 {
+						return testResponse(http.StatusBadRequest, `{"type":"invalid_request_error"}`), nil
+					}
+					return OutboundResponse{Status: status, Body: body}, nil
+				}), nil
+			}
+			result := ExecuteNonStream(context.Background(), prepared, builder)
+			wantCalls := 1
+			if retry {
+				wantCalls = 2
+			}
+			if result.Kind != NonStreamOutcomeError || result.Status != http.StatusBadGateway || !result.ShouldLog || result.Error != errResponseTooLarge.Error() || len(result.Body) != 0 || !body.closed || calls != wantCalls {
+				t.Fatalf("retry=%v status=%d: result=%+v closed=%v calls=%d", retry, status, result, body.closed, calls)
+			}
+		}
+	}
+}
+
+func TestReadResponsePreservesReadErrorAndCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		body := &relayTestBody{chunks: [][]byte{[]byte("partial")}, err: io.ErrUnexpectedEOF}
+		wantErr := error(io.ErrUnexpectedEOF)
+		if canceled {
+			body.cancel = cancel
+			wantErr = context.Canceled
+		}
+		data, err := readResponse(ctx, OutboundResponse{Body: body})
+		cancel()
+		if err != wantErr || len(data) != 0 || !body.closed {
+			t.Fatalf("canceled=%v data=%q error=%v closed=%v", canceled, data, err, body.closed)
+		}
+	}
+}
