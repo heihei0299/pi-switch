@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo"
+)
 
 func TestDesktopTasksRejectLateAndClosedResults(t *testing.T) {
 	tasks := desktopTasks{}
@@ -26,5 +33,34 @@ func TestDesktopTasksRejectLateAndClosedResults(t *testing.T) {
 	}
 	if _, _, ok := tasks.begin("stats"); ok {
 		t.Fatal("closed task started another operation")
+	}
+}
+
+func TestStandardTaskPassesCancellationToWorker(t *testing.T) {
+	shell := &desktopShell{window: &mygo.Window{}}
+	defer shell.tasks.close()
+	started := make(chan struct{})
+	finished := make(chan error, 1)
+	if !shell.runStandardTask("providers", func(ctx context.Context) (interface{}, error) {
+		close(started)
+		<-ctx.Done()
+		finished <- ctx.Err()
+		return nil, ctx.Err()
+	}, func(interface{}, error) {}) {
+		t.Fatal("task was not started")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	shell.tasks.close()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("worker error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker did not receive task cancellation")
 	}
 }
