@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/config"
@@ -21,7 +22,7 @@ func (p *nativeDoctorPage) run(shell *desktopShell) {
 	if p.busy {
 		return
 	}
-	p.busy = shell.runStandardTask("doctor", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("doctor", func(_ context.Context) (interface{}, error) {
 		checks, issues := application.DiagnoseConfig(config.ResolvePath())
 		return nativeDoctorResult{checks: checks, issues: issues}, nil
 	}, func(result interface{}, err error) {

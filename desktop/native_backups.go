@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/egoist/mygo/ui"
@@ -18,7 +19,7 @@ func (p *nativeBackupsPage) load(shell *desktopShell) {
 	if p.busy {
 		return
 	}
-	p.busy = shell.runStandardTask("backups", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("backups", func(_ context.Context) (interface{}, error) {
 		revision, err := application.ConfigFileRevision(config.ResolvePath())
 		if err != nil {
 			return nil, err
@@ -45,7 +46,7 @@ func (p *nativeBackupsPage) load(shell *desktopShell) {
 
 func (p *nativeBackupsPage) operate(shell *desktopShell, restore bool) {
 	name, expected := p.selected, p.revision
-	p.busy = shell.runStandardTask("backups", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("backups", func(_ context.Context) (interface{}, error) {
 		if restore {
 			return nil, application.RestoreConfigBackup(config.ResolvePath(), name, expected)
 		}

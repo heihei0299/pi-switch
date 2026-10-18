@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
@@ -153,7 +155,7 @@ func TestHTTPAndNativeProviderMutationsDoNotLoseConcurrentUpdates(t *testing.T) 
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		if err := application.SaveProvider(path, "source", "native-renamed", native, application.Revision(cfg.Profiles["source"])); err != nil {
+		if err := application.SaveProvider(context.Background(), bootstrap.NewProviderService(path), "source", "native-renamed", native, application.Revision(cfg.Profiles["source"])); err != nil {
 			results <- err
 			return
 		}

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/protocol"
@@ -19,7 +21,7 @@ func TestDuplicateProviderUsesSharedGateAndBacksUp(t *testing.T) {
 	path, cfg := managementFixture(t)
 	before, _ := os.ReadFile(path)
 	source := cfg.Profiles["supplier"]
-	if err := DuplicateProvider(path, "supplier", " supplier-copy ", Revision(source)); err != nil {
+	if err := DuplicateProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", " supplier-copy ", Revision(source)); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _, err := config.LoadConfigAtPath(path)
@@ -39,7 +41,7 @@ func TestDuplicateProviderUsesSharedGateAndBacksUp(t *testing.T) {
 	}
 	before, _ = os.ReadFile(path)
 	for _, tc := range []struct{ name, revision string }{{"supplier-copy", Revision(source)}, {"", Revision(source)}, {"other", "stale"}} {
-		if err := DuplicateProvider(path, "supplier", tc.name, tc.revision); err == nil {
+		if err := DuplicateProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", tc.name, tc.revision); err == nil {
 			t.Fatalf("invalid copy accepted: %q", tc.name)
 		}
 	}
@@ -64,7 +66,7 @@ func TestDuplicateProviderPreservesAdvisoryLegacyShape(t *testing.T) {
 	if err := profile.ValidateProfile(prof); err == nil {
 		t.Fatal("fixture needs advisory shape issue")
 	}
-	if err := DuplicateProvider(path, "supplier", "copy", Revision(prof)); err != nil {
+	if err := DuplicateProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", "copy", Revision(prof)); err != nil {
 		t.Fatalf("Native copy applied CRUD shape gate instead of shared copy gate: %v", err)
 	}
 }

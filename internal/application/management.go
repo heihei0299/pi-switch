@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/heihei0299/pi-switch/internal/adapters/outbound/fileconfig"
-	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 	"github.com/heihei0299/pi-switch/internal/domain/revision"
 	"github.com/heihei0299/pi-switch/internal/profile"
@@ -72,11 +71,6 @@ func RestoreConfigBackup(path, name, expected string) error {
 	})
 }
 
-// shortcut: Native provider pages retain application error mapping, upgrade when those adapters map usecase errors directly.
-func SaveProvider(path, original, name string, prof config.ProviderProfile, expected string) error {
-	return saveProviderContext(context.Background(), path, original, name, prof, expected)
-}
-
 func ReplaceConfig(path string, cfg config.PiSwitchConfig) error {
 	if err := ValidateWritableConfig(cfg); err != nil {
 		return &ManagementValidationError{Message: err.Error()}
@@ -84,10 +78,16 @@ func ReplaceConfig(path string, cfg config.PiSwitchConfig) error {
 	return fileconfig.New(path, config.DefaultConfig).Save(cfg)
 }
 
-func saveProviderContext(ctx context.Context, path, original, name string, prof config.ProviderProfile, expected string) error {
-	_, err := bootstrap.NewProviderService(path).Save(ctx, providerusecase.SaveCommand{
+func SaveProvider(ctx context.Context, service *providerusecase.Service, original, name string, prof config.ProviderProfile, expected string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := service.Save(ctx, providerusecase.SaveCommand{
 		Original: original, Name: name, Profile: prof, ExpectedRevision: expected,
 	})
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	if errors.Is(err, providerusecase.ErrProfileExists) {
 		return profile.ErrProfileExists
 	}
@@ -104,20 +104,22 @@ func saveProviderContext(ctx context.Context, path, original, name string, prof 
 	return err
 }
 
-func DeleteProvider(path, name, expected string) error {
-	return deleteProviderContext(context.Background(), path, name, expected)
-}
-
-func deleteProviderContext(ctx context.Context, path, name, expected string) error {
-	_, err := bootstrap.NewProviderService(path).Delete(ctx, providerusecase.DeleteCommand{Name: name, ExpectedRevision: expected})
+func DeleteProvider(ctx context.Context, service *providerusecase.Service, name, expected string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := service.Delete(ctx, providerusecase.DeleteCommand{Name: name, ExpectedRevision: expected})
 	if errors.Is(err, fileconfig.ErrBackupDirectory) {
 		return &ManagementValidationError{Message: err.Error()}
 	}
 	return err
 }
 
-func SetCurrentProfile(path, name string) error {
-	err := bootstrap.NewProviderService(path).SelectCurrent(context.Background(), name)
+func SetCurrentProfile(ctx context.Context, service *providerusecase.Service, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := service.SelectCurrent(ctx, name)
 	var validation *providerusecase.ValidationError
 	if errors.As(err, &validation) {
 		return errors.New(validation.Err.Error())

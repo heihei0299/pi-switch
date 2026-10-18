@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
@@ -34,6 +36,6 @@ func loadNativeOverview() (nativeOverview, error) {
 	return overview, nil
 }
 
-func setNativeCurrentProfile(name string) error {
-	return application.SetCurrentProfile(config.ResolvePath(), name)
+func setNativeCurrentProfile(ctx context.Context, name string) error {
+	return application.SetCurrentProfile(ctx, bootstrap.NewProviderService(config.ResolvePath()), name)
 }

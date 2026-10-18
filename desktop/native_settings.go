@@ -19,8 +19,8 @@ func (p *nativeSettingsPage) load(shell *desktopShell) {
 	if p.busy {
 		return
 	}
-	p.busy = shell.runStandardTask("settings", func() (interface{}, error) {
-		return bootstrap.NewSettingsService(config.ResolvePath()).LoadDraft(context.Background())
+	p.busy = shell.runStandardTask("settings", func(ctx context.Context) (interface{}, error) {
+		return bootstrap.NewSettingsService(config.ResolvePath()).LoadDraft(ctx)
 	}, func(result interface{}, err error) {
 		p.busy = false
 		if err != nil {
@@ -35,8 +35,8 @@ func (p *nativeSettingsPage) load(shell *desktopShell) {
 
 func (p *nativeSettingsPage) save(shell *desktopShell) {
 	raw, expected := p.draft, p.revision
-	p.busy = shell.runStandardTask("settings", func() (interface{}, error) {
-		return bootstrap.NewSettingsService(config.ResolvePath()).SaveDraft(context.Background(), raw, expected)
+	p.busy = shell.runStandardTask("settings", func(ctx context.Context) (interface{}, error) {
+		return bootstrap.NewSettingsService(config.ResolvePath()).SaveDraft(ctx, raw, expected)
 	}, func(result interface{}, err error) {
 		p.busy = false
 		if err != nil {

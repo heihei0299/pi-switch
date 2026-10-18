@@ -22,10 +22,16 @@ func (e namedProviderNotFoundError) Error() string {
 }
 func (e namedProviderNotFoundError) Unwrap() error { return providerusecase.ErrProfileNotFound }
 
-func DuplicateProvider(path, source, name, expected string) error {
-	_, err := bootstrap.NewProviderService(path).Duplicate(context.Background(), providerusecase.DuplicateCommand{
+func DuplicateProvider(ctx context.Context, service *providerusecase.Service, source, name, expected string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := service.Duplicate(ctx, providerusecase.DuplicateCommand{
 		Source: source, Name: name, ExpectedRevision: expected,
 	})
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	if errors.Is(err, providerusecase.ErrRevisionConflict) {
 		return ErrManagementConflict
 	}

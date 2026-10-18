@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
 )
 
 type desktopShell struct {
@@ -25,6 +26,9 @@ type desktopShell struct {
 	proxy          nativeProxyController
 	complexPreview *nativeComplexPreview
 	tasks          desktopTasks
+	// taskRequested is nil in the app; tests set it to observe that a page asked
+	// for background work, which a headless tester never runs.
+	taskRequested func(name string)
 }
 
 func startsMinimized(args []string) bool {
@@ -70,8 +74,8 @@ func desktopProxyAddress() (string, uint16, error) {
 		return "", 0, err
 	}
 	port := cfg.Settings.Proxy.Port
-	if port < 1 || port > 65535 {
-		return "", 0, fmt.Errorf("proxy port %d is outside the valid range", port)
+	if err := domainconfig.ValidatePort(port); err != nil {
+		return "", 0, err
 	}
 	return cfg.Settings.Proxy.Host, uint16(port), nil
 }
@@ -163,7 +167,25 @@ func (a *desktopShell) start() {
 	a.proxy.refresh(a)
 }
 
-func (a *desktopShell) refreshNativeOverview() { a.overview.refresh(a) }
+func (a *desktopShell) refreshNativeOverview() {
+	a.overview.refresh(a)
+	a.refreshGatewaySummary()
+}
+
+// refreshGatewaySummary keeps the overview's publish hint current at the points
+// that already refresh the overview: start, navigation, manual refresh and after
+// a config write. It never polls, and it asks for the Gateway page's own
+// selection, so unpublished choices (including an explicit empty one) survive.
+func (a *desktopShell) refreshGatewaySummary() {
+	if a.complexPreview == nil {
+		return
+	}
+	gateway := &a.complexPreview.nativeGatewayState
+	if gateway.refreshGateway == nil {
+		return
+	}
+	gateway.refreshGateway(nativeGatewaySelections(gateway))
+}
 
 func (a *desktopShell) switchProfile(name string) { a.overview.switchProfile(a, name) }
 

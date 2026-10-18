@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/application"
+	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
 )
 
@@ -22,8 +24,8 @@ func (p *nativeProvidersPage) newPresetDraft() {
 
 func (p *nativeProvidersPage) duplicate(shell *desktopShell) {
 	source, name, expected := p.original, p.copyName, p.revision
-	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
-		return nil, application.DuplicateProvider(config.ResolvePath(), source, name, expected)
+	p.busy = shell.runStandardTask("providers", func(ctx context.Context) (interface{}, error) {
+		return nil, application.DuplicateProvider(ctx, bootstrap.NewProviderService(config.ResolvePath()), source, name, expected)
 	}, func(_ interface{}, err error) {
 		p.busy = false
 		if err != nil {
@@ -37,7 +39,7 @@ func (p *nativeProvidersPage) duplicate(shell *desktopShell) {
 
 func (p *nativeProvidersPage) test(shell *desktopShell) {
 	original, raw, expected, key, channel := p.original, p.draft, p.revision, p.key, p.keyChannel
-	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func(_ context.Context) (interface{}, error) {
 		return application.TestProviderDraft(config.ResolvePath(), original, raw, expected, map[string]string{channel: key})
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -56,7 +58,7 @@ func (p *nativeProvidersPage) test(shell *desktopShell) {
 
 func (p *nativeProvidersPage) fetchModels(shell *desktopShell) {
 	original, raw, expected, key, channel, fetchChannel := p.original, p.draft, p.revision, p.key, p.keyChannel, p.fetchChannel
-	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func(_ context.Context) (interface{}, error) {
 		return application.FetchProviderDraftModels(config.ResolvePath(), original, raw, expected, map[string]string{channel: key}, fetchChannel)
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -75,7 +77,7 @@ func (p *nativeProvidersPage) fetchModels(shell *desktopShell) {
 
 func (p *nativeProvidersPage) refreshUsage(shell *desktopShell) {
 	name, expected := p.original, p.revision
-	p.busy = shell.runStandardTask("providers", func() (interface{}, error) {
+	p.busy = shell.runStandardTask("providers", func(_ context.Context) (interface{}, error) {
 		return application.LoadProviderUsage(config.ResolvePath(), name, expected)
 	}, func(result interface{}, err error) {
 		p.busy = false
@@ -101,35 +103,42 @@ func nativeUsageWindowText(window application.ProviderUsageWindow) string {
 	return text
 }
 
+// networkControls groups auxiliary actions by what they act on: the unsaved
+// draft, or the provider already saved in config.json.
 func (p *nativeProvidersPage) networkControls(shell *desktopShell, c *ui.Context) {
+	ui.Text(c, "Against the draft").TextColor(c.Theme().TextMuted)
 	fetchInput := ui.TextInput(c, &p.fetchChannel).Label("Fetch models for channel").Disabled(p.busy || p.confirm)
 	p.composing = p.composing || fetchInput.Composing()
-	if p.original != "" {
-		copyInput := ui.TextInput(c, &p.copyName).Label("Saved provider copy name").Disabled(p.busy || p.confirm)
-		p.composing = p.composing || copyInput.Composing()
-	}
 	blocked := p.busy || p.confirm || p.composing || !json.Valid([]byte(p.draft))
-	ui.Row(c).Gap(8).HandleInput(blockComposingPress(p.composing)).Children(func() {
+	// The copy-name input renders below this row, so the guard reads the live
+	// composition state: a preedit there must not start a network request.
+	ui.Row(c).Gap(8).HandleInput(blockComposingLive(func() bool { return p.composing })).Children(func() {
+		if ui.Button(c, "Validate provider").Disabled(p.busy || p.confirm || p.composing).Clicked() {
+			p.validate(shell)
+		}
 		if ui.Button(c, "Test draft connection").Disabled(blocked).Clicked() {
 			p.test(shell)
 		}
-		if ui.Button(c, "Refresh saved provider usage").Disabled(p.busy || p.confirm || p.composing || p.original == "").Clicked() {
-			p.refreshUsage(shell)
-		}
-	})
-	ui.Row(c).HandleInput(blockComposingPress(p.composing)).Children(func() {
 		if ui.Button(c, "Fetch models into draft").Disabled(blocked || p.fetchChannel == "").Clicked() {
 			p.fetchModels(shell)
 		}
 	})
+	ui.Text(c, "Against the saved provider").TextColor(c.Theme().TextMuted)
+	if p.original == "" {
+		ui.Text(c, "Save the provider to use saved-provider actions.")
+		return
+	}
+	copyInput := ui.TextInput(c, &p.copyName).Label("Saved provider copy name").Disabled(p.busy || p.confirm)
+	p.composing = p.composing || copyInput.Composing()
+	ui.Row(c).Gap(8).HandleInput(blockComposingLive(func() bool { return p.composing })).Children(func() {
+		if ui.Button(c, "Refresh saved provider usage").Disabled(p.busy || p.confirm || p.composing).Clicked() {
+			p.refreshUsage(shell)
+		}
+		if ui.Button(c, "Duplicate saved provider…").Disabled(p.busy || p.confirm || p.composing || p.copyName == "").Clicked() {
+			p.action, p.confirm = "duplicate", true
+		}
+	})
 	for _, window := range p.usage {
 		ui.Text(c, nativeUsageWindowText(window))
-	}
-	if p.original != "" {
-		ui.Row(c).HandleInput(blockComposingPress(p.composing)).Children(func() {
-			if ui.Button(c, "Duplicate saved provider…").Disabled(p.busy || p.confirm || p.composing || p.copyName == "").Clicked() {
-				p.action, p.confirm = "duplicate", true
-			}
-		})
 	}
 }

@@ -53,7 +53,7 @@ func TestProviderDraftMasksAndPreservesCredentialsOnRename(t *testing.T) {
 	if Revision(prof) != Revision(cfg.Profiles["supplier"]) {
 		t.Fatal("masked draft lost provider fields or credentials")
 	}
-	if err := SaveProvider(path, "supplier", "renamed", prof, draft.Revision); err != nil {
+	if err := SaveProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", "renamed", prof, draft.Revision); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _, err := config.LoadConfigAtPath(path)
@@ -87,7 +87,7 @@ func TestDeleteProviderBacksUpAndClearsCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := DeleteProvider(path, "supplier", Revision(cfg.Profiles["supplier"])); err != nil {
+	if err := DeleteProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", Revision(cfg.Profiles["supplier"])); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _, err := config.LoadConfigAtPath(path)
@@ -122,7 +122,7 @@ func TestSetCurrentProfileBacksUpAndMissingProfileDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetCurrentProfile(path, "other"); err != nil {
+	if err := SetCurrentProfile(context.Background(), bootstrap.NewProviderService(path), "other"); err != nil {
 		t.Fatal(err)
 	}
 	backups, err := ListConfigBackups(path)
@@ -137,7 +137,7 @@ func TestSetCurrentProfileBacksUpAndMissingProfileDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetCurrentProfile(path, "missing"); err == nil || err.Error() != `profile "missing" no longer exists` {
+	if err := SetCurrentProfile(context.Background(), bootstrap.NewProviderService(path), "missing"); err == nil || err.Error() != `profile "missing" no longer exists` {
 		t.Fatalf("missing selection error = %v", err)
 	}
 	unchanged, err := os.ReadFile(path)
@@ -160,17 +160,17 @@ func TestProviderValidationConflictAndCancelHaveNoWrites(t *testing.T) {
 	if _, err := ProviderFromDraft(path, "new", draft.JSON, draft.Revision, nil); err == nil {
 		t.Fatal("stale provider accepted")
 	}
-	if err := SaveProvider(path, "supplier", "other", cfg.Profiles["supplier"], "stale"); !errors.Is(err, ErrManagementConflict) {
+	if err := SaveProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", "other", cfg.Profiles["supplier"], "stale"); !errors.Is(err, ErrManagementConflict) {
 		t.Fatalf("conflict = %v", err)
 	}
-	if err := DeleteProvider(path, "supplier", "stale"); !errors.Is(err, ErrManagementConflict) {
+	if err := DeleteProvider(context.Background(), bootstrap.NewProviderService(path), "supplier", "stale"); !errors.Is(err, ErrManagementConflict) {
 		t.Fatalf("delete conflict = %v", err)
 	}
-	if err := SaveProvider(path, "", "supplier", cfg.Profiles["supplier"], ""); err == nil {
+	if err := SaveProvider(context.Background(), bootstrap.NewProviderService(path), "", "supplier", cfg.Profiles["supplier"], ""); err == nil {
 		t.Fatal("duplicate overwrote supplier")
 	}
 	var validation *ManagementValidationError
-	if err := SaveProvider(path, "", "  ", cfg.Profiles["supplier"], ""); !errors.As(err, &validation) || validation.Error() != "name required" {
+	if err := SaveProvider(context.Background(), bootstrap.NewProviderService(path), "", "  ", cfg.Profiles["supplier"], ""); !errors.As(err, &validation) || validation.Error() != "name required" {
 		t.Fatalf("empty provider name error = %v", err)
 	}
 	after, _ := os.ReadFile(path)

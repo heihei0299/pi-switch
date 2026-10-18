@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,50 +24,34 @@ func TestNativeStandardNavigationAndEmptyStates(t *testing.T) {
 	p.backups.loaded = true
 	p.doctor.loaded = true
 	tester := ui.NewTester(app.standardView, 560, 1200)
-	for _, page := range []string{"Profiles", "Providers", "Gateway", "JSON Editor", "Proxy", "Stats & Sessions", "Packages", "Settings", "Backups", "Doctor", "Overview"} {
-		if err := tester.Click(page); err != nil {
-			t.Fatalf("navigate %s: %v", page, err)
+	for _, tc := range []struct{ page, want string }{
+		{pageProviders, "No providers match. Add a provider or clear the filter."},
+		{pageGateway, "Current vs proposed Gateway"},
+		{pageUsage, "Usage summary · local request history"},
+		{pageOverview, "Status not checked yet."},
+	} {
+		if err := tester.Click(tc.page); err != nil {
+			t.Fatalf("navigate %s: %v", tc.page, err)
 		}
-		if p.page != page {
-			t.Fatalf("page = %s, want %s", p.page, page)
+		if p.page != tc.page || !tester.HasText(tc.want) {
+			t.Fatalf("page = %s, want %s with %q in %q", p.page, tc.page, tc.want, tester.Texts())
 		}
-		switch page {
-		case "Profiles", "Providers":
-			if !tester.HasText("No providers match. Add a provider or clear the filter.") {
-				t.Fatal("missing provider empty state")
-			}
-		case "Proxy":
-			if !tester.HasText("Status not checked yet.") {
-				t.Fatal("unverified proxy shown as healthy")
-			}
-		case "Gateway":
-			if !tester.HasText("Current vs proposed Gateway") {
-				t.Fatal("Gateway is not part of the main native navigation")
-			}
-		case "JSON Editor":
-			if !tester.HasText("Gateway JSON draft validation") {
-				t.Fatal("JSON Editor is not part of the main native navigation")
-			}
-		case "Stats & Sessions":
-			if !tester.HasText("Usage summary · local request history") {
-				t.Fatal("Stats and Sessions are not part of the main native navigation")
-			}
-		case "Packages":
-			if !tester.HasText("Packages · local package registry") {
-				t.Fatal("Packages are not part of the main native navigation")
-			}
-		case "Settings":
-			if !tester.HasText("Settings have not loaded yet.") {
-				t.Fatal("missing settings loading state")
-			}
-		case "Backups":
-			if !tester.HasText("No backups yet.") {
-				t.Fatal("missing backup empty state")
-			}
-		case "Doctor":
-			if !tester.HasText("No validation issues found.") {
-				t.Fatal("missing doctor empty state")
-			}
+	}
+	for _, tc := range []struct{ entry, page, want string }{
+		{pageSettings, pageSettings, "Settings have not loaded yet."},
+		{pageAdvancedJSON, pageAdvancedJSON, "Gateway JSON draft validation"},
+		{pageBackups, pageBackups, "No backups yet."},
+		{pagePackages, pagePackages, "Packages · local package registry"},
+		{pageDoctor, pageDoctor, "No validation issues found."},
+	} {
+		if err := tester.Click("Maintenance"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tester.Click(tc.entry); err != nil {
+			t.Fatalf("navigate %s: %v", tc.entry, err)
+		}
+		if p.page != tc.page || !tester.HasText(tc.want) {
+			t.Fatalf("page = %s, want %s with %q in %q", p.page, tc.page, tc.want, tester.Texts())
 		}
 	}
 }
@@ -89,7 +74,7 @@ func TestNativeProviderDraftMasksSecretsAndCancelWritesNothing(t *testing.T) {
 	}
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Providers"
+	pages.page = pageProviders
 	p := &pages.providers
 	p.original, p.name, p.draft, p.revision, p.editing = "supplier", "supplier", draft.JSON, draft.Revision, true
 	p.key = "fake-replacement-key"
@@ -131,7 +116,7 @@ func TestNativeProviderDraftMasksSecretsAndCancelWritesNothing(t *testing.T) {
 func TestNativeInvalidDraftAndSettingsCancelRetainData(t *testing.T) {
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Settings"
+	pages.page = pageSettings
 	settings := config.DefaultConfig().Settings
 	data, _ := json.MarshalIndent(settings, "", "  ")
 	pages.settings.loaded, pages.settings.draft = true, string(data)
@@ -153,7 +138,7 @@ func TestNativeInvalidDraftAndSettingsCancelRetainData(t *testing.T) {
 	if !tester.HasText("Invalid JSON; draft retained. Nothing has been saved.") {
 		t.Fatal("invalid settings state missing")
 	}
-	pages.page = "Providers"
+	pages.page = pageProviders
 	pages.providers.newDraft()
 	pages.providers.draft = "{ invalid"
 	tester.Frame()
@@ -170,7 +155,8 @@ func TestNativeInvalidDraftAndSettingsCancelRetainData(t *testing.T) {
 
 func TestNativeStopProxyRequiresConfirmation(t *testing.T) {
 	app := &desktopShell{}
-	app.standardPages().page = "Proxy"
+	pid := uint32(4242)
+	app.proxy.status = nativeProxyStatus{checked: true, result: proxycontrol.Result{Running: true, Pid: &pid}}
 	tester := ui.NewTester(app.standardView, 1000, 900)
 	if err := tester.Click("Stop Proxy"); err != nil {
 		t.Fatal(err)
@@ -189,7 +175,7 @@ func TestNativeStopProxyRequiresConfirmation(t *testing.T) {
 func TestNativeDiagnosticReadFailureDoesNotRenderRawSecret(t *testing.T) {
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Doctor"
+	pages.page = pageDoctor
 	pages.doctor.loaded = true
 	pages.doctor.result = nativeDoctorResult{
 		checks: []application.DoctorCheck{{OK: false, Message: "parse error fake-sensitive-value"}},
@@ -212,10 +198,14 @@ func TestNativeProviderPresetAndDuplicateConfirmationAreReadOnly(t *testing.T) {
 	t.Setenv("PI_SWITCH_CONFIG", path)
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Providers"
+	pages.page = pageProviders
 	p := &pages.providers
 	p.preset = "openai"
 	tester := ui.NewTester(app.standardView, 1000, 2100)
+	tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+	if err := tester.Click("Add provider…"); err != nil {
+		t.Fatal(err)
+	}
 	if err := tester.Click("Add from preset"); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +222,9 @@ func TestNativeProviderPresetAndDuplicateConfirmationAreReadOnly(t *testing.T) {
 	p.original, p.copyName = "supplier", "copy"
 	p.usage = []application.ProviderUsageWindow{{Name: "rolling", Status: "unknown"}}
 	tester.Frame()
+	if err := tester.Click("More provider actions"); err != nil {
+		t.Fatal(err)
+	}
 	if !tester.HasText("rolling: unknown · unknown") {
 		t.Fatal("unknown usage displayed as zero")
 	}
@@ -255,17 +248,23 @@ func TestNativeProviderPresetAndDuplicateConfirmationAreReadOnly(t *testing.T) {
 func TestNativeProviderNetworkControlsBlockInvalidDraft(t *testing.T) {
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Providers"
+	pages.page = pageProviders
 	p := &pages.providers
 	p.newDraft()
 	p.draft = "{ invalid"
+	requested := 0
+	app.taskRequested = func(string) { requested++ }
 	tester := ui.NewTester(app.standardView, 1000, 1800)
+	tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+	if err := tester.Click("More provider actions"); err != nil {
+		t.Fatal(err)
+	}
 	for _, label := range []string{"Test draft connection", "Fetch models into draft"} {
 		if err := tester.Click(label); err != nil {
 			t.Fatal(err)
 		}
-		if p.busy {
-			t.Fatal("invalid draft started network action")
+		if p.busy || requested != 0 {
+			t.Fatalf("invalid draft started a network action via %s", label)
 		}
 	}
 	zero := float64(0)
@@ -275,19 +274,22 @@ func TestNativeProviderNetworkControlsBlockInvalidDraft(t *testing.T) {
 }
 
 func TestNativeProxySnapshotDistinguishesUnknownIdentityAndActualAddress(t *testing.T) {
-	state := nativeProxyStatus{}
-	tester := ui.NewTester(state.view, 1000, 800)
+	app := &desktopShell{}
+	tester := ui.NewTester(app.view, 1000, 800)
 	if !tester.HasText("Proxy identity and health: unknown (not checked).") {
 		t.Fatal("unchecked identity was healthy")
 	}
 	pid, host, port := uint32(12345), "2001:db8::1", uint16(1234)
-	state = nativeProxyStatus{checked: true, checkedAt: "2026-10-10T22:00:00-07:00", result: proxycontrol.Result{Running: true, Pid: &pid, Host: &host, Port: &port}}
-	tester = ui.NewTester(state.view, 1000, 800)
+	app.proxy.status = nativeProxyStatus{checked: true, checkedAt: "2026-10-10T22:00:00-07:00", result: proxycontrol.Result{Running: true, Pid: &pid, Host: &host, Port: &port}}
+	tester.Frame()
+	if err := tester.Click("Proxy details"); err != nil {
+		t.Fatal(err)
+	}
 	if !tester.HasText("Managed PID: 12345") || !tester.HasText("Actual listener: [2001:db8::1]:1234") {
 		t.Fatal("actual listener identity missing")
 	}
-	state.failed = true
-	tester = ui.NewTester(state.view, 1000, 800)
+	app.proxy.status.failed = true
+	tester.Frame()
 	if tester.HasText("Managed Proxy identity and health verified.") || !tester.HasText("Proxy identity and health: unknown (check failed).") {
 		t.Fatal("failed refresh reported verified identity")
 	}
@@ -298,23 +300,30 @@ func TestNativeProxySnapshotDistinguishesUnknownIdentityAndActualAddress(t *test
 
 func TestNativeSettingsShowsNativeBinaryIdentity(t *testing.T) {
 	app := &desktopShell{}
-	app.standardPages().page = "Settings"
+	app.standardPages().page = pageSettings
 	tester := ui.NewTester(app.standardView, 560, 1200)
 	if !tester.HasText(nativeBuildIdentityText()) || !strings.Contains(nativeBuildIdentityText(), "target linux/") {
 		t.Fatal("Native build facts missing")
 	}
 }
 
-func TestNativeProviderCompositionBlocksSaveAndDuplicate(t *testing.T) {
+func TestNativeProviderCompositionBlocksSaveDuplicateAndDelete(t *testing.T) {
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Providers"
+	pages.page = pageProviders
 	p := &pages.providers
 	p.newDraft()
 	p.original, p.name, p.copyName = "supplier", "supplier", "copy"
-	tester := ui.NewTester(app.standardView, 1000, 2100)
+	tester := ui.NewTester(app.standardView, 1000, 2400)
+	tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+	if err := tester.Click("More provider actions"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tester.Click("Danger zone: delete provider"); err != nil {
+		t.Fatal(err)
+	}
 	for _, field := range []string{"Provider name", "Saved provider copy name"} {
-		for _, button := range []string{"Save provider…", "Duplicate saved provider…"} {
+		for _, button := range []string{"Save provider…", "Duplicate saved provider…", "Delete provider…"} {
 			if err := tester.Click(field); err != nil {
 				t.Fatal(err)
 			}
@@ -333,10 +342,35 @@ func TestNativeProviderCompositionBlocksSaveAndDuplicate(t *testing.T) {
 	}
 }
 
+// The pages above assert that no task started. Without a window the task
+// helpers must refuse before they touch the task registry, which is what makes
+// those assertions meaningful in a headless tester.
+func TestNativeTaskHelpersRefuseWithoutAWindow(t *testing.T) {
+	app := &desktopShell{}
+	ran := false
+	if app.runStandardTask("provider", func(context.Context) (interface{}, error) {
+		ran = true
+		return nil, nil
+	}, func(interface{}, error) {}) {
+		t.Fatal("runStandardTask reported a start without a window")
+	}
+	if ran {
+		t.Fatal("runStandardTask ran the task without a window")
+	}
+	proxy := &nativeProxyController{}
+	proxy.runTask(app, func() (proxycontrol.Result, error) {
+		ran = true
+		return proxycontrol.Result{}, nil
+	})
+	if ran || proxy.busy {
+		t.Fatal("the proxy task ran without a window")
+	}
+}
+
 func TestNativeSettingsPreeditBlurCannotTriggerSave(t *testing.T) {
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Settings"
+	pages.page = pageSettings
 	data, _ := json.Marshal(config.DefaultConfig().Settings)
 	pages.settings.loaded, pages.settings.draft = true, string(data)
 	tester := ui.NewTester(app.standardView, 1000, 1400)
@@ -360,7 +394,7 @@ func TestNativeBackupSelectionDisplaysIdentityAndCancelDoesNotWrite(t *testing.T
 	t.Setenv("PI_SWITCH_CONFIG", path)
 	app := &desktopShell{}
 	pages := app.standardPages()
-	pages.page = "Backups"
+	pages.page = pageBackups
 	modified := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
 	pages.backups.loaded, pages.backups.selected = true, "config-fixture.json"
 	pages.backups.items = []application.ConfigBackup{{Name: "config-fixture.json", Size: 123, ModifiedAt: modified}}
@@ -398,5 +432,49 @@ func TestNativeKnownErrorsHaveSpecificHintsWithoutRawValues(t *testing.T) {
 		if !strings.Contains(text, tc.hint) || strings.Contains(text, "fake-secret") {
 			t.Fatalf("unsafe/unhelpful error: %s", text)
 		}
+	}
+}
+
+// A preedit in the saved-provider copy name renders below the draft row, so that
+// row must read the composition state when the press arrives instead of the
+// value captured when it was built.
+func TestNativeProviderCompositionBlocksDraftNetworkButtons(t *testing.T) {
+	for _, button := range []string{"Validate provider", "Test draft connection", "Fetch models into draft"} {
+		t.Run(button, func(t *testing.T) {
+			app, p, _ := newProviderPageFixture(t)
+			p.fixtureDraft("supplier")
+			requested := 0
+			app.taskRequested = func(string) { requested++ }
+			tester := ui.NewTester(app.standardView, 1000, 2400)
+			tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+			if err := tester.Click("More provider actions"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tester.Click("Saved provider copy name"); err != nil {
+				t.Fatal(err)
+			}
+			tester.Compose("中文供应商", 3)
+			tester.Frame()
+			if !p.composing {
+				t.Fatal("composition in the copy name was not tracked")
+			}
+			if err := tester.Click(button); err != nil {
+				t.Fatal(err)
+			}
+			tester.Frame()
+			if requested != 0 {
+				t.Fatalf("a preedit in the copy name started work through %s", button)
+			}
+			// Committing the preedit leaves the action usable.
+			tester.Compose("", 0)
+			tester.Frame()
+			if err := tester.Click(button); err != nil {
+				t.Fatal(err)
+			}
+			tester.Frame()
+			if requested != 1 {
+				t.Fatalf("a committed preedit did not let %s through: requested=%d", button, requested)
+			}
+		})
 	}
 }

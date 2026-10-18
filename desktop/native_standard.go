@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,55 @@ import (
 	"github.com/heihei0299/pi-switch/internal/profile"
 	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
 )
+
+const (
+	pageOverview     = "Overview"
+	pageProviders    = "Providers"
+	pageGateway      = "Gateway"
+	pageUsage        = "Usage & Sessions"
+	pageMaintenance  = "Maintenance"
+	pageSettings     = "Settings"
+	pageAdvancedJSON = "Advanced JSON"
+	pageBackups      = "Backups"
+	pagePackages     = "Packages"
+	pageDoctor       = "Doctor"
+)
+
+// nativeMaintenanceGroups keeps the maintenance area grouped by purpose instead
+// of piling every rare action into one ungrouped menu.
+var nativeMaintenanceGroups = []struct {
+	label   string
+	entries []string
+}{
+	{"Configuration", []string{pageSettings, pageAdvancedJSON}},
+	{"Recovery", []string{pageBackups}},
+	{"Extensions", []string{pagePackages}},
+	{"Diagnostics", []string{pageDoctor}},
+}
+
+func nativeInMaintenance(page string) bool {
+	for _, group := range nativeMaintenanceGroups {
+		for _, entry := range group.entries {
+			if entry == page {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nativeSectionTabs maps a main page to the complex preview section it shows.
+var nativeSectionTabs = map[string]int{
+	pageAdvancedJSON: 0,
+	pageGateway:      1,
+	pageUsage:        2,
+	pagePackages:     3,
+}
+
+func nativeSectionPage(page string) bool {
+	_, ok := nativeSectionTabs[page]
+	return ok
+}
 
 type nativeStandardPages struct {
 	page      string
@@ -21,7 +71,7 @@ type nativeStandardPages struct {
 
 func (a *desktopShell) standardPages() *nativeStandardPages {
 	if a.standard == nil {
-		a.standard = &nativeStandardPages{page: "Overview"}
+		a.standard = &nativeStandardPages{page: pageOverview}
 	}
 	return a.standard
 }
@@ -29,78 +79,30 @@ func (a *desktopShell) standardPages() *nativeStandardPages {
 func (a *desktopShell) standardView(c *ui.Context) {
 	pages := a.standardPages()
 	ui.Column(c).Fill().Gap(8).Children(func() {
-		for _, row := range [][]string{
-			{"Overview", "Profiles", "Providers", "Proxy"},
-			{"Gateway", "JSON Editor"},
-			{"Stats & Sessions", "Packages"},
-			{"Settings", "Backups", "Doctor"},
-		} {
-			ui.Row(c).Gap(6).Padding(6, 12).Children(func() {
-				for _, name := range row {
-					if ui.Button(c, name).Clicked() {
-						pages.page = name
-						switch name {
-						case "Overview", "Profiles", "Providers":
-							a.refreshNativeOverview()
-						case "Proxy":
-							a.refreshNativeOverview()
-							a.proxy.refresh(a)
-						case "Gateway":
-							gateway := &a.complexPreview.nativeGatewayState
-							if gateway.refreshGateway != nil {
-								gateway.refreshGateway(nativeGatewaySelections(gateway))
-							}
-						case "Stats & Sessions":
-							stats := &a.complexPreview.nativeStatsState
-							if !stats.statsLoaded && stats.refreshStats != nil {
-								stats.refreshStats(0, 0, stats.statsFilters, a.complexPreview.nativeSessionsState.sessionsFilters)
-							}
-						case "Settings":
-							if !pages.settings.loaded {
-								pages.settings.load(a)
-							}
-						case "Backups":
-							pages.backups.load(a)
-						case "Doctor":
-							pages.doctor.run(a)
-						}
-					}
-				}
-			})
-		}
-
-		switch pages.page {
-		case "Profiles", "Providers":
+		ui.Row(c).Gap(6).Padding(6, 12).Children(func() {
+			for _, page := range []string{pageOverview, pageProviders, pageGateway, pageUsage} {
+				a.navigationButton(c, pages, page)
+			}
+			ui.Spacer(c)
+			a.navigationButton(c, pages, pageMaintenance)
+		})
+		switch {
+		case pages.page == pageMaintenance:
+			a.maintenanceView(c, pages)
+		case pages.page == pageOverview:
+			a.view(c)
+		case pages.page == pageProviders:
 			ui.Scroll(c).Fill().Children(func() { pages.providers.view(a, c) })
-		case "Proxy":
-			ui.Column(c).Fill().Padding(24).Gap(12).Children(func() {
-				ui.Text(c, "Proxy").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
-				ui.Text(c, "Only identity-verified, managed processes can be stopped. Hiding or quitting the GUI leaves Proxy running.")
-				proxyAddress, overviewError := a.overview.proxyData()
-				ui.Text(c, "Configured address: "+proxyAddress)
-				if overviewError != "" {
-					ui.Text(c, overviewError).Role(ui.RoleStatus)
-				}
-				a.proxy.controls(a, c)
-			})
-		case "Settings":
+		case pages.page == pageSettings:
 			ui.Scroll(c).Fill().Children(func() { pages.settings.view(a, c) })
-		case "Backups":
+		case pages.page == pageBackups:
 			ui.Scroll(c).Fill().Children(func() { pages.backups.view(a, c) })
-		case "Doctor":
+		case pages.page == pageDoctor:
 			ui.Scroll(c).Fill().Children(func() { pages.doctor.view(a, c) })
-		case "Gateway", "JSON Editor", "Stats & Sessions", "Packages":
+		case nativeSectionPage(pages.page):
+			tab, _ := nativeSectionTabs[pages.page]
 			ui.Scroll(c).Fill().Gap(12).Padding(20).Children(func() {
-				switch pages.page {
-				case "JSON Editor":
-					a.complexPreview.section(c, 0)
-				case "Gateway":
-					a.complexPreview.section(c, 1)
-				case "Stats & Sessions":
-					a.complexPreview.section(c, 2)
-				case "Packages":
-					a.complexPreview.section(c, 3)
-				}
+				a.complexPreview.section(c, tab)
 			})
 		default:
 			a.view(c)
@@ -108,8 +110,75 @@ func (a *desktopShell) standardView(c *ui.Context) {
 	})
 }
 
+// navigationButton marks the current page without a filled accent, so a page
+// still shows exactly one accent button: its own primary action.
+func (a *desktopShell) navigationButton(c *ui.Context, pages *nativeStandardPages, page string) {
+	current := pages.page == page
+	if page == pageMaintenance {
+		current = current || nativeInMaintenance(pages.page)
+	}
+	entry := ui.Button(c, page)
+	if current {
+		entry = entry.Bold().TextColor(c.Theme().Accent)
+	}
+	if entry.Clicked() {
+		a.navigate(pages, page)
+	}
+}
+
+// navigate only loads the page being opened; it never writes config, publishes
+// a Gateway, or starts and stops the Proxy.
+func (a *desktopShell) navigate(pages *nativeStandardPages, page string) {
+	if pages.page == page {
+		return
+	}
+	pages.page = page
+	switch page {
+	case pageOverview, pageProviders:
+		a.refreshNativeOverview()
+	case pageGateway:
+		gateway := &a.complexPreview.nativeGatewayState
+		if gateway.refreshGateway != nil {
+			gateway.refreshGateway(nativeGatewaySelections(gateway))
+		}
+	case pageUsage:
+		stats := &a.complexPreview.nativeStatsState
+		if !stats.statsLoaded && stats.refreshStats != nil {
+			stats.refreshStats(0, 0, stats.statsFilters, a.complexPreview.nativeSessionsState.sessionsFilters)
+		}
+	case pageSettings:
+		if !pages.settings.loaded {
+			pages.settings.load(a)
+		}
+	case pageBackups:
+		pages.backups.load(a)
+	case pageDoctor:
+		pages.doctor.run(a)
+	}
+}
+
+func (a *desktopShell) maintenanceView(c *ui.Context, pages *nativeStandardPages) {
+	ui.Scroll(c).Fill().Padding(24).Gap(12).Children(func() {
+		ui.Text(c, "Settings & maintenance").FontSize(26).Bold().Role(ui.RoleHeading).Level(1)
+		ui.Text(c, "The four main pages cover daily work. These tools change configuration, restore backups, add packages or report problems; opening one never writes config or publishes the Gateway.").TextColor(c.Theme().TextMuted)
+		for _, group := range nativeMaintenanceGroups {
+			ui.Text(c, group.label).FontSize(18).Bold().Role(ui.RoleHeading).Level(2)
+			ui.Row(c).Gap(8).Children(func() {
+				for _, entry := range group.entries {
+					if ui.Button(c, entry).Clicked() {
+						a.navigate(pages, entry)
+					}
+				}
+			})
+		}
+	})
+}
+
 // Each page owns its state. This only bridges workers to the window UI thread.
-func (a *desktopShell) runStandardTask(name string, run func() (interface{}, error), apply func(interface{}, error)) bool {
+func (a *desktopShell) runStandardTask(name string, run func(context.Context) (interface{}, error), apply func(interface{}, error)) bool {
+	if a.taskRequested != nil {
+		a.taskRequested(name)
+	}
 	if a.exiting || a.window == nil {
 		return false
 	}
@@ -120,7 +189,7 @@ func (a *desktopShell) runStandardTask(name string, run func() (interface{}, err
 	window := a.window
 	window.Invalidate()
 	go func() {
-		result, err := run()
+		result, err := run(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -171,5 +240,14 @@ func nativeManagementError(err error) string {
 func blockComposingPress(composing bool) func(ui.InputEvent) bool {
 	return func(event ui.InputEvent) bool {
 		return composing && event.Kind == ui.InputPointerDown && event.Button == 0
+	}
+}
+
+// blockComposingLive is blockComposingPress for a row that renders before the
+// inputs it guards: it reads the composition state when the press arrives, so
+// a preedit started in a lower input cannot be committed by that press.
+func blockComposingLive(composing func() bool) func(ui.InputEvent) bool {
+	return func(event ui.InputEvent) bool {
+		return composing() && event.Kind == ui.InputPointerDown && event.Button == 0
 	}
 }
