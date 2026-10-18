@@ -8,7 +8,7 @@ target/
 *.log
 pi-session-*.html
 *claude*cli*.txt
-
+.pi/
 # Go binaries (built via go build, cross-compile) - only top-level and bin
 /bin/pi-switch
 /bin/pi-switch.exe
@@ -28,6 +28,7 @@ opencode.jsonc
 # local audits, logs, patches, screenshots and other generated artifacts.
 .scratch/**
 !.scratch/
+!.scratch/*.md
 !.scratch/*/
 !.scratch/*/spec.md
 !.scratch/*/issues/
@@ -36,3 +37,13 @@ opencode.jsonc
 .gocache/
 # template-sync backups (e.g. AGENTS.md.bak)
 *.bak
+
+# Archived scratch notes retain the original local-only/versioned boundary.
+archive/scratch/**
+!archive/scratch/
+!archive/scratch/*/
+!archive/scratch/*/issues/
+!archive/scratch/*/issues/*.md
+!archive/scratch/*/map.md
+/webui/dist/
+/tmp/

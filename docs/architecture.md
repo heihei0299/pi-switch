@@ -55,11 +55,12 @@ internal/application/**             Desktop 与管理功能共用的应用服务
 
 静态规则由 `go run ./internal/archcheck` 检查，且同时扫描根模块和 `desktop` 模块：
 
-- `domain` 只能依赖标准库和 `internal/domain/**`。
+- `domain` 只能依赖标准库和 `internal/domain/**`。domain/usecase 均禁止直接依赖 `os/**`、`net`、`net/http/**`、`net/rpc/**`、`database/sql/**`、`syscall/**`、`unsafe` 和 `plugin`；`io` 接口及 `net/url`、`net/textproto` 等纯解析工具仍可使用。
 - `usecase` 只能依赖标准库、domain 和 usecase；不得依赖 HTTP、具体 adapter、文件或数据库实现。
 - `adapters/inbound` 可以依赖 domain/usecase、同一 inbound 子树和入口所需外部库；不得依赖 outbound。
 - `adapters/outbound` 可以依赖 domain/usecase、同一 outbound 子树和 IO 所需外部库；不得依赖 inbound。
 - `bootstrap` 用于装配，不把独立 `desktop` module 引入根模块业务包。
+- `application` 是现有管理编排兼容层，可使用 bootstrap 和持久化 adapter；禁止反向依赖 `server`、`tui` 或 `adapters/inbound/**`。检查器限制的是直接 import，不证明函数没有副作用。
 - `internal/usecase/requestlog` 额外禁止 `database/sql`、`internal/store`、`internal/config`、`internal/server`；SQLite 和 Legacy 文件写入只能位于 `internal/adapters/outbound/requestlog`。
 - 测试文件不计入生产依赖图；兼容包可以继续存在，但不得向新用例层新增越层依赖。
 
@@ -103,6 +104,10 @@ desktop/main.go + desktop/shell.go
 
 `internal/usecase/inference` 负责流式/非流式共用的路由、协议计划、上游结果归一化和取消处理；HTTP handler 只做输入输出协议协调。裸 model ID、`/v1/*`、错误状态码、工具调用、多轮历史、限额和失败事实记录保持兼容。
 
+非流式上游响应（包括错误和重试响应）的响应体上限为 32 MiB；超限关闭响应体并返回受控 502，不转发截断内容。取消请求仍保留原取消语义。
+
+CLI、HTTP 启动参数、Native Proxy 启动及 Settings 用例共用 `domain/config.ValidatePort`，在转换为 `uint16` 前拒绝范围外端口。启动参数省略端口仍使用默认值，显式无效端口返回错误；配置 JSON 原有的零值默认化语义不变。
+
 Proxy 是独立进程。GUI 退出不隐式停止 Proxy；daemon 的 PID、身份、锁、健康检查和停止安全由 `internal/adapters/outbound/daemon` 与 `internal/usecase/proxycontrol` 共同维护。
 
 ## 5. RequestLog / Legacy Log
@@ -144,13 +149,20 @@ W24 的聚合路径使用轻量 value-based `AggregationFact`，仅用于 Stats/
 
 `internal/domain/gateway` 负责 canonical plan、校验、diff/merge 等规则；`internal/usecase/gateway` 负责 Preview、Catalog enrich、Validate 和显式 Publish 编排；`internal/adapters/outbound/filegateway` 负责读取 current、锁、临时文件和原子替换；`internal/adapters/outbound/catalog` 负责 models.dev 缓存 IO，`internal/domain/catalog` 负责快照解析和补齐规则。
 
-- Generated 使用 `FillOverwrite`；Draft 使用 `FillMissing`。
+- `usecase/gateway.PreviewGenerated`、`PreviewDraft`、`PreviewSelected`、`PreviewSelectedDraft` 集中配置读取、current 读取、catalog 获取和计划构建；配置通过最小 `ConfigReader` 注入。HTTP、CLI publish/preview、Native Gateway 与 JSON 验证不再自行拼接这条读取链。
+- Generated 使用 `FillOverwrite`；Draft 使用 `FillMissing`。HTTP 的选择＋草稿走 `PreviewSelectedDraft`，Native 候选预览走 `PreviewSelected`，保留两者的元数据填充和展示差异。
+- `Preview` 只额外返回发布认证提示所需的 `ProxyHost`，不把完整配置交给入口；配置与 models 的读取不构成跨文件事务，发布仍在文件锁内校验旧状态。
+- TUI 继续以当前界面的配置快照调用 `BuildGeneratedPlan`；旧 `internal/gateway` 兼容入口复用同一计划实现。Native JSON 的 Load 仍只生成初始草稿，不隐式加载 catalog 或发布内容。
 - `models.json` 只在显式 Publish/Apply 后写入，不因 config 修改自动发布。
 - 第三方 provider 保留，冲突阻止发布，最终文件权限和原子替换合同保持不变。
 
 ### Provider / Config
 
 `internal/domain/config`、`internal/domain/provider` 保存 schema 和规则；`internal/usecase/providers` 负责 CRUD、凭证处理、模型抓取和 revision 语义；`internal/adapters/outbound/fileconfig` 负责锁、备份、权限和原子保存。旧 `internal/config`、`internal/profile` 仍作为兼容实现/桥接存在，不能被文档误认为新的职责归属。
+
+首批管理操作 `application.SaveProvider`、`DeleteProvider`、`SetCurrentProfile`、`DuplicateProvider` 接收 Context 和已装配的 Provider 用例，不在函数内部创建依赖或切换到 Background。Desktop 在入口装配，标准任务和 Overview 选中操作传递已有任务 Context；应用层继续保留兼容错误映射与脱敏，不新增业务规则副本。取消错误保留其类别，取消并不回滚已经完成的原子写入。
+
+配置恢复/全量替换及其他未迁移 application 操作仍有具体持久化依赖，本轮不把整个 application 宣称为纯用例层。
 
 ### Packages / Sessions / Daemon
 

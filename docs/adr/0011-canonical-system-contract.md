@@ -43,5 +43,5 @@ pi-switch 同时管理 `config.json`、`models.json`、SQLite request rows、pi 
 
 ## Verification obligations
 
-- 具体条款和回归矩阵见 `docs/system-contract.md`。
+- 具体条款和回归矩阵见 `archive/docs/system-contract.md`。
 - IMP-02～IMP-05 每项独立完成 targeted tests、静态检查、真实功能验证和单独提交。

@@ -25,7 +25,7 @@ Manage provider profiles and publish a local model-name gateway. The MyGo Native
 - View request and token usage, and manage pi packages from Native Desktop.
 - Use the same Go core through Native Desktop, CLI, TUI, and the management API.
 
-For architecture and management API details, see [docs/architecture.md](./docs/architecture.md), [docs/management-api.md](./docs/management-api.md), and [docs/system-contract.md](./docs/system-contract.md).
+For architecture and management API details, see [archive/docs/architecture.md](archive/docs/architecture.md), [archive/docs/management-api.md](archive/docs/management-api.md), and [archive/docs/system-contract.md](archive/docs/system-contract.md).
 
 ## Install
 
@@ -70,7 +70,7 @@ The management API remains available under `/api/*`; `/` displays the WebUI reti
 
 Stopping a managed daemon verifies its process identity with a Linux pidfd. If pidfds are unavailable or blocked, `stop` fails closed instead of signaling a possibly reused PID.
 
-The management API binds to loopback by default. Binding to a non-loopback address requires a password; see the [management API security guide](./docs/management-api.md#security).
+The management API binds to loopback by default. Binding to a non-loopback address requires a password; see the [management API security guide](archive/docs/management-api.md#security).
 
 ## Common questions
 
