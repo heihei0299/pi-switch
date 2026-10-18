@@ -325,3 +325,28 @@ func TestCheckArchitectureDependenciesAcceptsLegacyTree(t *testing.T) {
 		t.Fatalf("legacy tree reported violations: %+v", violations)
 	}
 }
+
+func TestCoreRejectsInfrastructureImports(t *testing.T) {
+	const module = "github.com/heihei0299/pi-switch"
+	for _, file := range []string{"internal/domain/example/rules.go", "internal/usecase/providers/service.go"} {
+		for _, dependency := range []string{"os", "os/exec", "net", "net/http", "net/http/httputil", "net/rpc", "database/sql", "database/sql/driver", "syscall", "unsafe", "plugin"} {
+			if reason := forbiddenImport(file, dependency, module, map[string]bool{dependency: true}); reason == "" {
+				t.Errorf("accepted infrastructure dependency %s -> %s", file, dependency)
+			}
+		}
+		for _, dependency := range []string{"context", "io", "net/url", "net/textproto"} {
+			if reason := forbiddenImport(file, dependency, module, map[string]bool{dependency: true}); reason != "" {
+				t.Errorf("rejected pure dependency %s: %s", dependency, reason)
+			}
+		}
+	}
+}
+
+func TestApplicationRejectsInboundDependencies(t *testing.T) {
+	const module = "github.com/heihei0299/pi-switch"
+	for _, dependency := range []string{"internal/server", "internal/tui", "internal/adapters/inbound/httpinfer"} {
+		if reason := forbiddenImport("internal/application/management.go", module+"/"+dependency, module, nil); reason == "" {
+			t.Errorf("application accepted inbound dependency %s", dependency)
+		}
+	}
+}

@@ -253,8 +253,21 @@ func forbiddenImport(file, importPath, module string, stdlib map[string]bool) st
 		layer = "outbound"
 	case strings.HasPrefix(rel, "internal/bootstrap/"):
 		layer = "bootstrap"
+	case strings.HasPrefix(rel, "internal/application/"):
+		layer = "application"
 	default:
 		return ""
+	}
+
+	if layer == "domain" || layer == "usecase" {
+		for _, infrastructure := range []string{"os", "net/http", "net/rpc", "database/sql", "syscall", "unsafe", "plugin"} {
+			if under(importPath, infrastructure) {
+				return layer + " must not depend on infrastructure packages"
+			}
+		}
+		if importPath == "net" {
+			return layer + " must not depend on network IO"
+		}
 	}
 
 	domain := module + "/internal/domain"
@@ -281,6 +294,11 @@ func forbiddenImport(file, importPath, module string, stdlib map[string]bool) st
 		if under(rel, "internal/adapters/outbound/profilevalidation") && under(importPath, module+"/internal/profile") {
 			allowed = true
 		}
+	case "application":
+		if under(importPath, module+"/internal/server") || under(importPath, module+"/internal/tui") || under(importPath, inbound) {
+			return "application must not depend on inbound entry points"
+		}
+		return ""
 	case "bootstrap":
 		return ""
 	}
