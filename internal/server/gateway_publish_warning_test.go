@@ -139,7 +139,7 @@ func TestPublishedAuthCaveat_JudgesThePlanToo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := PublishedAuthCaveat(tc.cfg, tc.published) != ""
+			got := PublishedAuthCaveat(tc.cfg.Settings.Proxy.Host, tc.published) != ""
 			if got != tc.want {
 				t.Fatalf("caveat present = %v, want %v", got, tc.want)
 			}

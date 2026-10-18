@@ -64,7 +64,7 @@ func TestProviderCLI_DocumentedCommandsAreRecognized(t *testing.T) {
 	re := regexp.MustCompile(`pi-switch provider ([a-z][a-z-]*)`)
 	foundAny := false
 
-	for _, path := range []string{"../../README.md", "../../README_ZH.md", "../../docs/manual-test-basic.md"} {
+	for _, path := range []string{"../../README.md", "../../README_ZH.md", "../../archive/docs/manual-test-basic.md"} {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)

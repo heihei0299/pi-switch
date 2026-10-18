@@ -46,10 +46,15 @@ func (s Service) LoadDraft(ctx context.Context) (Draft, error) {
 }
 
 // PutLegacy preserves HTTP PUT /api/settings: latest-file update, no revision
-// precondition, no pre-write backup, and retry validation only.
+// precondition and no pre-write backup; validity checks are shared with Native.
 func (s Service) PutLegacy(ctx context.Context, settings domainconfig.Settings) error {
 	if err := domainconfig.ValidateSettingsRetry(settings); err != nil {
 		return &ValidationError{Message: err.Error()}
+	}
+	for _, port := range []int{settings.Proxy.Port, settings.Web.Port} {
+		if err := domainconfig.ValidatePort(port); err != nil {
+			return &ValidationError{Message: err.Error()}
+		}
 	}
 	return s.store.UpdateConfig(ctx, false, func(cfg *domainconfig.PiSwitchConfig) error {
 		cfg.Settings = settings
@@ -63,8 +68,10 @@ func (s Service) Save(ctx context.Context, settings domainconfig.Settings, expec
 	if err := domainconfig.ValidateSettingsRetry(settings); err != nil {
 		return &ValidationError{Message: "Invalid proxy retry settings; check retry counts, intervals and requestScopedErrors status/match/action rules."}
 	}
-	if settings.Proxy.Port < 1 || settings.Proxy.Port > 65535 || settings.Web.Port < 1 || settings.Web.Port > 65535 {
-		return &ValidationError{Message: "ports must be between 1 and 65535"}
+	for _, port := range []int{settings.Proxy.Port, settings.Web.Port} {
+		if err := domainconfig.ValidatePort(port); err != nil {
+			return &ValidationError{Message: err.Error()}
+		}
 	}
 	return s.store.UpdateConfig(ctx, true, func(cfg *domainconfig.PiSwitchConfig) error {
 		if revision.Of(cfg.Settings) != expected {

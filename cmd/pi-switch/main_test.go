@@ -31,11 +31,13 @@ func TestParseHostPort_FlagPath(t *testing.T) {
 		{"explicit loopback", []string{"--host", "127.0.0.1"}, "127.0.0.1", 43110, false},
 		{"empty host is passed through, not defaulted", []string{"--host", ""}, "", 43110, false},
 		{"port and daemon", []string{"--host", "0.0.0.0", "--port", "43999", "--daemon"}, "0.0.0.0", 43999, true},
-		{"invalid port keeps default", []string{"--port", "not-a-number"}, "127.0.0.1", 43110, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			host, port, daemon := parseHostPort(tc.args, "127.0.0.1", 43110)
+			host, port, daemon, err := parseHostPort(tc.args, "127.0.0.1", 43110)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if host != tc.wantHost || port != tc.wantPort || daemon != tc.wantDae {
 				t.Fatalf("parseHostPort(%q) = (%q, %d, %v), want (%q, %d, %v)",
 					tc.args, host, port, daemon, tc.wantHost, tc.wantPort, tc.wantDae)
@@ -527,5 +529,23 @@ func TestHandleProvider_SucceedsOnWritableConfig(t *testing.T) {
 				t.Fatalf("provider %v exit = %d, want 0 (stdout=%q)", args, code, out)
 			}
 		})
+	}
+}
+
+func TestParseHostPortRejectsInvalidPort(t *testing.T) {
+	for _, args := range [][]string{
+		{"--port"}, {"--port", "not-a-number"}, {"--port", ""},
+		{"--port", "-1"}, {"--port", "0"}, {"--port", "65536"},
+		{"--port", "70000"}, {"--port", "999999999999999999999999"},
+		{"--port", "70000", "--port", "43112"},
+	} {
+		if _, _, _, err := parseHostPort(args, "127.0.0.1", 43112); err == nil {
+			t.Errorf("parseHostPort(%q) accepted invalid port", args)
+		}
+	}
+	for _, port := range []int{0, 70000} {
+		if _, _, _, err := parseHostPort(nil, "127.0.0.1", port); err == nil {
+			t.Errorf("accepted invalid default port %d", port)
+		}
 	}
 }

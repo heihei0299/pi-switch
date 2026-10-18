@@ -72,20 +72,26 @@ func proxyStartError(err error) gin.H {
 func handleProxyStart(c *gin.Context) {
 	var body struct {
 		Host   string `json:"host"`
-		Port   int    `json:"port"`
+		Port   *int   `json:"port"`
 		Daemon bool   `json:"daemon"`
 	}
 	raw, _ := c.GetRawData()
 	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			c.JSON(400, managementError("invalid json"))
+			return
+		}
 	}
 	if qh := c.Query("host"); qh != "" {
 		body.Host = qh
 	}
-	if qp := c.Query("port"); qp != "" {
-		if p, err := strconv.Atoi(qp); err == nil {
-			body.Port = p
+	if query := c.Request.URL.Query(); query.Has("port") {
+		p, err := strconv.Atoi(query.Get("port"))
+		if err != nil {
+			c.JSON(400, managementError("invalid port"))
+			return
 		}
+		body.Port = &p
 	}
 	if qd := c.Query("daemon"); qd != "" {
 		if qd == "true" || qd == "1" {
@@ -107,9 +113,13 @@ func handleProxyStart(c *gin.Context) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	port := body.Port
-	if port == 0 {
-		port = 43112
+	port := 43112
+	if body.Port != nil {
+		port = *body.Port
+	}
+	if err := domainconfig.ValidatePort(port); err != nil {
+		c.JSON(400, managementError(err.Error()))
+		return
 	}
 	// If daemon flag not set but request is POST /api/proxy/start, we still attempt daemon start to satisfy tests
 	// Determine if we should call proxy control start: if body.Daemon or raw contains daemon:true or query daemon
@@ -130,7 +140,7 @@ func handleProxyStart(c *gin.Context) {
 	// For the tui_daemon tests, we always want daemon behavior when port/host specified
 	if !shouldDaemon {
 		// fallback: if port/host provided, treat as daemon
-		if body.Host != "" || body.Port != 0 {
+		if body.Host != "" || body.Port != nil {
 			shouldDaemon = true
 		}
 	}

@@ -2,14 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
-	domaincatalog "github.com/heihei0299/pi-switch/internal/domain/catalog"
 	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
 	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
+	gatewayusecase "github.com/heihei0299/pi-switch/internal/usecase/gateway"
 )
 
 type gatewayPreviewRequest struct {
@@ -31,7 +32,8 @@ func handleGetGateway(c *gin.Context) {
 }
 
 func handleGatewayPreview(c *gin.Context) {
-	serveGatewayPreview(c, nil, true)
+	preview, err := bootstrap.NewGatewayService().PreviewGenerated(c.Request.Context())
+	writeGatewayPreview(c, preview, err)
 }
 
 func handleGatewayPreviewPost(c *gin.Context) {
@@ -40,58 +42,31 @@ func handleGatewayPreviewPost(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid gateway preview request"})
 		return
 	}
-	generated := true
-	var edited map[string]interface{}
-	if request.Selected != nil {
-		cfg, _, configErr := bootstrap.LoadConfig(configPath())
-		if configErr != nil {
-			c.JSON(500, gin.H{"error": configErr.Error()})
-			return
-		}
-		var err error
-		if request.Draft != nil {
-			edited, err = domaingateway.ApplyGatewaySelectionToDraft(cfg, request.Draft, *request.Selected)
-		} else {
-			edited, err = domaingateway.BuildSelectedGatewayEntry(cfg, *request.Selected)
-		}
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		generated = false
-	} else if request.Draft != nil {
-		edited = request.Draft
-		generated = false
+	service := bootstrap.NewGatewayService()
+	var preview gatewayusecase.Preview
+	var err error
+	switch {
+	case request.Selected != nil:
+		preview, err = service.PreviewSelectedDraft(c.Request.Context(), request.Draft, *request.Selected)
+	case request.Draft != nil:
+		preview, err = service.PreviewDraft(c.Request.Context(), request.Draft)
+	default:
+		preview, err = service.PreviewGenerated(c.Request.Context())
 	}
-	serveGatewayPreview(c, edited, generated)
+	writeGatewayPreview(c, preview, err)
 }
 
-// serveGatewayPreview renders one preview. generated must be stated by the
-// caller: nil edited only happens for a generated preview, but the plan kind is
-// never inferred from nil.
-func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generated bool) {
-	cfg, _, configErr := bootstrap.LoadConfig(configPath())
-	if configErr != nil {
-		c.JSON(500, gin.H{"error": configErr.Error()})
-		return
-	}
-	current, err := bootstrap.NewGatewayService().ReadCurrent(c.Request.Context())
+func writeGatewayPreview(c *gin.Context, preview gatewayusecase.Preview, err error) {
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		status := 500
+		var selectionError *gatewayusecase.SelectionError
+		if errors.As(err, &selectionError) {
+			status = 400
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	var plan domaingateway.CanonicalGatewayPlan
-	var summary domaincatalog.EnrichSummary
-	var planErr error
-	if generated {
-		plan, summary, planErr = bootstrap.NewGatewayService().BuildGeneratedPlan(c.Request.Context(), cfg, current)
-	} else {
-		plan, summary, planErr = bootstrap.NewGatewayService().BuildDraftPlan(c.Request.Context(), cfg, current, edited)
-	}
-	if planErr != nil {
-		c.JSON(500, gin.H{"error": planErr.Error()})
-		return
-	}
+	plan, summary := preview.Plan, preview.Enrich
 	currentForResp := interface{}(map[string]interface{}{})
 	if provs, ok := plan.Current["providers"].(map[string]interface{}); ok {
 		currentForResp = provs
@@ -151,11 +126,11 @@ func serveGatewayPreview(c *gin.Context, edited map[string]interface{}, generate
 //
 // Residual limit: a proxy started with a --host that differs from the configured one
 // is invisible here; the running daemon's host would be the exact source.
-func PublishedAuthCaveat(cfg domainconfig.PiSwitchConfig, published map[string]interface{}) string {
+func PublishedAuthCaveat(proxyHost string, published map[string]interface{}) string {
 	if !publishesFixedGatewayProvider(published) {
 		return ""
 	}
-	if !IsLoopback(cfg.Settings.Proxy.Host) || planReachesLan(published) {
+	if !IsLoopback(proxyHost) || planReachesLan(published) {
 		return publishedAuthCaveatText
 	}
 	return ""
@@ -211,9 +186,9 @@ func planReachesLan(published map[string]interface{}) bool {
 
 // gatewayPublishOK is the success body for a publish, with the caveat attached only
 // when there is one (a loopback proxy stays byte-identical to before).
-func gatewayPublishOK(cfg domainconfig.PiSwitchConfig, published map[string]interface{}) gin.H {
+func gatewayPublishOK(proxyHost string, published map[string]interface{}) gin.H {
 	resp := gin.H{"ok": true}
-	if caveat := PublishedAuthCaveat(cfg, published); caveat != "" {
+	if caveat := PublishedAuthCaveat(proxyHost, published); caveat != "" {
 		resp["warnings"] = []string{caveat}
 	}
 	return resp
@@ -230,29 +205,22 @@ func handlePutGateway(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "providers is required"})
 		return
 	}
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
+	service := bootstrap.NewGatewayService()
+	preview, err := service.PreviewDraft(c.Request.Context(), gw)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	current, currentErr := bootstrap.NewGatewayService().ReadCurrent(c.Request.Context())
-	if currentErr != nil {
-		c.JSON(500, gin.H{"error": currentErr.Error()})
-		return
-	}
-	plan, _, planErr := bootstrap.NewGatewayService().BuildDraftPlan(c.Request.Context(), cfg, current, gw)
-	if planErr != nil {
-		c.JSON(500, gin.H{"error": planErr.Error()})
-		return
-	}
+	plan := preview.Plan
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
 	}
-	if err := bootstrap.NewGatewayService().Publish(c.Request.Context(), plan); err != nil {
+	if err := service.Publish(c.Request.Context(), plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
+	c.JSON(200, gatewayPublishOK(preview.ProxyHost, plan.Proposed))
 }
 
 // gatewayHealthPayload reports the gateway's state. has_models_file and
@@ -302,37 +270,31 @@ func handleGatewayPublish(c *gin.Context) {
 			return
 		}
 	}
-	cfg, ok := loadConfigOrWrite(c)
-	if !ok {
-		return
-	}
-	current, currentErr := bootstrap.NewGatewayService().ReadCurrent(c.Request.Context())
-	if currentErr != nil {
-		c.JSON(500, gin.H{"error": currentErr.Error()})
-		return
-	}
-	var plan domaingateway.CanonicalGatewayPlan
-	var planErr error
-	if body != nil && len(body) > 0 {
+	if len(body) > 0 {
 		if _, ok := body["providers"]; !ok {
 			c.JSON(400, gin.H{"error": "providers is required"})
 			return
 		}
-		plan, _, planErr = bootstrap.NewGatewayService().BuildDraftPlan(c.Request.Context(), cfg, current, body)
-	} else {
-		plan, _, planErr = bootstrap.NewGatewayService().BuildGeneratedPlan(c.Request.Context(), cfg, current)
 	}
-	if planErr != nil {
-		c.JSON(500, gin.H{"error": planErr.Error()})
+	service := bootstrap.NewGatewayService()
+	var preview gatewayusecase.Preview
+	if len(body) > 0 {
+		preview, err = service.PreviewDraft(c.Request.Context(), body)
+	} else {
+		preview, err = service.PreviewGenerated(c.Request.Context())
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	plan := preview.Plan
 	if len(plan.Conflicts) > 0 {
 		c.JSON(400, gin.H{"error": strings.Join(plan.Conflicts, "; ")})
 		return
 	}
-	if err := bootstrap.NewGatewayService().Publish(c.Request.Context(), plan); err != nil {
+	if err := service.Publish(c.Request.Context(), plan); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gatewayPublishOK(cfg, plan.Proposed))
+	c.JSON(200, gatewayPublishOK(preview.ProxyHost, plan.Proposed))
 }

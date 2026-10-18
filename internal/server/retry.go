@@ -28,7 +28,7 @@ import (
 // to reject malformed retry knobs.
 //
 // The scheduling engine is retained on purpose rather than deleted:
-// `.scratch/remove-failover-chain/spec.md` keeps the primitives (§3 决策) and the
+// `.scratch/remove-failover-chain.md` keeps the primitives (§3 决策) and the
 // `circuitBreaker` placeholder (§1.2 目标) so a future per-conversation breaker
 // can reuse them. Read the scheduling half as a policy library with tests, not as the live
 // strategy — do not expect a change there to affect production — and do not

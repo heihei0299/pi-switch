@@ -99,3 +99,31 @@ func TestProxyStopReturnsErrorWhenDaemonOperationIsLocked(t *testing.T) {
 		t.Fatalf("stop failure body = %s, want an error without a running claim", w.Body.String())
 	}
 }
+
+func TestProxyStartRejectsInvalidPort(t *testing.T) {
+	path := isolateConfig(t)
+	dir := filepath.Dir(path)
+	t.Setenv("PI_SWITCH_CONFIG_DIR", dir)
+	// A validation regression must fail at the lock, never spawn a daemon.
+	lock, err := os.OpenFile(filepath.Join(dir, daemon.Proxy.PidFile+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	r := NewMgmtRouter()
+	for _, port := range []string{"-1", "0", "65536", "70000", "999999999999999999999999", `"bad"`, "1.5"} {
+		w := callMgmt(r, http.MethodPost, "/api/proxy/start", `{"daemon":true,"port":`+port+`}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body port %s: status=%d body=%s", port, w.Code, w.Body.String())
+		}
+	}
+	for _, port := range []string{"", "-1", "0", "65536", "70000", "bad", "999999999999999999999999"} {
+		w := callMgmt(r, http.MethodPost, "/api/proxy/start?port="+port, `{"daemon":true}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("query port %s: status=%d body=%s", port, w.Code, w.Body.String())
+		}
+	}
+}

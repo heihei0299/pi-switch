@@ -13,9 +13,11 @@ import (
 	"github.com/heihei0299/pi-switch/internal/application"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
 	"github.com/heihei0299/pi-switch/internal/config"
+	domainconfig "github.com/heihei0299/pi-switch/internal/domain/config"
 	"github.com/heihei0299/pi-switch/internal/protocol"
 	"github.com/heihei0299/pi-switch/internal/server"
 	"github.com/heihei0299/pi-switch/internal/tui"
+	gatewayusecase "github.com/heihei0299/pi-switch/internal/usecase/gateway"
 	packageusecase "github.com/heihei0299/pi-switch/internal/usecase/packages"
 	providerusecase "github.com/heihei0299/pi-switch/internal/usecase/providers"
 	"github.com/heihei0299/pi-switch/internal/usecase/proxycontrol"
@@ -147,7 +149,7 @@ func main() {
 	}
 }
 
-func parseHostPort(args []string, defHost string, defPort int) (string, int, bool) {
+func parseHostPort(args []string, defHost string, defPort int) (string, int, bool, error) {
 	host := defHost
 	port := defPort
 	daemonFlag := false
@@ -155,16 +157,24 @@ func parseHostPort(args []string, defHost string, defPort int) (string, int, boo
 		if args[i] == "--host" && i+1 < len(args) {
 			host = args[i+1]
 			i++
-		} else if args[i] == "--port" && i+1 < len(args) {
-			if p, err := strconv.Atoi(args[i+1]); err == nil {
-				port = p
+		} else if args[i] == "--port" {
+			if i+1 >= len(args) {
+				return "", 0, false, fmt.Errorf("--port requires a value")
 			}
+			p, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return "", 0, false, fmt.Errorf("invalid port %q", args[i+1])
+			}
+			if err := domainconfig.ValidatePort(p); err != nil {
+				return "", 0, false, err
+			}
+			port = p
 			i++
 		} else if args[i] == "--daemon" {
 			daemonFlag = true
 		}
 	}
-	return host, port, daemonFlag
+	return host, port, daemonFlag, domainconfig.ValidatePort(port)
 }
 
 func hasGeneratePasswordFlag(args []string) bool {
@@ -247,7 +257,11 @@ func handleProxy(args []string) {
 		fmt.Println("Usage: pi-switch proxy [start|stop|status] [--host HOST] [--port PORT] [--daemon] [--generate-password]")
 		os.Exit(0)
 	case "start":
-		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43112)
+		host, port, isDaemon, err := parseHostPort(rest, "127.0.0.1", 43112)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		if isDaemon {
 			mustResolveBindAuth(host)
 			res, err := bootstrap.NewProxyControlService().Start(proxycontrol.Proxy, host, uint16(port))
@@ -275,7 +289,11 @@ func handleProxy(args []string) {
 		}
 	default:
 		// treat as start with flags directly: pi-switch proxy --daemon etc
-		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43112)
+		host, port, isDaemon, err := parseHostPort(args, "127.0.0.1", 43112)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		if isDaemon {
 			mustResolveBindAuth(host)
 			res, err := bootstrap.NewProxyControlService().Start(proxycontrol.Proxy, host, uint16(port))
@@ -304,7 +322,11 @@ func handleWebUI(args []string) {
 		fmt.Println("Usage: pi-switch webui [start|stop|status] [--host HOST] [--port PORT] [--daemon] [--generate-password]")
 		os.Exit(0)
 	case "start":
-		host, port, isDaemon := parseHostPort(rest, "127.0.0.1", 43110)
+		host, port, isDaemon, err := parseHostPort(rest, "127.0.0.1", 43110)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		startWebUIMode(host, port, isDaemon)
 	case "stop":
 		if stopDaemon(proxycontrol.WebUI) != 0 {
@@ -317,7 +339,11 @@ func handleWebUI(args []string) {
 			os.Exit(1)
 		}
 	default:
-		host, port, isDaemon := parseHostPort(args, "127.0.0.1", 43110)
+		host, port, isDaemon, err := parseHostPort(args, "127.0.0.1", 43110)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		startWebUIMode(host, port, isDaemon)
 	}
 }
@@ -933,55 +959,44 @@ func handleGatewayCLI(args []string) {
 		fmt.Println("Usage: pi-switch gateway <publish|status|preview>")
 		os.Exit(0)
 	}
-	cfgPath := config.ResolvePath()
-	cfg, _, err := bootstrap.LoadConfig(cfgPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	service := bootstrap.NewGatewayService()
 	switch args[0] {
-	case "publish", "apply":
-		current, err := service.ReadCurrent(context.Background())
+	case "publish", "apply", "preview":
+		service := bootstrap.NewGatewayService()
+		preview, err := service.PreviewGenerated(context.Background())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
+			var configError *gatewayusecase.ConfigReadError
+			if errors.As(err, &configError) {
+				fmt.Fprintln(os.Stderr, err)
+			} else if args[0] == "preview" {
+				fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
+			}
 			os.Exit(1)
 		}
-		// Same enriched generated flow as Native Desktop preview/publish.
-		plan, _, err := service.BuildGeneratedPlan(context.Background(), cfg, current)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
-			os.Exit(1)
+		if args[0] == "preview" {
+			b, _ := json.MarshalIndent(preview.Plan.Proposed, "", "  ")
+			fmt.Println(string(b))
+			return
 		}
-		if err := service.Publish(context.Background(), plan); err != nil {
+		if err := service.Publish(context.Background(), preview.Plan); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway publish failed: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("gateway published")
-		// 与 Native Desktop 共用同一判定与同一份文案（server.PublishedAuthCaveat）：
-		// 发布的 provider 携带 Bearer 形式的 apiKey，而代理面一旦超出 loopback 就只
-		// 接受 HTTP Basic。判定以**配置里的代理 host** 为主、条目自身 baseUrl 为辅——
-		// 只看 baseUrl 会被 gateway 包的通配改写（→127.0.0.1）骗过去。
-		if caveat := server.PublishedAuthCaveat(cfg, plan.Proposed); caveat != "" {
+		if caveat := server.PublishedAuthCaveat(preview.ProxyHost, preview.Plan.Proposed); caveat != "" {
 			fmt.Fprintln(os.Stderr, "warning: "+caveat)
 		}
-	case "status":
-		fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
-	case "preview":
-		current, err := service.ReadCurrent(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
-			os.Exit(1)
-		}
-		// Same generated flow as publish, so the preview shows what publish writes.
-		plan, _, err := service.BuildGeneratedPlan(context.Background(), cfg, current)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "gateway preview failed: %v\n", err)
-			os.Exit(1)
-		}
-		b, _ := json.MarshalIndent(plan.Proposed, "", "  ")
-		fmt.Println(string(b))
 	default:
+		cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if args[0] == "status" {
+			fmt.Printf("Gateway @ %s:%d\n", cfg.Settings.Proxy.Host, cfg.Settings.Proxy.Port)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "unknown gateway subcommand %q\n", args[0])
 		os.Exit(1)
 	}

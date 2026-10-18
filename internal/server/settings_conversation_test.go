@@ -81,3 +81,28 @@ func TestSettings_GetAndPut_Roundtrip(t *testing.T) {
 		t.Fatalf("GET after missing => %v, want sessionScan", got2["conversationSource"])
 	}
 }
+
+func TestSettingsRejectInvalidPortsWithoutChangingConfig(t *testing.T) {
+	path := isolateConfig(t)
+	writeConfigFile(t, path, "127.0.0.1")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewMgmtRouter()
+	for _, field := range []string{"proxy", "web"} {
+		for _, port := range []string{"-1", "65536", "70000"} {
+			w := callMgmt(r, http.MethodPut, "/api/settings", `{"`+field+`":{"port":`+port+`}}`)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s port %s: status=%d body=%s", field, port, w.Code, w.Body.String())
+			}
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("invalid settings changed config")
+	}
+}

@@ -73,3 +73,30 @@ func TestSaveChecksRevisionAndBacksUpOnlySuccessfulWrite(t *testing.T) {
 		t.Fatalf("conflict changed settings or created backup: %+v, backups=%d", store.cfg.Settings, store.backups)
 	}
 }
+
+func TestSettingsRejectInvalidPortsWithoutWriting(t *testing.T) {
+	for _, port := range []int{-1, 0, 65536, 70000} {
+		for _, field := range []string{"proxy", "web"} {
+			for _, legacy := range []bool{false, true} {
+				original := validSettings()
+				store := &memoryConfigStore{cfg: domainconfig.PiSwitchConfig{Settings: original}}
+				updated := original
+				if field == "proxy" {
+					updated.Proxy.Port = port
+				} else {
+					updated.Web.Port = port
+				}
+				service := NewService(store)
+				var err error
+				if legacy {
+					err = service.PutLegacy(context.Background(), updated)
+				} else {
+					err = service.Save(context.Background(), updated, revision.Of(original))
+				}
+				if err == nil || store.backups != 0 || !reflect.DeepEqual(store.cfg.Settings, original) {
+					t.Errorf("legacy=%v %s=%d: error=%v, backups=%d, settings=%+v", legacy, field, port, err, store.backups, store.cfg.Settings)
+				}
+			}
+		}
+	}
+}
