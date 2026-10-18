@@ -44,17 +44,8 @@ func nativeGatewayDraftPlan(raw string) (domaingateway.CanonicalGatewayPlan, err
 	if err := json.Unmarshal([]byte(raw), &draft); err != nil {
 		return domaingateway.CanonicalGatewayPlan{}, err
 	}
-	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
-	if err != nil {
-		return domaingateway.CanonicalGatewayPlan{}, err
-	}
-	service := bootstrap.NewGatewayService()
-	current, err := service.ReadCurrent(context.Background())
-	if err != nil {
-		return domaingateway.CanonicalGatewayPlan{}, err
-	}
-	plan, _, err := service.BuildDraftPlan(context.Background(), cfg, current, draft)
-	return plan, err
+	preview, err := bootstrap.NewGatewayService().PreviewDraft(context.Background(), draft)
+	return preview.Plan, err
 }
 func nativeJSONSyntaxErrorOffset(raw string) (int, bool) {
 	var value interface{}
