@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -405,3 +406,72 @@ func TestNativeOverviewGatewayRefreshKeepsPageSelection(t *testing.T) {
 	}
 }
 
+func TestNativeGatewayRefreshRemembersTriggerDuringLoad(t *testing.T) {
+	app := &desktopShell{complexPreview: newNativeComplexPreview()}
+	gateway := &app.complexPreview.nativeGatewayState
+	gateway.gatewayLoading = true
+	gateway.refresh(app, nil)
+	if !gateway.gatewayRefreshPending {
+		t.Fatal("a refresh requested while the preview loads was dropped")
+	}
+	// The completion handler clears the loading flag before replaying.
+	gateway.gatewayLoading = false
+	gateway.flushRefresh(app)
+	if gateway.gatewayRefreshPending || gateway.gatewayLoading {
+		t.Fatalf("the pending refresh was not replayed once: pending=%v loading=%v", gateway.gatewayRefreshPending, gateway.gatewayLoading)
+	}
+}
+
+func TestNativeGatewayPublishReplaysQueuedRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"success", nil},
+		{"failure", errors.New("gateway plan rejected: conflict")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &desktopShell{complexPreview: newNativeComplexPreview()}
+			gateway := &app.complexPreview.nativeGatewayState
+			_, token, ok := app.tasks.begin("gateway")
+			if !ok {
+				t.Fatal("the gateway task slot was busy")
+			}
+			gateway.gatewayPublishing = true
+			gateway.gatewayLoaded = true
+			gateway.gateway = nativeGatewayPreview{pendingCount: 2}
+			replayed := 0
+			var replayedSelections []domaingateway.GatewaySelection
+			gateway.refreshGateway = func(selections []domaingateway.GatewaySelection) {
+				replayed++
+				replayedSelections = selections
+			}
+			// An overview refresh that arrives while the publish runs is queued.
+			gateway.refresh(app, []domaingateway.GatewaySelection{})
+			if !gateway.gatewayRefreshPending {
+				t.Fatal("a refresh requested while publishing was dropped")
+			}
+
+			gateway.completePublish(app, token, nativeGatewayPreview{pendingCount: 1}, true, "Published selected Gateway models.", tc.err)
+
+			if gateway.gatewayRefreshPending {
+				t.Fatal("the queued refresh was not replayed after the publish")
+			}
+			if replayed != 1 || replayedSelections == nil || len(replayedSelections) != 0 {
+				t.Fatalf("replayed %d refresh(es) with %#v, want exactly one with the explicit empty selection", replayed, replayedSelections)
+			}
+			if gateway.gatewayPublishing {
+				t.Fatal("the publish state was not cleared")
+			}
+			if tc.err != nil {
+				if !strings.Contains(gateway.gatewayPublishMessage, "Publish failed") {
+					t.Fatalf("publish failure was not reported: %q", gateway.gatewayPublishMessage)
+				}
+				return
+			}
+			if gateway.gateway.pendingCount != 1 {
+				t.Fatalf("the publish result was not applied: pending=%d", gateway.gateway.pendingCount)
+			}
+		})
+	}
+}

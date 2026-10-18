@@ -30,11 +30,14 @@ type SelectedPlan struct {
 }
 
 type Service struct {
+	config  ConfigReader
 	store   Store
 	catalog Catalog
 }
 
-func New(store Store, catalog Catalog) *Service { return &Service{store: store, catalog: catalog} }
+func New(config ConfigReader, store Store, catalog Catalog) *Service {
+	return &Service{config: config, store: store, catalog: catalog}
+}
 
 func (s *Service) ReadCurrent(ctx context.Context) (map[string]interface{}, error) {
 	if err := ctx.Err(); err != nil {
@@ -69,7 +72,7 @@ func (s *Service) BuildDraftPlan(ctx context.Context, cfg domainconfig.PiSwitchC
 	return domaingateway.BuildDraftPlan(cfg, current, draft), summary, nil
 }
 
-func (s *Service) BuildSelectedPlan(ctx context.Context, cfg domainconfig.PiSwitchConfig, current map[string]interface{}, selections []domaingateway.GatewaySelection) (SelectedPlan, EnrichSummary, error) {
+func (s *Service) buildSelectedPlan(ctx context.Context, cfg domainconfig.PiSwitchConfig, current map[string]interface{}, selections []domaingateway.GatewaySelection) (SelectedPlan, EnrichSummary, error) {
 	snapshot, stale, warning, err := s.snapshot(ctx)
 	if err != nil {
 		return SelectedPlan{}, EnrichSummary{}, err
@@ -138,7 +141,11 @@ func (s *Service) snapshot(ctx context.Context) (domaincatalog.Snapshot, bool, s
 	if s.catalog == nil {
 		return domaincatalog.Snapshot{}, false, "models.dev unavailable: catalog is not configured", nil
 	}
-	return s.catalog.Snapshot(ctx)
+	snapshot, stale, warning, err := s.catalog.Snapshot(ctx)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return domaincatalog.Snapshot{}, false, "", ctxErr
+	}
+	return snapshot, stale, warning, err
 }
 
 func enrichModels(snapshot domaincatalog.Snapshot, stale bool, warning string, cfg domainconfig.PiSwitchConfig, target map[string]interface{}, fill func(map[string]interface{}, domaincatalog.Meta) bool) EnrichSummary {

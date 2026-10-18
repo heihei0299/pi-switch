@@ -32,17 +32,17 @@ func (c fakeCatalog) Snapshot(context.Context) (domaincatalog.Snapshot, bool, st
 }
 
 func TestCurrentExistsUsesStoreAndHandlesUnavailableStore(t *testing.T) {
-	if gatewayusecase.New(nil, nil).CurrentExists(context.Background()) {
+	if gatewayusecase.New(nil, nil, nil).CurrentExists(context.Background()) {
 		t.Fatal("unavailable store reported models.json as existing")
 	}
-	if !gatewayusecase.New(&fakeStore{exists: true}, nil).CurrentExists(context.Background()) {
+	if !gatewayusecase.New(nil, &fakeStore{exists: true}, nil).CurrentExists(context.Background()) {
 		t.Fatal("existing models.json was not reported")
 	}
 }
 
 func TestPublishNoOpDoesNotCallStore(t *testing.T) {
 	store := &fakeStore{}
-	service := gatewayusecase.New(store, fakeCatalog{})
+	service := gatewayusecase.New(nil, store, fakeCatalog{})
 	if err := service.Publish(context.Background(), domaingateway.CanonicalGatewayPlan{Proposed: map[string]interface{}{"providers": map[string]interface{}{}}, PendingCount: 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestPublishNoOpDoesNotCallStore(t *testing.T) {
 
 func TestPublishUsesThePreviewedPlanAndHonorsCancellation(t *testing.T) {
 	store := &fakeStore{}
-	service := gatewayusecase.New(store, fakeCatalog{})
+	service := gatewayusecase.New(nil, store, fakeCatalog{})
 	plan := domaingateway.CanonicalGatewayPlan{
 		Current:      map[string]interface{}{"providers": map[string]interface{}{}},
 		Proposed:     map[string]interface{}{"providers": map[string]interface{}{"pi-switch-chat": map[string]interface{}{"models": []interface{}{}}}},
@@ -83,7 +83,7 @@ func TestGeneratedAndDraftPlanUseDifferentCatalogFillPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &fakeStore{current: map[string]interface{}{"providers": map[string]interface{}{}}}
-	service := gatewayusecase.New(store, fakeCatalog{snapshot: snapshot})
+	service := gatewayusecase.New(nil, store, fakeCatalog{snapshot: snapshot})
 	cfg := domainconfig.PiSwitchConfig{Profiles: map[string]domainconfig.ProviderProfile{
 		"acme": {ModelsDevProvider: stringPtr("acme"), Upstreams: []domainconfig.Upstream{{
 			Name: stringPtr("main"), API: domaingateway.ChatAPI,

@@ -8,7 +8,6 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/heihei0299/pi-switch/internal/bootstrap"
-	"github.com/heihei0299/pi-switch/internal/config"
 	domaingateway "github.com/heihei0299/pi-switch/internal/domain/gateway"
 )
 
@@ -44,6 +43,8 @@ type nativeGatewayState struct {
 	gatewayPublishConfirm    bool
 	gatewayPublishing        bool
 	gatewayPublishMessage    string
+	gatewayRefreshPending    bool
+	gatewayPendingSelections []domaingateway.GatewaySelection
 }
 
 func loadNativeGatewayPreview() (nativeGatewayPreview, error) {
@@ -54,16 +55,7 @@ func loadNativeGatewayPreviewForSelection(selections []domaingateway.GatewaySele
 	return preview, err
 }
 func loadNativeGatewaySelectionPlan(selections []domaingateway.GatewaySelection) (nativeGatewayPreview, domaingateway.CanonicalGatewayPlan, error) {
-	cfg, _, err := bootstrap.LoadConfig(config.ResolvePath())
-	if err != nil {
-		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
-	}
-	service := bootstrap.NewGatewayService()
-	current, err := service.ReadCurrent(context.Background())
-	if err != nil {
-		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
-	}
-	selectedPlan, _, err := service.BuildSelectedPlan(context.Background(), cfg, current, selections)
+	selectedPlan, _, err := bootstrap.NewGatewayService().PreviewSelected(context.Background(), selections)
 	if err != nil {
 		return nativeGatewayPreview{}, domaingateway.CanonicalGatewayPlan{}, err
 	}
@@ -203,7 +195,14 @@ func joinNativeNames(names []string) string {
 }
 
 func (p *nativeGatewayState) refresh(shell *desktopShell, selections []domaingateway.GatewaySelection) {
-	if shell.window == nil || p.gatewayLoading || p.gatewayPublishing || shell.exiting {
+	if p.gatewayLoading || p.gatewayPublishing {
+		// A trigger that arrives while the preview loads is replayed afterwards,
+		// so the newest request wins instead of being dropped.
+		p.gatewayRefreshPending = true
+		p.gatewayPendingSelections = selections
+		return
+	}
+	if shell.window == nil || shell.exiting {
 		return
 	}
 	preview := p
@@ -225,18 +224,51 @@ func (p *nativeGatewayState) refresh(shell *desktopShell, selections []domaingat
 				shell.tasks.finish("gateway", token)
 				return
 			}
-			defer shell.tasks.finish("gateway", token)
 			preview.gatewayLoading = false
 			if err != nil {
 				preview.gatewayError = err.Error()
-				return
+			} else {
+				preview.gateway = loaded
+				preview.gatewayLoaded = true
+				preview.gatewaySelectionExplicit = selections != nil
+				preview.gatewayError = ""
 			}
-			preview.gateway = loaded
-			preview.gatewayLoaded = true
-			preview.gatewaySelectionExplicit = selections != nil
-			preview.gatewayError = ""
+			shell.tasks.finish("gateway", token)
+			preview.flushRefresh(shell)
 		})
 	}()
+}
+
+// flushRefresh replays the refresh that arrived while this one ran.
+func (p *nativeGatewayState) flushRefresh(shell *desktopShell) {
+	if !p.gatewayRefreshPending {
+		return
+	}
+	p.gatewayRefreshPending = false
+	selections := p.gatewayPendingSelections
+	p.gatewayPendingSelections = nil
+	if p.refreshGateway != nil {
+		p.refreshGateway(selections)
+		return
+	}
+	p.refresh(shell, selections)
+}
+
+// completePublish applies a finished publish and replays any refresh that was
+// requested while it ran, so the overview never keeps a preview older than the
+// newest trigger; failure is covered because the queue is drained either way.
+func (p *nativeGatewayState) completePublish(shell *desktopShell, token uint64, loaded nativeGatewayPreview, explicit bool, successMessage string, err error) {
+	p.gatewayPublishing = false
+	if err != nil {
+		p.gatewayPublishMessage = "Publish failed: " + err.Error()
+	} else {
+		p.gateway = loaded
+		p.gatewayLoaded = true
+		p.gatewaySelectionExplicit = explicit
+		p.gatewayPublishMessage = successMessage
+	}
+	shell.tasks.finish("gateway", token)
+	p.flushRefresh(shell)
 }
 
 func (p *nativeGatewayState) publishSelection(shell *desktopShell, selections []domaingateway.GatewaySelection) {
@@ -262,16 +294,7 @@ func (p *nativeGatewayState) publishSelection(shell *desktopShell, selections []
 				shell.tasks.finish("gateway", token)
 				return
 			}
-			defer shell.tasks.finish("gateway", token)
-			preview.gatewayPublishing = false
-			if err != nil {
-				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
-				return
-			}
-			preview.gateway = loaded
-			preview.gatewayLoaded = true
-			preview.gatewaySelectionExplicit = selections != nil
-			preview.gatewayPublishMessage = "Published selected Gateway models."
+			preview.completePublish(shell, token, loaded, selections != nil, "Published selected Gateway models.", err)
 		})
 	}()
 }
@@ -300,19 +323,11 @@ func (p *nativeGatewayState) publishDraft(shell *desktopShell, jsonState *native
 				shell.tasks.finish("gateway", token)
 				return
 			}
-			defer shell.tasks.finish("gateway", token)
-			preview.gatewayPublishing = false
-			if err != nil {
-				preview.gatewayPublishMessage = "Publish failed: " + err.Error()
-				jsonState.jsonStatus = preview.gatewayPublishMessage
-				return
-			}
-			preview.gateway = loaded
-			preview.gatewayLoaded = true
-			preview.gatewaySelectionExplicit = false
-			preview.gatewayPublishMessage = "Published Gateway draft."
+			preview.completePublish(shell, token, loaded, false, "Published Gateway draft.", err)
 			jsonState.jsonStatus = preview.gatewayPublishMessage
-			jsonState.invalidateJSONDraftValidation()
+			if err == nil {
+				jsonState.invalidateJSONDraftValidation()
+			}
 		})
 	}()
 }
