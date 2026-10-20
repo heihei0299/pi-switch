@@ -24,26 +24,15 @@ opencode.jsonc
 .cortexkit/
 .agents/
 .pi/
-# Scratch issue tracker: keep canonical records versioned while ignoring
-# local audits, logs, patches, screenshots and other generated artifacts.
-.scratch/**
-!.scratch/
-!.scratch/*.md
-!.scratch/*/
-!.scratch/*/spec.md
-!.scratch/*/issues/
-!.scratch/*/issues/*.md
-!.scratch/*/map.md
 .gocache/
 # template-sync backups (e.g. AGENTS.md.bak)
 *.bak
-
-# Archived scratch notes retain the original local-only/versioned boundary.
-archive/scratch/**
-!archive/scratch/
-!archive/scratch/*/
-!archive/scratch/*/issues/
-!archive/scratch/*/issues/*.md
-!archive/scratch/*/map.md
 /webui/dist/
 /tmp/
+
+# === 提交内容治理：仅提交 README + 源码 ===
+# 过程文档、计划、scratch 记录与归档笔记保留在本地磁盘，不纳入版本控制
+*.md
+!README*.md
+/docs/
+/archive/
