@@ -35,4 +35,9 @@ opencode.jsonc
 *.md
 !README*.md
 /docs/
-/archive/
+# archive/ 仅保留 CLI 帮助契约测试读取的两份文档
+/archive/*
+!/archive/docs/
+/archive/docs/*
+!/archive/docs/manual-test-basic.md
+!/archive/docs/management-api.md
