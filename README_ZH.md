@@ -40,7 +40,7 @@ pi install npm:@heihei0299/pi-switch
 
 ### 从源码构建
 
-需要 Node.js 23.6 或更高版本，以及 Go 1.24.2 或更高版本。
+需要 Node.js 23.6 或更高版本，以及 Go 1.27.4 或更高版本。
 
 ~~~bash
 git clone https://github.com/heihei0299/pi-switch.git
@@ -84,12 +84,12 @@ pi-switch webui start --daemon
 
 ## 开发
 
-需要 Node.js 23.6 或更高版本，以及 Go 1.24.2 或更高版本。
+需要 Node.js 23.6 或更高版本，以及 Go 1.27.4 或更高版本。
 
 ~~~bash
 npm run build
 npm test
-bash scripts/functional-check.sh bin/pi-switch
+bash tool/functional-check.sh bin/pi-switch
 ~~~
 
 ## 致谢

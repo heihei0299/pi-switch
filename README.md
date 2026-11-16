@@ -40,7 +40,7 @@ pi install npm:@heihei0299/pi-switch
 
 ### Build from source
 
-Requires Node.js 23.6 or later and Go 1.24.2 or later.
+Requires Node.js 23.6 or later and Go 1.27.4 or later.
 
 ~~~bash
 git clone https://github.com/heihei0299/pi-switch.git
@@ -84,12 +84,12 @@ Configuration and local request data are stored under <code>~/.pi-switch/</code>
 
 ## Development
 
-Requires Node.js 23.6 or later and Go 1.24.2 or later.
+Requires Node.js 23.6 or later and Go 1.27.4 or later.
 
 ~~~bash
 npm run build
 npm test
-bash scripts/functional-check.sh bin/pi-switch
+bash tool/functional-check.sh bin/pi-switch
 ~~~
 
 ## Acknowledgments

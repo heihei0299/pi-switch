@@ -139,7 +139,7 @@ if [[ -n "$previous_deb" ]]; then
   dpkg --verify "$package_name"
   assert_user_data
   if [[ "${ROLLBACK_NATIVE_WINDOW_SMOKE:-false}" == true ]]; then
-    bash desktop/scripts/test-native-window-xvfb.sh "$install_path" "$work_dir/rollback-native-window.log"
+    bash desktop/tool/test-native-window-xvfb.sh "$install_path" "$work_dir/rollback-native-window.log"
     assert_version "$previous_version"
     test "$(sha256sum "$install_path" | awk '{print $1}')" = "$previous_app_sha"
     assert_user_data

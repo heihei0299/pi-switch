@@ -13,7 +13,7 @@ for pattern in "${patterns[@]}"; do
   if git grep -nE -e "$pattern" -- . \
       ':(exclude)package-lock.json' \
       ':(exclude)pnpm-lock.yaml' \
-      ':(exclude)scripts/check-secrets.sh'; then
+      ':(exclude)tool/check-secrets.sh'; then
     echo "secret-like material matched: $pattern" >&2
     exit 1
   fi

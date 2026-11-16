@@ -47,7 +47,7 @@ jobs:
           PI_SWITCH_DB: ${{ runner.temp }}/pi-switch-requests.db
 
       - name: Secret scan
-        run: bash scripts/check-secrets.sh
+        run: bash tool/check-secrets.sh
 
       - name: Build Go (current platform)
         run: npm run build:go
@@ -60,10 +60,10 @@ jobs:
           bin/pi-switch --help >/dev/null
 
       - name: Deterministic functional smoke
-        run: bash scripts/functional-check.sh bin/pi-switch
+        run: bash tool/functional-check.sh bin/pi-switch
 
       - name: Test CLI platform selection
-        run: node --test scripts/pi-switch.test.js
+        run: node --test tool/pi-switch.test.js
 
   release-preflight:
     needs: [verify, build]
@@ -121,7 +121,7 @@ jobs:
           mv artifacts/pi-switch-* bin/ 2>/dev/null || mv artifacts/* bin/ 2>/dev/null
 
       - name: Validate npm package contents
-        run: node scripts/check-npm-package.mjs
+        run: node tool/check-npm-package.mjs
 
   build:
     strategy:
@@ -153,7 +153,7 @@ jobs:
       - name: Build Go binary
         shell: bash
         run: |
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} bash scripts/build-go.sh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} bash tool/build-go.sh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}"
           ls -lh "bin/pi-switch-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Upload artifact
@@ -198,7 +198,7 @@ jobs:
           ls -lh bin/
 
       - name: Validate npm package contents
-        run: node scripts/check-npm-package.mjs
+        run: node tool/check-npm-package.mjs
 
       - name: Publish to npm
         run: npm publish --access public

@@ -6,9 +6,9 @@
 # timeout. No sudo, no symlinks created, nothing installed.
 #
 # Usage:
-#   scripts/test-limited.sh                # Go tests + CLI smoke
-#   scripts/test-limited.sh go             # Go tests only
-#   scripts/test-limited.sh smoke          # binary smoke only
+#   tool/test-limited.sh                # Go tests + CLI smoke
+#   tool/test-limited.sh go             # Go tests only
+#   tool/test-limited.sh smoke          # binary smoke only
 #
 # Env knobs:
 #   LIMIT_MEM=1G       memory cap per suite (cgroup MemoryMax, no swap)

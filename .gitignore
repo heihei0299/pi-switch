@@ -34,7 +34,7 @@ opencode.jsonc
 # 过程文档、计划、scratch 记录与归档笔记保留在本地磁盘，不纳入版本控制
 *.md
 !README*.md
-/docs/
+/doc/
 # archive/ 仅保留 CLI 帮助契约测试读取的两份文档
 /archive/*
 !/archive/docs/

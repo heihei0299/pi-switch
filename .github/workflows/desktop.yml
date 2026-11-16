@@ -50,7 +50,7 @@ jobs:
         run: go test ./internal/adapters/outbound/daemon
 
       - name: Scan tracked source for secrets
-        run: bash scripts/check-secrets.sh
+        run: bash tool/check-secrets.sh
 
   package:
     needs: verify
@@ -86,7 +86,7 @@ jobs:
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-        run: bash scripts/build-go.sh desktop/resources/pi-switch
+        run: bash tool/build-go.sh desktop/resources/pi-switch
 
       - name: Verify bundled CLI commit and target identity
         shell: bash
@@ -127,7 +127,7 @@ jobs:
           git worktree add --detach "$previous" "$rollback_sha"
           (
             cd "$previous"
-            GOOS=linux GOARCH="$DESKTOP_ARCH" bash scripts/build-go.sh desktop/resources/pi-switch
+            GOOS=linux GOARCH="$DESKTOP_ARCH" bash tool/build-go.sh desktop/resources/pi-switch
             printf '{"commit":"%s","platform":"linux/%s","distribution":"internal-test-only","releaseSigning":"not-configured","notarized":false}\n' \
               "$rollback_sha" "$DESKTOP_ARCH" > desktop/resources/build-identity.json
             cd desktop
@@ -147,7 +147,7 @@ jobs:
             test -n "$previous_deb"
             args+=("$previous_deb")
           fi
-          bash desktop/scripts/test-deb-package-lifecycle.sh "${args[@]}"
+          bash desktop/tool/test-deb-package-lifecycle.sh "${args[@]}"
 
       - name: Smoke-test packaged arm64 Native window under Xvfb (not GUI gate)
         if: matrix.goarch == 'arm64'
@@ -158,7 +158,7 @@ jobs:
           deb=$(find "desktop/build/linux-${DESKTOP_ARCH}" -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
           sudo apt-get install -y --no-install-recommends "./$deb"
-          bash desktop/scripts/test-native-window-xvfb.sh \
+          bash desktop/tool/test-native-window-xvfb.sh \
             /opt/pi-switch-mygo-spike/pi-switch-mygo-spike \
             "$RUNNER_TEMP/pi-switch-native-window.log"
           sudo apt-get purge -y pi-switch-mygo-spike
@@ -186,7 +186,7 @@ jobs:
       - name: Smoke-test bundled CLI management API and headless Proxy
         env:
           DESKTOP_ARCH: ${{ matrix.goarch }}
-        run: bash scripts/functional-check.sh "desktop/build/linux-${DESKTOP_ARCH}/pi-switch"
+        run: bash tool/functional-check.sh "desktop/build/linux-${DESKTOP_ARCH}/pi-switch"
 
       - name: Smoke-test Linux installer archive in an isolated HOME
         working-directory: desktop
@@ -195,7 +195,7 @@ jobs:
           installer=$(find "$package_dir" -maxdepth 1 -name install.sh -print -quit)
           archive=$(find "$package_dir" -maxdepth 1 -name "pi-switch-mygo-spike-*-linux-${{ matrix.goarch }}.tar.gz" -print -quit)
           test -n "$installer" && test -n "$archive"
-          bash scripts/test-linux-installer.sh "$installer" "$archive"
+          bash tool/test-linux-installer.sh "$installer" "$archive"
 
       - name: Reject credential-shaped package files
         shell: bash

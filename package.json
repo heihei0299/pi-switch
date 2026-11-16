@@ -13,9 +13,9 @@
   ],
   "scripts": {
     "build": "npm run build:go",
-    "build:go": "bash scripts/build-go.sh bin/pi-switch",
-    "build:all": "bash scripts/build-all.sh",
-    "build:go:current": "bash scripts/build-go.sh bin/pi-switch-$(go env GOOS)-$(go env GOARCH)",
+    "build:go": "bash tool/build-go.sh bin/pi-switch",
+    "build:all": "bash tool/build-all.sh",
+    "build:go:current": "bash tool/build-go.sh bin/pi-switch-$(go env GOOS)-$(go env GOARCH)",
     "doctor": "node ./bin/pi-switch.js doctor",
     "test": "go test -p 1 -parallel 2 ./..."
   },
