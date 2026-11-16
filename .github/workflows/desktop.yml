@@ -127,7 +127,9 @@ jobs:
           git worktree add --detach "$previous" "$rollback_sha"
           (
             cd "$previous"
-            GOOS=linux GOARCH="$DESKTOP_ARCH" bash tool/build-go.sh desktop/resources/pi-switch
+            build_script=scripts/build-go.sh
+            if [[ -f tool/build-go.sh ]]; then build_script=tool/build-go.sh; fi
+            GOOS=linux GOARCH="$DESKTOP_ARCH" bash "$build_script" desktop/resources/pi-switch
             printf '{"commit":"%s","platform":"linux/%s","distribution":"internal-test-only","releaseSigning":"not-configured","notarized":false}\n' \
               "$rollback_sha" "$DESKTOP_ARCH" > desktop/resources/build-identity.json
             cd desktop
